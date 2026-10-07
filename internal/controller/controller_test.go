@@ -343,3 +343,21 @@ func TestReaperHandlesSilentPowerOff(t *testing.T) {
 		t.Fatalf("state = %s, want destroyed", got.State)
 	}
 }
+
+func TestRequestDestroy(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	if err := h.c.RequestDestroy(ctx, e.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "destroyed" {
+		t.Fatalf("state = %s", got.State)
+	}
+	if err := h.c.RequestDestroy(ctx, e.ID); err == nil {
+		t.Fatal("destroying a destroyed environment must fail")
+	}
+	if err := h.c.RequestDestroy(ctx, "missing"); err == nil {
+		t.Fatal("unknown environment must fail")
+	}
+}

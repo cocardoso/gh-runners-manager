@@ -290,3 +290,16 @@ func (c *Controller) Teardown(ctx context.Context) {
 		}
 	}
 }
+
+// RequestDestroy destroys an environment on an operator's request.
+func (c *Controller) RequestDestroy(ctx context.Context, id string) error {
+	e, err := c.d.Store.GetEnvironment(ctx, id)
+	if err != nil {
+		return err
+	}
+	if e.State == string(environment.Destroyed) {
+		return errors.New("environment is already destroyed")
+	}
+	c.destroy(context.WithoutCancel(ctx), id)
+	return nil
+}
