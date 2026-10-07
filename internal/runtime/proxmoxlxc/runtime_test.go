@@ -410,3 +410,29 @@ func TestCapacityFallsBackToStorageStatus(t *testing.T) {
 		t.Fatalf("ThinPoolPercent = %v, want 25 from the storage status", c.ThinPoolPercent)
 	}
 }
+
+// The LXC list status comes from pvestatd's cache and lags behind a start by
+// several seconds; Status must report the live state.
+func TestStatusUsesLiveStateNotTheCachedList(t *testing.T) {
+	h := newHarness(t, 900, 909)
+	ctx := context.Background()
+	ref, err := h.rt.Create(ctx, spec("aaa"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.rt.Start(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	h.srv.StaleListStatus = true
+	st, err := h.rt.Status(ctx, ref)
+	if err != nil || !st.Running || st.IP == "" {
+		t.Fatalf("Status = %+v, %v; want running with an IP despite the stale list", st, err)
+	}
+	if err := h.rt.Stop(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	h.srv.StaleListStatus = false
+	if st, _ := h.rt.Status(ctx, ref); st.Running {
+		t.Fatal("stopped guest reported running")
+	}
+}

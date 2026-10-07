@@ -20,6 +20,9 @@ type Fake struct {
 	CreateErr error
 	// Cap is returned by Capacity, with Environments filled in.
 	Cap runtime.Capacity
+	// StaleList makes List report every environment as not running, like a
+	// cached hypervisor listing right after a start.
+	StaleList bool
 }
 
 type fakeEnv struct {
@@ -76,7 +79,11 @@ func (f *Fake) List(_ context.Context) ([]runtime.Status, error) {
 	defer f.mu.Unlock()
 	out := make([]runtime.Status, 0, len(f.envs))
 	for id, e := range f.envs {
-		out = append(out, f.status(id, e))
+		st := f.status(id, e)
+		if f.StaleList {
+			st.Running, st.IP = false, ""
+		}
+		out = append(out, st)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ref.ID < out[j].Ref.ID })
 	return out, nil

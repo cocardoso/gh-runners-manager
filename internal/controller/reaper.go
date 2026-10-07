@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/environment"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
@@ -44,11 +45,32 @@ func (c *Controller) Reap(ctx context.Context) {
 		switch {
 		case e.RuntimeRef != "" && !exists && st != environment.Destroying && st != environment.Failed:
 			c.Fail(ctx, e.ID, "runtime_gone", errors.New("the runtime environment no longer exists"))
-		case exists && !g.Running && (st == environment.Booting || st == environment.Connected || st == environment.Idle || st == environment.Running):
+		case exists && !g.Running && poweredOffSilently(st) && now.Sub(e.StateChangedAt) > silentPowerOffGrace && !c.liveRunning(ctx, g.Ref):
 			c.log(ctx, e.ID, "control-plane", "guest is no longer running; the agent did not report an exit")
 			c.advance(ctx, e.ID, environment.Completing, nil)
 		case c.d.Timeouts.Expired(st, e.StateChangedAt, now):
 			c.Fail(ctx, e.ID, "timeout:"+e.State, fmt.Errorf("stayed %s longer than %s", e.State, c.d.Timeouts[st]))
 		}
 	}
+}
+
+// silentPowerOffGrace keeps the reaper from judging a guest that only just changed
+// state; hypervisor listings can lag behind a start by several seconds.
+const silentPowerOffGrace = 60 * time.Second
+
+func poweredOffSilently(st environment.State) bool {
+	switch st {
+	case environment.Booting, environment.Connected, environment.Idle, environment.Running:
+		return true
+	}
+	return false
+}
+
+// liveRunning asks the runtime for the live state; on any doubt it answers true.
+func (c *Controller) liveRunning(ctx context.Context, ref runtime.Ref) bool {
+	st, err := c.d.Runtime.Status(ctx, ref)
+	if errors.Is(err, runtime.ErrNotFound) {
+		return false
+	}
+	return err != nil || st.Running
 }

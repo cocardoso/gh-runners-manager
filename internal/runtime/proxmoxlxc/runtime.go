@@ -299,7 +299,11 @@ func (r *Runtime) Stop(ctx context.Context, ref runtime.Ref) error {
 	if g == nil {
 		return fmt.Errorf("%w: %s", runtime.ErrNotFound, ref)
 	}
-	if g.Status != "running" {
+	cur, err := r.client.LXCCurrentStatus(ctx, r.cfg.Node, vmid)
+	if err != nil {
+		return err
+	}
+	if cur.Status != "running" {
 		return nil
 	}
 	return r.client.StopLXC(ctx, r.cfg.Node, vmid)
@@ -347,15 +351,15 @@ func (r *Runtime) destroyVMID(ctx context.Context, vmid int, envID string) error
 	return lastErr
 }
 
-// guestState returns the guest's status, or "" when it is gone (or not ours).
+// guestState returns the guest's live status, or "" when it is gone (or not ours).
 func (r *Runtime) guestState(ctx context.Context, vmid int, envID string) (string, error) {
 	if envID != "" {
 		g, err := r.lookup(ctx, vmid, envID)
 		if err != nil || g == nil {
 			return "", err
 		}
-		return g.Status, nil
 	}
+	// Live state: the list's status is cached and can lag behind a start or stop.
 	cur, err := r.client.LXCCurrentStatus(ctx, r.cfg.Node, vmid)
 	if errors.Is(err, proxmox.ErrNotFound) {
 		return "", nil
@@ -379,7 +383,16 @@ func (r *Runtime) Status(ctx context.Context, ref runtime.Ref) (runtime.Status, 
 	if g == nil {
 		return runtime.Status{}, fmt.Errorf("%w: %s", runtime.ErrNotFound, ref)
 	}
-	st := runtime.Status{Ref: ref, EnvironmentID: envID, Running: g.Status == "running"}
+	// The list's status comes from pvestatd's cache and lags behind a start or stop;
+	// once the guest is known to be ours, ask for its live state.
+	cur, err := r.client.LXCCurrentStatus(ctx, r.cfg.Node, vmid)
+	if errors.Is(err, proxmox.ErrNotFound) {
+		return runtime.Status{}, fmt.Errorf("%w: %s", runtime.ErrNotFound, ref)
+	}
+	if err != nil {
+		return runtime.Status{}, err
+	}
+	st := runtime.Status{Ref: ref, EnvironmentID: envID, Running: cur.Status == "running"}
 	if st.Running {
 		if ifaces, err := r.client.LXCInterfaces(ctx, r.cfg.Node, vmid); err == nil {
 			for _, i := range ifaces {

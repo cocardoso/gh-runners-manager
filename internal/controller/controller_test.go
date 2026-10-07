@@ -336,6 +336,7 @@ func TestReaperHandlesSilentPowerOff(t *testing.T) {
 	h.c.AgentEvent(ctx, e.ID, ingest.EventHello, time.Now(), nil)
 	h.c.AgentEvent(ctx, e.ID, ingest.EventRunnerOnline, time.Now(), nil)
 	_ = h.rt.Stop(ctx, runtime.Ref{ID: e.RuntimeRef}) // powered off without reporting
+	h.now = h.now.Add(61 * time.Second)
 	h.c.Reap(ctx)
 	h.c.Teardown(ctx)
 	got, _ := h.db.GetEnvironment(ctx, e.ID)
@@ -359,5 +360,35 @@ func TestRequestDestroy(t *testing.T) {
 	}
 	if err := h.c.RequestDestroy(ctx, "missing"); err == nil {
 		t.Fatal("unknown environment must fail")
+	}
+}
+
+// Right after a start the hypervisor's cached listing can still say "stopped";
+// the reaper must confirm with a live status before concluding the guest powered off.
+func TestReaperIgnoresStaleListStatus(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	h.rt.StaleList = true
+	h.now = h.now.Add(90 * time.Second)
+	h.c.Reap(ctx)
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "booting" {
+		t.Fatalf("state = %s, want booting (the guest is running)", got.State)
+	}
+}
+
+func TestReaperWaitsBeforeConcludingSilentPowerOff(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	_ = h.rt.Stop(ctx, runtime.Ref{ID: e.RuntimeRef})
+	h.c.Reap(ctx) // just entered booting: too early to conclude anything
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "booting" {
+		t.Fatalf("state = %s, want booting within the grace period", got.State)
+	}
+	h.now = h.now.Add(61 * time.Second)
+	h.c.Reap(ctx)
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "completing" && got.State != "destroyed" {
+		t.Fatalf("state = %s, want completing after the grace period", got.State)
 	}
 }
