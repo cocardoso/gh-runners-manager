@@ -2,12 +2,15 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -209,8 +212,8 @@ func TestRunnerCredentialIncludesSupplementaryGroups(t *testing.T) {
 	if attr.Credential.Uid != 1001 || len(attr.Credential.Groups) != 2 || attr.Credential.Groups[1] != 999 {
 		t.Fatalf("credential = %+v, want the docker group (999) among the supplementary groups", attr.Credential)
 	}
-	if (Runner{}).sysProcAttr() != nil {
-		t.Fatal("no credentials when UID is 0")
+	if attr := (Runner{}).sysProcAttr(); attr.Credential != nil || !attr.Setpgid {
+		t.Fatal("no credentials when UID is 0, but always a process group")
 	}
 }
 
@@ -248,5 +251,164 @@ func TestTailerAcceptFilterAndNumericPageOrder(t *testing.T) {
 	tl.Poll()
 	if strings.Join(got, ",") != "job page 1,job page 2,job page 10" {
 		t.Fatalf("got %v, want only the job log, pages in numeric order", got)
+	}
+}
+
+// Final review Critical #1: Run and Flush sending at the same time must not drop frames.
+func TestConcurrentRunAndFlushDeliverEverythingOnce(t *testing.T) {
+	rec := &recorder{}
+	inner := rec.handler(t)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(time.Duration(time.Now().UnixNano()%40) * time.Millisecond)
+		inner.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	c, err := NewClient(Bootstrap{URL: srv.URL, Token: "tok", Fingerprint: ingest.Fingerprint(srv.Certificate().Raw)},
+		Options{Interval: 5 * time.Millisecond, MaxBackoff: 20 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go c.Run(ctx)
+	for i := range 3000 {
+		c.Log("job", "line "+strconv.Itoa(i))
+	}
+	fctx, fcancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer fcancel()
+	if err := c.Flush(fctx); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	seen := map[int64]int{}
+	var last int64
+	for _, f := range rec.frames {
+		seen[f.Seq]++
+		if f.Seq <= last {
+			t.Fatalf("seq %d delivered after %d", f.Seq, last)
+		}
+		last = f.Seq
+	}
+	if len(seen) != 3000 {
+		t.Fatalf("delivered %d distinct frames, want 3000", len(seen))
+	}
+}
+
+func TestSequenceNumbersFollowQueueOrder(t *testing.T) {
+	c, _ := NewClient(Bootstrap{URL: "https://127.0.0.1:1", Token: "t", Fingerprint: strings.Repeat("AB:", 31) + "AB"}, Options{})
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				c.Log("agent", "x")
+				c.Event("tick", nil)
+			}
+		}()
+	}
+	wg.Wait()
+	var last int64
+	for _, f := range c.pending() {
+		if f.Seq <= last {
+			t.Fatalf("agent-stream seq %d queued after %d", f.Seq, last)
+		}
+		last = f.Seq
+	}
+}
+
+func TestLongLinesAreTruncated(t *testing.T) {
+	c, _ := NewClient(Bootstrap{URL: "https://127.0.0.1:1", Token: "t", Fingerprint: strings.Repeat("AB:", 31) + "AB"}, Options{})
+	c.Log("job", strings.Repeat("x", 200<<10))
+	f := c.pending()[0]
+	if len(f.Text) > MaxFrameText+64 || !strings.Contains(f.Text, "truncated") {
+		t.Fatalf("frame text is %d bytes, want at most %d with a truncation marker", len(f.Text), MaxFrameText)
+	}
+}
+
+func TestBatchesAreCappedByBytesAndRejectedBatchesDropped(t *testing.T) {
+	rec := &recorder{}
+	var mu sync.Mutex
+	requests, rejectFirst := 0, true
+	inner := rec.handler(t)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		reject := rejectFirst
+		rejectFirst = false
+		mu.Unlock()
+		if reject {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if len(body) > 2<<20 {
+			t.Errorf("request body %d bytes exceeds the batch byte cap", len(body))
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		inner.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	c, _ := NewClient(Bootstrap{URL: srv.URL, Token: "tok", Fingerprint: ingest.Fingerprint(srv.Certificate().Raw)}, Options{Interval: 5 * time.Millisecond})
+	c.Log("job", "rejected batch")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("a 400 must drop the batch, not block: %v", err)
+	}
+	for range 40 {
+		c.Log("job", strings.Repeat("y", 60<<10))
+	}
+	if err := c.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	texts := rec.texts()
+	if len(texts) != 41 || texts[0] != "event:frames_rejected" {
+		t.Fatalf("delivered %d frames starting with %q; want the rejection event then 40 lines", len(texts), texts[0])
+	}
+	if requests < 3 {
+		t.Fatalf("requests = %d, want the 40 lines split into several byte-capped batches", requests)
+	}
+}
+
+func TestRunnerHandlesVeryLongLinesAndLingeringChildren(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "run.sh")
+	_ = os.WriteFile(script, []byte("#!/bin/sh\nhead -c 3000000 /dev/zero | tr '\\\\0' 'a'\necho\necho \"Listening for Jobs\"\n(sleep 30) &\nexit 0\n"), 0o755)
+	var lines []string
+	var mu sync.Mutex
+	r := Runner{Dir: dir, Script: script, JIT: "x", WaitDelay: 500 * time.Millisecond, OnLine: func(l string) { mu.Lock(); lines = append(lines, l); mu.Unlock() }}
+	start := time.Now()
+	code, err := r.Run(context.Background())
+	if err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v", code, err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("Run waited for a lingering child that kept stdout open")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) < 2 || lines[len(lines)-1] != "Listening for Jobs" || len(lines[0]) > MaxFrameText+64 {
+		t.Fatalf("got %d lines (first %d bytes, last %q)", len(lines), len(lines[0]), lines[len(lines)-1])
+	}
+}
+
+func TestRunnerCancelKillsTheProcessGroup(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "run.sh")
+	marker := filepath.Join(dir, "child-alive")
+	_ = os.WriteFile(script, []byte("#!/bin/sh\n(sleep 2; touch "+marker+") &\nsleep 30\n"), 0o755)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	r := Runner{Dir: dir, Script: script, JIT: "x", WaitDelay: 500 * time.Millisecond}
+	start := time.Now()
+	_, _ = r.Run(ctx)
+	if time.Since(start) > 3*time.Second {
+		t.Fatal("Run did not return after cancellation")
+	}
+	time.Sleep(2500 * time.Millisecond)
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a child of run.sh survived cancellation")
 	}
 }

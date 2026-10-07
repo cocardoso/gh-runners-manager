@@ -26,7 +26,8 @@ const (
 	EventJobStarted    = "job_started"
 	EventJobFinished   = "job_finished"
 	EventRunnerExited  = "runner_exited"
-	EventFramesDropped = "frames_dropped"
+	EventFramesDropped  = "frames_dropped"
+	EventFramesRejected = "frames_rejected"
 	EventShutdown      = "shutdown"
 )
 

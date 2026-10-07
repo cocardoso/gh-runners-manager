@@ -4,12 +4,13 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"regexp"
 	"strings"
-	"sync"
 	"syscall"
+	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/ingest"
 )
@@ -23,7 +24,10 @@ type Runner struct {
 	GID    uint32
 	Groups []uint32 // supplementary groups (docker access needs the docker group)
 	Env    []string
-	OnLine func(line string)
+	// WaitDelay bounds how long Run waits for output after the runner exits
+	// (a lingering child can keep stdout open). Default 10s.
+	WaitDelay time.Duration
+	OnLine    func(line string)
 }
 
 // Run starts the runner and waits for it, returning its exit code.
@@ -32,44 +36,82 @@ func (r Runner) Run(ctx context.Context) (int, error) {
 	cmd.Dir = r.Dir
 	cmd.Env = r.Env
 	cmd.SysProcAttr = r.sysProcAttr()
-	pr, pw := io.Pipe()
-	cmd.Stdout, cmd.Stderr = pw, pw
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		sc := bufio.NewScanner(pr)
-		sc.Buffer(make([]byte, 64*1024), 1<<20)
-		for sc.Scan() {
-			if r.OnLine != nil {
-				r.OnLine(sc.Text())
-			}
-		}
-		_, _ = io.Copy(io.Discard, pr)
-	}()
-	if err := cmd.Start(); err != nil {
-		_ = pw.Close()
-		wg.Wait()
+	// On cancellation, kill the whole process group, not only run.sh.
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = r.WaitDelay
+	if cmd.WaitDelay <= 0 {
+		cmd.WaitDelay = 10 * time.Second
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
 		return -1, err
 	}
-	err := cmd.Wait()
-	_ = pw.Close()
-	wg.Wait()
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return -1, err
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		readLines(stdout, func(line string) {
+			if r.OnLine != nil {
+				r.OnLine(line)
+			}
+		})
+	}()
+	err = cmd.Wait() // closes stdout after WaitDelay even if a child keeps it open
+	<-done
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		return exit.ExitCode(), nil
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		return -1, err
 	}
-	return 0, nil
+	return cmd.ProcessState.ExitCode(), nil
+}
+
+// readLines calls fn for every line; lines longer than MaxFrameText are cut, the
+// rest of such a line is skipped, and reading continues with the next line.
+func readLines(r io.Reader, fn func(string)) {
+	br := bufio.NewReaderSize(r, 64*1024)
+	var cur []byte
+	skipped := 0
+	for {
+		chunk, err := br.ReadSlice('\n')
+		switch {
+		case len(cur)+len(chunk) <= MaxFrameText:
+			cur = append(cur, chunk...)
+		case len(cur) < MaxFrameText:
+			room := MaxFrameText - len(cur)
+			cur = append(cur, chunk[:room]...)
+			skipped += len(chunk) - room
+		default:
+			skipped += len(chunk)
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if len(cur) > 0 || skipped > 0 {
+			line := strings.TrimRight(string(cur), "\r\n")
+			if skipped > 0 {
+				line += fmt.Sprintf(" …[truncated %d bytes]", skipped)
+			}
+			fn(line)
+		}
+		cur, skipped = cur[:0], 0
+		if err != nil {
+			return
+		}
+	}
 }
 
 func (r Runner) sysProcAttr() *syscall.SysProcAttr {
-	if r.UID == 0 {
-		return nil
+	attr := &syscall.SysProcAttr{Setpgid: true}
+	if r.UID != 0 {
+		attr.Credential = &syscall.Credential{Uid: r.UID, Gid: r.GID, Groups: r.Groups}
 	}
-	return &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: r.UID, Gid: r.GID, Groups: r.Groups}}
+	return attr
 }
 
 var jobRequest = regexp.MustCompile(`Job request \d+ for plan \S+ job (\S+) received`)
