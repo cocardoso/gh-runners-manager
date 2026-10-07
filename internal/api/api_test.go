@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -127,7 +128,7 @@ func TestListAndGetEndpoints(t *testing.T) {
 	}
 }
 
-type sseEvent struct{ id, data string }
+type sseEvent struct{ id, event, data string }
 
 func readSSE(t *testing.T, r *bufio.Reader, n int) []sseEvent {
 	t.Helper()
@@ -145,6 +146,8 @@ func readSSE(t *testing.T, r *bufio.Reader, n int) []sseEvent {
 			switch {
 			case strings.HasPrefix(line, "id: "):
 				cur.id = strings.TrimPrefix(line, "id: ")
+			case strings.HasPrefix(line, "event: "):
+				cur.event = strings.TrimPrefix(line, "event: ")
 			case strings.HasPrefix(line, "data: "):
 				cur.data = strings.TrimPrefix(line, "data: ")
 			case line == "" && cur.data != "":
@@ -375,5 +378,76 @@ func TestJobGitHubDetails(t *testing.T) {
 	}
 	if code := h.getJSON(t, "/api/v1/jobs/nope/github", nil); code != 404 {
 		t.Fatalf("missing job = %d", code)
+	}
+}
+
+func TestEventsNewestPageAndLatestStream(t *testing.T) {
+	h := newHarness(t, "")
+	ctx := context.Background()
+	for _, m := range []string{"one", "two", "three", "four"} {
+		_, _ = h.rec.Info(ctx, "k", m, events.Refs{}, nil)
+	}
+	var page struct{ Events []store.Event }
+	h.getJSON(t, "/api/v1/events?newest=true&limit=2", &page)
+	if len(page.Events) != 2 || page.Events[0].Seq != 3 || page.Events[1].Seq != 4 {
+		t.Fatalf("newest = %+v", page.Events)
+	}
+	h.getJSON(t, "/api/v1/events?newest=true&before=3&limit=5", &page)
+	if len(page.Events) != 2 || page.Events[0].Seq != 1 {
+		t.Fatalf("before 3 = %+v", page.Events)
+	}
+
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(cctx, http.MethodGet, h.srv.URL+"/api/v1/events/stream?after=latest", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	r := bufio.NewReader(resp.Body)
+	time.Sleep(50 * time.Millisecond) // let the stream start before the next event
+	_, _ = h.rec.Info(ctx, "k", "five", events.Refs{}, nil)
+	if got := readSSE(t, r, 1); got[0].id != "5" {
+		t.Fatalf("after=latest delivered %+v, want only the new event 5", got)
+	}
+}
+
+func TestEventStreamSendsNamedHeartbeats(t *testing.T) {
+	heartbeat = 30 * time.Millisecond
+	defer func() { heartbeat = 15 * time.Second }()
+	h := newHarness(t, "")
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(cctx, http.MethodGet, h.srv.URL+"/api/v1/events/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	got := readSSE(t, bufio.NewReader(resp.Body), 1)
+	if got[0].event != "ping" {
+		t.Fatalf("heartbeat = %+v, want a named ping event the browser can observe", got)
+	}
+}
+
+func TestLogTailPage(t *testing.T) {
+	h := newHarness(t, "")
+	ctx := context.Background()
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "env1", ScaleSet: "lab", State: "running"})
+	for _, m := range []string{"a", "b", "c"} {
+		_ = h.logs.Write(ctx, "env1", "job", m, time.Now())
+	}
+	var page struct {
+		Entries []logs.Entry
+		Next    int64
+	}
+	h.getJSON(t, "/api/v1/environments/env1/logs/job?tail=true&limit=2", &page)
+	if len(page.Entries) != 2 || page.Entries[0].Text != "b" || page.Entries[1].Text != "c" || page.Next == 0 {
+		t.Fatalf("tail = %+v", page)
+	}
+	h.getJSON(t, fmt.Sprintf("/api/v1/environments/env1/logs/job?tail=true&before=%d&limit=10", page.Entries[0].Offset), &page)
+	if len(page.Entries) != 1 || page.Entries[0].Text != "a" {
+		t.Fatalf("before b = %+v", page)
 	}
 }

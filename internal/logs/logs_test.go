@@ -2,6 +2,7 @@ package logs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,5 +146,33 @@ func TestAppendDiscardsBytesNotRecordedInMetadata(t *testing.T) {
 	entries, _, _ := s.Read(ctx, "env1", "job", 0, 100)
 	if len(entries) != 3 {
 		t.Fatalf("entries = %d, want 3 (no duplicate of line 3)", len(entries))
+	}
+}
+
+func TestReadBeforeReturnsTheLinesEndingBeforeAnOffset(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	var many []Line
+	for i := 1; i <= 3000; i++ {
+		many = append(many, Line{Seq: int64(i), Time: time.Unix(int64(i), 0), Text: fmt.Sprintf("line %d", i)})
+	}
+	_, _ = s.Append(ctx, "env1", "job", many)
+	tail, end, err := s.ReadBefore(ctx, "env1", "job", -1, 2)
+	if err != nil || len(tail) != 2 || tail[0].Text != "line 2999" || tail[1].Text != "line 3000" {
+		t.Fatalf("tail = %+v, %v", tail, err)
+	}
+	if rest, _, _ := s.Read(ctx, "env1", "job", end, 10); len(rest) != 0 {
+		t.Fatalf("end offset %d is not the end of the stream: %+v", end, rest)
+	}
+	earlier, next, _ := s.ReadBefore(ctx, "env1", "job", tail[0].Offset, 1500)
+	if len(earlier) != 1500 || earlier[0].Text != "line 1499" || earlier[1499].Text != "line 2998" || next != tail[0].Offset {
+		t.Fatalf("earlier = %d lines from %q to %q, next %d", len(earlier), earlier[0].Text, earlier[len(earlier)-1].Text, next)
+	}
+	first, _, _ := s.ReadBefore(ctx, "env1", "job", earlier[0].Offset, 5000)
+	if len(first) != 1498 || first[0].Offset != 0 || first[0].Text != "line 1" {
+		t.Fatalf("first = %d lines starting %+v", len(first), first[0])
+	}
+	if none, n, err := s.ReadBefore(ctx, "env1", "metrics", -1, 10); err != nil || len(none) != 0 || n != 0 {
+		t.Fatalf("missing stream = %+v %d %v", none, n, err)
 	}
 }

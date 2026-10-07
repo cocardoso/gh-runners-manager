@@ -12,7 +12,8 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
 
-const heartbeat = 15 * time.Second
+// heartbeat is how often streams send a named ping event, so clients can detect a stale connection.
+var heartbeat = 15 * time.Second
 
 // followIdleCheck is how often a log follow checks whether its environment is gone.
 var followIdleCheck = 5 * time.Second
@@ -44,15 +45,23 @@ func writeEvent(w http.ResponseWriter, id string, v any) error {
 	return err
 }
 
-// events streams the global event timeline. It resumes after Last-Event-ID (or ?after=)
-// and resyncs from the store whenever the in-process subscription lagged.
+// events streams the global event timeline. It resumes after Last-Event-ID (or ?after=;
+// after=latest starts with the next event) and resyncs from the store whenever the
+// in-process subscription lagged.
 func (s *sse) events(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.Header.Get("Last-Event-ID"), 10, 64)
-	if v := r.URL.Query().Get("after"); v != "" {
-		after, _ = strconv.ParseInt(v, 10, 64)
-	}
 	sub := s.d.Recorder.Bus().Subscribe(512) // subscribe before the backlog so nothing is missed
 	defer sub.Close()
+	if v := r.URL.Query().Get("after"); v == "latest" {
+		latest, err := s.d.Store.LatestEventSeq(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		after = latest
+	} else if v != "" {
+		after, _ = strconv.ParseInt(v, 10, 64)
+	}
 	f, ok := startSSE(w)
 	if !ok {
 		return
@@ -87,7 +96,7 @@ func (s *sse) events(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+			if _, err := fmt.Fprint(w, "event: ping\ndata: {}\n\n"); err != nil {
 				return
 			}
 			f.Flush()
@@ -151,7 +160,7 @@ func (s *sse) logs(w http.ResponseWriter, r *http.Request, envID, stream string)
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+			if _, err := fmt.Fprint(w, "event: ping\ndata: {}\n\n"); err != nil {
 				return
 			}
 			f.Flush()

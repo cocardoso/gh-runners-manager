@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -23,7 +24,11 @@ type Event struct {
 
 // EventFilter narrows ListEvents.
 type EventFilter struct {
-	AfterSeq      int64
+	AfterSeq int64
+	// BeforeSeq, when positive, keeps only events with a lower sequence number.
+	BeforeSeq int64
+	// Newest returns the last Limit matching events instead of the first (still in ascending order).
+	Newest        bool
 	EnvironmentID string
 	JobID         string
 	Limit         int
@@ -55,6 +60,10 @@ func (s *Store) AppendEvent(ctx context.Context, e Event) (Event, error) {
 func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]Event, error) {
 	where := []string{"seq > ?"}
 	args := []any{f.AfterSeq}
+	if f.BeforeSeq > 0 {
+		where = append(where, "seq < ?")
+		args = append(args, f.BeforeSeq)
+	}
 	if f.EnvironmentID != "" {
 		where = append(where, "environment_id = ?")
 		args = append(args, f.EnvironmentID)
@@ -67,8 +76,12 @@ func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]Event, error) 
 	if limit <= 0 || limit > 5000 {
 		limit = 5000
 	}
+	order := "ASC"
+	if f.Newest {
+		order = "DESC"
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT seq, ts, kind, level, message, scale_set, environment_id, job_id, data
-		FROM events WHERE `+strings.Join(where, " AND ")+fmt.Sprintf(" ORDER BY seq LIMIT %d", limit), args...)
+		FROM events WHERE `+strings.Join(where, " AND ")+fmt.Sprintf(" ORDER BY seq %s LIMIT %d", order, limit), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +99,9 @@ func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]Event, error) 
 			_ = json.Unmarshal([]byte(data), &e.Data)
 		}
 		out = append(out, e)
+	}
+	if f.Newest {
+		slices.Reverse(out)
 	}
 	return out, rows.Err()
 }

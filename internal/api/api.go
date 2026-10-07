@@ -270,6 +270,8 @@ func New(d Deps) http.Handler {
 
 	type listEventsInput struct {
 		After       int64  `query:"after" minimum:"0"`
+		Before      int64  `query:"before" minimum:"0" doc:"Only events with a lower sequence number"`
+		Newest      bool   `query:"newest" doc:"Return the newest matching events (still in ascending order)"`
 		Environment string `query:"environment"`
 		Job         string `query:"job"`
 		Limit       int    `query:"limit" minimum:"0" maximum:"5000"`
@@ -280,7 +282,7 @@ func New(d Deps) http.Handler {
 				Events []store.Event `json:"events"`
 			}
 		}, error) {
-			evs, err := d.Store.ListEvents(ctx, store.EventFilter{AfterSeq: in.After, EnvironmentID: in.Environment, JobID: in.Job, Limit: limit(in.Limit, 1000, 5000)})
+			evs, err := d.Store.ListEvents(ctx, store.EventFilter{AfterSeq: in.After, BeforeSeq: in.Before, Newest: in.Newest, EnvironmentID: in.Environment, JobID: in.Job, Limit: limit(in.Limit, 1000, 5000)})
 			if err != nil {
 				return nil, err
 			}
@@ -300,6 +302,8 @@ func New(d Deps) http.Handler {
 		ID     string `path:"id"`
 		Stream string `path:"stream" enum:"control-plane,runtime,agent,runner,job,metrics"`
 		Offset int64  `query:"offset" minimum:"0"`
+		Tail   bool   `query:"tail" doc:"Return the last entries ending at before (default: the end of the stream)"`
+		Before int64  `query:"before" minimum:"-1" default:"-1"`
 		Limit  int    `query:"limit" minimum:"0" maximum:"10000"`
 	}
 	huma.Register(a, huma.Operation{OperationID: "read-logs", Method: http.MethodGet, Path: "/api/v1/environments/{id}/logs/{stream}",
@@ -310,7 +314,14 @@ func New(d Deps) http.Handler {
 				Next    int64        `json:"next"`
 			}
 		}, error) {
-			entries, next, err := d.Logs.Read(ctx, in.ID, in.Stream, in.Offset, limit(in.Limit, 2000, 10000))
+			var entries []logs.Entry
+			var next int64
+			var err error
+			if in.Tail {
+				entries, next, err = d.Logs.ReadBefore(ctx, in.ID, in.Stream, in.Before, limit(in.Limit, 2000, 10000))
+			} else {
+				entries, next, err = d.Logs.Read(ctx, in.ID, in.Stream, in.Offset, limit(in.Limit, 2000, 10000))
+			}
 			if err != nil {
 				return nil, huma.Error400BadRequest(err.Error())
 			}

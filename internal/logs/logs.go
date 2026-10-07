@@ -4,6 +4,7 @@ package logs
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -230,6 +231,69 @@ func (s *Store) Read(ctx context.Context, envID, stream string, offset int64, ma
 		out = append(out, e)
 	}
 	return out, pos, nil
+}
+
+// ReadBefore returns up to max entries that end at or before the byte offset before
+// (an entry offset, or -1 for the end of the stream), and the offset where they end.
+func (s *Store) ReadBefore(ctx context.Context, envID, stream string, before int64, max int) ([]Entry, int64, error) {
+	if err := validate(envID, stream); err != nil {
+		return nil, 0, err
+	}
+	end := int64(0)
+	if meta, err := s.db.GetLogStream(ctx, envID, stream); err == nil {
+		end = meta.Bytes
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return nil, 0, err
+	}
+	if before >= 0 && before < end {
+		end = before
+	}
+	if end == 0 || max <= 0 {
+		return nil, end, nil
+	}
+	f, err := os.Open(s.path(envID, stream))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, 0, nil
+	}
+	if err != nil {
+		return nil, end, err
+	}
+	defer f.Close()
+	// Read backwards in chunks until the buffer holds max complete lines.
+	const chunk = 64 * 1024
+	pos := end
+	var buf []byte
+	for pos > 0 && bytes.Count(buf, []byte{'\n'}) <= max {
+		n := min(int64(chunk), pos)
+		pos -= n
+		part := make([]byte, n)
+		if _, err := f.ReadAt(part, pos); err != nil {
+			return nil, end, err
+		}
+		buf = append(part, buf...)
+	}
+	start := pos
+	if pos > 0 { // drop the partial line at the front
+		i := bytes.IndexByte(buf, '\n')
+		buf, start = buf[i+1:], pos+int64(i+1)
+	}
+	var out []Entry
+	for off := start; len(buf) > 0; {
+		i := bytes.IndexByte(buf, '\n')
+		if i < 0 {
+			break
+		}
+		ts, text, _ := strings.Cut(string(buf[:i]), "\t")
+		e := Entry{Offset: off, Text: text}
+		e.Time, _ = time.Parse(time.RFC3339Nano, ts)
+		out = append(out, e)
+		off += int64(i + 1)
+		buf = buf[i+1:]
+	}
+	if len(out) > max {
+		out = out[len(out)-max:]
+	}
+	return out, end, nil
 }
 
 // Follow emits entries from offset, then new entries as they are appended, until ctx ends.

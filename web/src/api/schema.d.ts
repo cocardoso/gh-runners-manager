@@ -643,6 +643,9 @@ export interface operations {
         parameters: {
             query?: {
                 offset?: number;
+                /** @description Return the last entries ending at before (default: the end of the stream) */
+                tail?: boolean;
+                before?: number;
                 limit?: number;
             };
             header?: never;
@@ -678,6 +681,10 @@ export interface operations {
         parameters: {
             query?: {
                 after?: number;
+                /** @description Only events with a lower sequence number */
+                before?: number;
+                /** @description Return the newest matching events (still in ascending order) */
+                newest?: boolean;
                 environment?: string;
                 job?: string;
                 limit?: number;

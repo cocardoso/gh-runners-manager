@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -205,5 +206,27 @@ func TestScaleSetRecord(t *testing.T) {
 	r, err := s.GetScaleSet(ctx, "x")
 	if err != nil || r.GitHubID != 42 {
 		t.Fatalf("record = %+v, %v", r, err)
+	}
+}
+
+func TestListEventsNewestAndBefore(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		if _, err := s.AppendEvent(ctx, Event{Kind: "k", Level: "info", Message: fmt.Sprint(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	newest, err := s.ListEvents(ctx, EventFilter{Newest: true, Limit: 2})
+	if err != nil || len(newest) != 2 || newest[0].Seq != 4 || newest[1].Seq != 5 {
+		t.Fatalf("newest = %+v, %v; want seq 4, 5 in ascending order", newest, err)
+	}
+	before, _ := s.ListEvents(ctx, EventFilter{BeforeSeq: 4, Newest: true, Limit: 2})
+	if len(before) != 2 || before[0].Seq != 2 || before[1].Seq != 3 {
+		t.Fatalf("before 4 = %+v; want seq 2, 3", before)
+	}
+	window, _ := s.ListEvents(ctx, EventFilter{AfterSeq: 1, BeforeSeq: 4})
+	if len(window) != 2 || window[0].Seq != 2 {
+		t.Fatalf("window = %+v; want seq 2, 3", window)
 	}
 }
