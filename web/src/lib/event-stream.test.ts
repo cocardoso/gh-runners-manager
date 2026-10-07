@@ -140,3 +140,13 @@ describe("invalidationKeys", () => {
     expect(invalidationKeys(ev(1, "something.else"))).toEqual([["overview"]]);
   });
 });
+
+test("an undefined factory falls back to the global EventSource", () => {
+  FakeEventSource.reset();
+  vi.stubGlobal("EventSource", FakeEventSource);
+  const s = new EventStream({ url: "/x", onEvent: () => {}, onState: () => {}, createEventSource: undefined });
+  s.start();
+  expect(FakeEventSource.instances).toHaveLength(1);
+  s.stop();
+  vi.unstubAllGlobals();
+});

@@ -113,3 +113,13 @@ describe("LogFollower", () => {
     expect(FakeEventSource.last().closed).toBe(true);
   });
 });
+
+test("LogFollower: an undefined factory falls back to the global EventSource", () => {
+  FakeEventSource.reset();
+  vi.stubGlobal("EventSource", FakeEventSource);
+  const f = new LogFollower({ url: () => "/x", onEntries: () => {}, onState: () => {}, createEventSource: undefined, flushMs: undefined });
+  f.start(0);
+  expect(FakeEventSource.instances).toHaveLength(1);
+  f.stop();
+  vi.unstubAllGlobals();
+});

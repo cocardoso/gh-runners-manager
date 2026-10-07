@@ -1,4 +1,5 @@
 import type { ApiEvent } from "@/api/client";
+import { withDefaults } from "./defaults";
 
 export type ConnectionState = "connecting" | "live" | "reconnecting";
 
@@ -32,13 +33,18 @@ export class EventStream {
   private stopped = true;
 
   constructor(opts: EventStreamOptions) {
-    this.o = {
-      createEventSource: (url) => new EventSource(url),
-      staleAfterMs: 40_000,
-      initialBackoffMs: 1_000,
-      maxBackoffMs: 30_000,
-      ...opts,
-    };
+    this.o = withDefaults<EventStreamOptions>(
+      {
+        createEventSource: (url) => new EventSource(url),
+        staleAfterMs: 40_000,
+        initialBackoffMs: 1_000,
+        maxBackoffMs: 30_000,
+        url: opts.url,
+        onEvent: opts.onEvent,
+        onState: opts.onState,
+      },
+      opts,
+    );
     this.backoff = this.o.initialBackoffMs;
   }
 

@@ -3,3 +3,4 @@
 *.test
 *.out
 /ghrm.yaml
+.playwright-mcp/

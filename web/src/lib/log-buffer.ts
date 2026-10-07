@@ -1,4 +1,5 @@
 import type { LogEntry } from "@/api/client";
+import { withDefaults } from "./defaults";
 
 export const LOG_LINE_CAP = 50_000;
 
@@ -83,7 +84,10 @@ export class LogFollower {
   private stopped = true;
 
   constructor(opts: LogFollowerOptions) {
-    this.o = { createEventSource: (url) => new EventSource(url), flushMs: 100, initialBackoffMs: 1_000, maxBackoffMs: 30_000, ...opts };
+    this.o = withDefaults<LogFollowerOptions>(
+      { createEventSource: (url) => new EventSource(url), flushMs: 100, initialBackoffMs: 1_000, maxBackoffMs: 30_000, url: opts.url, onEntries: opts.onEntries, onState: opts.onState },
+      opts,
+    );
     this.backoff = this.o.initialBackoffMs;
   }
 
