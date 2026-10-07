@@ -3,6 +3,7 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -291,8 +292,7 @@ func (c *Config) applyDefaults() {
 func (c *Config) resolveSecrets() error {
 	for i := range c.GitHub.Credentials {
 		cr := &c.GitHub.Credentials[i]
-		env := "GHRM_GITHUB_TOKEN_" + strings.ToUpper(strings.ReplaceAll(cr.Name, "-", "_"))
-		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+		if v := strings.TrimSpace(os.Getenv(credentialEnv(cr.Name))); v != "" {
 			cr.Token = v
 			continue
 		}
@@ -317,7 +317,7 @@ func (c *Config) resolveSecrets() error {
 		return nil
 	}
 	if p.TokenSecretFile == "" {
-		return errors.New("proxmox: token secret missing: set proxmox.token_secret_file or " + EnvProxmoxTokenSecret)
+		return nil // the vault may hold it (ResolveVaultSecrets)
 	}
 	raw, err := os.ReadFile(p.TokenSecretFile)
 	if err != nil {
@@ -328,6 +328,56 @@ func (c *Config) resolveSecrets() error {
 		return fmt.Errorf("proxmox: token_secret_file %s is empty", p.TokenSecretFile)
 	}
 	return nil
+}
+
+// Vault names of the secrets the configuration can take from the database.
+const (
+	VaultProxmoxTokenSecret = "proxmox/token-secret"
+	VaultGitHubPrefix       = "github/"
+)
+
+// ResolveVaultSecrets fills the secrets that neither an environment variable nor a
+// file supplied from the vault (get), which `ghrm secret set` and the UI write.
+func (c *Config) ResolveVaultSecrets(ctx context.Context, get func(ctx context.Context, name string) (string, bool, error)) error {
+	if c.Proxmox.TokenSecret == "" {
+		v, _, err := get(ctx, VaultProxmoxTokenSecret)
+		if err != nil {
+			return err
+		}
+		c.Proxmox.TokenSecret = strings.TrimSpace(v)
+	}
+	for i := range c.GitHub.Credentials {
+		cr := &c.GitHub.Credentials[i]
+		if cr.Token != "" {
+			continue
+		}
+		v, _, err := get(ctx, VaultGitHubPrefix+cr.Name)
+		if err != nil {
+			return err
+		}
+		cr.Token = strings.TrimSpace(v)
+	}
+	return nil
+}
+
+// ValidateSecrets checks, after ResolveVaultSecrets, that every secret has a value.
+func (c *Config) ValidateSecrets() error {
+	var errs []error
+	if c.Proxmox.TokenSecret == "" {
+		errs = append(errs, fmt.Errorf("proxmox: token secret missing: set proxmox.token_secret_file, %s, or run \"ghrm secret set %s\"",
+			EnvProxmoxTokenSecret, VaultProxmoxTokenSecret))
+	}
+	for _, cr := range c.GitHub.Credentials {
+		if cr.Token == "" {
+			errs = append(errs, fmt.Errorf("github credential %s has no token: set token_file, %s, or run \"ghrm secret set %s%s\"",
+				cr.Name, credentialEnv(cr.Name), VaultGitHubPrefix, cr.Name))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func credentialEnv(name string) string {
+	return "GHRM_GITHUB_TOKEN_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 }
 
 var (
@@ -350,9 +400,6 @@ func (c *Config) ValidateServe() error {
 		if cr.Name == "" {
 			errs = append(errs, errors.New("github.credentials: name is required"))
 			continue
-		}
-		if cr.Token == "" {
-			errs = append(errs, fmt.Errorf("github credential %s has no token (token_file or GHRM_GITHUB_TOKEN_%s)", cr.Name, strings.ToUpper(strings.ReplaceAll(cr.Name, "-", "_"))))
 		}
 		creds[cr.Name] = true
 	}

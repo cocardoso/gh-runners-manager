@@ -25,6 +25,7 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
 	"github.com/cocardoso/gh-runners-manager/internal/proxmox"
 	"github.com/cocardoso/gh-runners-manager/internal/runtime/proxmoxlxc"
+	"github.com/cocardoso/gh-runners-manager/internal/secrets"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 	"github.com/cocardoso/gh-runners-manager/internal/template"
 	"github.com/cocardoso/gh-runners-manager/internal/version"
@@ -79,6 +80,16 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 	defer db.Close()
+	vault, err := secrets.OpenVault(ctx, db, cfg.SecretKeyFile)
+	if err != nil {
+		return err
+	}
+	if err := cfg.ResolveVaultSecrets(ctx, vault.Get); err != nil {
+		return err
+	}
+	if err := cfg.ValidateSecrets(); err != nil {
+		return err
+	}
 
 	advertise, _ := url.Parse(cfg.Ingest.AdvertiseURL)
 	cert, fingerprint, err := ingest.LoadOrCreateCert(filepath.Join(cfg.DataDir, "tls"), []string{advertise.Hostname()})

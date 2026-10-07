@@ -85,3 +85,17 @@ func secretCmd(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 	}
 	return 0
 }
+
+// resolveFromVault fills missing secrets from the vault in the configuration's data_dir.
+func resolveFromVault(ctx context.Context, cfg *config.Config) error {
+	db, err := store.Open(ctx, filepath.Join(cfg.DataDir, "ghrm.db"))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	vault, err := secrets.OpenVault(ctx, db, cfg.SecretKeyFile)
+	if err != nil {
+		return err
+	}
+	return cfg.ResolveVaultSecrets(ctx, vault.Get)
+}

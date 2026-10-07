@@ -32,6 +32,16 @@ func smoke(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if cfg.Proxmox.TokenSecret == "" {
+		if err := resolveFromVault(ctx, cfg); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	if cfg.Proxmox.TokenSecret == "" {
+		fmt.Fprintln(stderr, cfg.ValidateSecrets())
+		return 1
+	}
 	p := cfg.Proxmox
 	client, err := proxmox.New(proxmox.Config{URL: p.URL, TokenID: p.TokenID, TokenSecret: p.TokenSecret, InsecureSkipVerify: p.InsecureSkipVerify, TLSFingerprint: p.TLSFingerprint})
 	if err != nil {

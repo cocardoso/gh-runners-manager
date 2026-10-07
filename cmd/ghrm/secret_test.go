@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSecretSetListDelete(t *testing.T) {
@@ -43,5 +44,48 @@ func TestSecretUsage(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := secretCmd(context.Background(), []string{"bogus"}, nil, &out, &errOut); code != 2 {
 		t.Fatalf("code = %d", code)
+	}
+}
+
+func TestServeTakesSecretsFromTheVault(t *testing.T) {
+	t.Setenv("GHRM_PROXMOX_TOKEN_SECRET", "")
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "ghrm.yaml")
+	_ = os.WriteFile(cfg, []byte("data_dir: "+dir+`
+listen: 127.0.0.1:0
+proxmox:
+  url: https://127.0.0.1:1
+  node: pve
+  token_id: ghrm@pve!ghrm
+  template_vmid: 9000
+  pool: ghrm
+ingest:
+  listen: 127.0.0.1:0
+  advertise_url: https://127.0.0.1:8443
+github:
+  credentials:
+    - name: personal
+scale_sets:
+  - name: homelab
+    url: https://github.com/octo/repo
+    credential: personal
+`), 0o600)
+	ctx := context.Background()
+	var out, errOut bytes.Buffer
+	code := run(ctx, []string{"serve", "--config", cfg}, &out, &errOut)
+	if code != 1 || !strings.Contains(out.String()+errOut.String(), "ghrm secret set proxmox/token-secret") {
+		t.Fatalf("exit %d, output %q %q; want the missing secrets named", code, out.String(), errOut.String())
+	}
+	_ = secretCmd(ctx, []string{"set", "--config", cfg, "proxmox/token-secret"}, strings.NewReader("x\n"), &out, &errOut)
+	_ = secretCmd(ctx, []string{"set", "--config", cfg, "github/personal"}, strings.NewReader("github_pat_x\n"), &out, &errOut)
+	out.Reset()
+	errOut.Reset()
+	// With the secrets in the vault, serve gets past validation (it then runs until
+	// its context ends, whatever the unreachable Proxmox host answers).
+	tctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_ = run(tctx, []string{"serve", "--config", cfg}, &out, &errOut)
+	if strings.Contains(out.String()+errOut.String(), "secret missing") || strings.Contains(out.String()+errOut.String(), "has no token") {
+		t.Fatalf("output %q %q", out.String(), errOut.String())
 	}
 }
