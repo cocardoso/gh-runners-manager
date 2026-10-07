@@ -1,0 +1,19 @@
+# Example ghrm configuration. Copy to /etc/ghrm/ghrm.yaml and adjust.
+proxmox:
+  url: https://pve.example.test:8006
+  node: pve
+  token_id: ghrm@pve!ghrm
+  token_secret_file: /etc/ghrm/proxmox-token   # or set GHRM_PROXMOX_TOKEN_SECRET
+  # Pin the self-signed Proxmox certificate instead of disabling verification.
+  # Proxmox UI: Datacenter > <node> > System > Certificates > pve-ssl.pem > View Certificate.
+  # Or: openssl s_client -connect pve.example.test:8006 </dev/null | openssl x509 -noout -fingerprint -sha256
+  tls_fingerprint: "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF"
+  insecure_skip_verify: false
+  template_vmid: 9000                           # must be outside vmid_range
+  pool: ghrm                                    # required; the API token is scoped to this pool
+  vmid_range:
+    start: 900
+    end: 999
+  thin_pool: data                               # LV name; read when the token has Sys.Audit on "/"
+  storage: local-lvm                            # storage ID; used for disk usage otherwise
+  firewall_settle: 12s
