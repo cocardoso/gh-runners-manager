@@ -405,6 +405,12 @@ func (c *Config) Validate() error {
 		case tr.Start <= r.End && r.Start <= tr.End:
 			errs = append(errs, fmt.Errorf("templates.vmid_range %d-%d overlaps proxmox.vmid_range %d-%d", tr.Start, tr.End, r.Start, r.End))
 		}
+		if t.MaxArchiveBytes <= 0 {
+			errs = append(errs, errors.New("templates.max_archive_bytes must be positive"))
+		}
+		if p.TemplateVMID >= tr.Start && p.TemplateVMID <= tr.End {
+			errs = append(errs, fmt.Errorf("proxmox.template_vmid %d (the bootstrap template) must be outside templates.vmid_range %d-%d", p.TemplateVMID, tr.Start, tr.End))
+		}
 		if t.Keep < 2 {
 			errs = append(errs, errors.New("templates.keep must be at least 2 (the active version and one to roll back to)"))
 		}

@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,6 +64,10 @@ type Service struct {
 	wg sync.WaitGroup
 
 	lastCheck time.Time
+	uploading map[string]bool // versions with a root filesystem upload in flight
+
+	cacheMu sync.Mutex
+	inUse   map[string]inUseEntry
 }
 
 // NewService returns a Service.
@@ -70,7 +75,7 @@ func NewService(d Deps) *Service {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &Service{d: d}
+	return &Service{d: d, uploading: map[string]bool{}, inUse: map[string]inUseEntry{}}
 }
 
 func (s *Service) now() time.Time { return s.d.Now() }
@@ -121,13 +126,45 @@ func inProgress(state string) bool {
 // Enabled reports whether template builds are configured.
 func (s *Service) Enabled() bool { return s.d.Config.Enabled() }
 
-// InUse reports whether an environment still depends on a built version.
+// InUse reports whether an environment still depends on a built version: a live environment
+// recorded as cloned from it, or a linked clone the runtime sees. Results are cached briefly
+// because the runtime check costs several hypervisor calls.
 func (s *Service) InUse(ctx context.Context, t store.Template) bool {
 	if t.RuntimeRef == "" {
 		return false
 	}
+	if t.VMID != 0 {
+		live, err := s.d.Store.ListEnvironments(ctx, store.EnvironmentFilter{States: liveEnvStates})
+		if err != nil {
+			return true
+		}
+		for _, e := range live {
+			if e.TemplateVMID == t.VMID {
+				return true
+			}
+		}
+	}
+	s.cacheMu.Lock()
+	if c, ok := s.inUse[t.RuntimeRef]; ok && s.now().Sub(c.at) < inUseCacheFor {
+		s.cacheMu.Unlock()
+		return c.used
+	}
+	s.cacheMu.Unlock()
 	used, err := s.d.Runtime.TemplateInUse(ctx, runtime.TemplateRef{ID: t.RuntimeRef})
-	return err != nil || used
+	used = err != nil || used
+	s.cacheMu.Lock()
+	s.inUse[t.RuntimeRef] = inUseEntry{used: used, at: s.now()}
+	s.cacheMu.Unlock()
+	return used
+}
+
+var liveEnvStates = []string{"pending", "provisioning", "booting", "connected", "idle", "running", "completing", "failed", "destroying"}
+
+const inUseCacheFor = 15 * time.Second
+
+type inUseEntry struct {
+	used bool
+	at   time.Time
 }
 
 // Running reports whether a build or verification is in progress.
@@ -141,10 +178,31 @@ func (s *Service) Running(ctx context.Context) bool {
 	return false
 }
 
+// layerVersionPrefix is the layer files' version; the agent binary's hash completes it.
+func layerVersionPrefix() string { return layer.Version + "." }
+
+// layerVersion identifies what the layer installs: the layer files and the ghrm-agent binary,
+// so an upgraded agent triggers a rebuild (spec §8.5).
+func (s *Service) layerVersion() string {
+	f, err := os.Open(s.agentPath())
+	if err != nil {
+		return layer.Version
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return layer.Version
+	}
+	return layerVersionPrefix() + hex.EncodeToString(h.Sum(nil))[:12]
+}
+
 // Build starts a template build. Only one build runs at a time.
 func (s *Service) Build(ctx context.Context, trigger string) (store.Template, error) {
 	if !s.d.Config.Enabled() {
 		return store.Template{}, ErrDisabled
+	}
+	if s.Running(ctx) {
+		return store.Template{}, ErrBuildRunning
 	}
 	slim, err := s.d.Releases.LatestSlim(ctx)
 	if err != nil {
@@ -154,7 +212,8 @@ func (s *Service) Build(ctx context.Context, trigger string) (store.Template, er
 	if err != nil {
 		return store.Template{}, fmt.Errorf("template: resolve the runner release: %w", err)
 	}
-	t := store.Template{ID: ids.NewEnvironmentID(), SlimRelease: slim.Version, RunnerVersion: run.Version, LayerVersion: layer.Version,
+	lv := s.layerVersion()
+	t := store.Template{ID: ids.NewEnvironmentID(), SlimRelease: slim.Version, RunnerVersion: run.Version, LayerVersion: lv,
 		RunnerSHA256: run.SHA256, State: store.TemplateBuilding, Trigger: trigger}
 	// The "building" row is the guard against concurrent builds; the lock covers only its creation,
 	// not the slow start of the builder environment.
@@ -169,20 +228,15 @@ func (s *Service) Build(ctx context.Context, trigger string) (store.Template, er
 		return store.Template{}, err
 	}
 	s.record(ctx, "info", "template.build_started", fmt.Sprintf("building template %s (ubuntu-slim %s, runner %s, layer %s)",
-		t.ID, slim.Version, run.Version, layer.Version), t, map[string]any{"trigger": trigger})
+		t.ID, slim.Version, run.Version, lv), t, map[string]any{"trigger": trigger})
 
 	ref, vmid := s.Active(ctx)
 	envID, err := s.d.Environments.StartSpecial(ctx, controller.SpecialSpec{Kind: store.KindBuild, Template: ref, TemplateVMID: vmid,
 		Cores: s.d.Config.BuilderCores, MemoryMB: s.d.Config.BuilderMemoryMB, DiskGB: s.d.Config.BuilderDiskGB,
-		Env: map[string]string{ingest.EnvMode: ingest.ModeBuild}})
+		Env:       map[string]string{ingest.EnvMode: ingest.ModeBuild},
+		OnCreated: func(id string) { s.recordEnv(ctx, t.ID, id, false) }})
 	s.mu.Lock()
 	cur, gerr := s.d.Store.GetTemplate(ctx, t.ID)
-	if gerr == nil {
-		cur.BuildEnvID = envID
-		if uerr := s.d.Store.UpdateTemplate(ctx, cur); uerr != nil && err == nil {
-			err = uerr
-		}
-	}
 	if err == nil && gerr == nil && cur.State != store.TemplateBuilding && envID != "" {
 		// Failed (timeout, restart) while the builder was starting: do not leave it behind.
 		_ = s.d.Environments.RequestDestroy(ctx, envID)
@@ -193,6 +247,26 @@ func (s *Service) Build(ctx context.Context, trigger string) (store.Template, er
 	s.mu.Unlock()
 	t, _ = s.d.Store.GetTemplate(ctx, t.ID)
 	return t, nil
+}
+
+// recordEnv stores the build or verify environment of a version as soon as it exists.
+func (s *Service) recordEnv(ctx context.Context, id, envID string, verify bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, err := s.d.Store.GetTemplate(ctx, id)
+	if err != nil {
+		return
+	}
+	if !inProgress(t.State) {
+		_ = s.d.Environments.RequestDestroy(context.WithoutCancel(ctx), envID)
+		return
+	}
+	if verify {
+		t.VerifyEnvID = envID
+	} else {
+		t.BuildEnvID = envID
+	}
+	_ = s.d.Store.UpdateTemplate(ctx, t)
 }
 
 // templateFor finds the in-progress version an environment works for.
@@ -252,6 +326,18 @@ func (s *Service) ReceiveRootFS(ctx context.Context, envID string, r io.Reader, 
 	if !ok || t.BuildEnvID != envID || t.State != store.TemplateBuilding {
 		return ingest.ErrWrongKind
 	}
+	s.mu.Lock()
+	if s.uploading[t.ID] {
+		s.mu.Unlock()
+		return fmt.Errorf("%w: an upload for this build is already in progress", ingest.ErrWrongKind)
+	}
+	s.uploading[t.ID] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.uploading, t.ID)
+		s.mu.Unlock()
+	}()
 	path := s.archivePath(t.ID)
 	size, err := s.storeArchive(r, path, sum)
 	if err != nil {
@@ -348,13 +434,9 @@ func (s *Service) createAndVerify(ctx context.Context, id string) {
 	s.record(ctx, "info", "template.created", fmt.Sprintf("template %s created as %s; verifying", id, ref.ID), t, map[string]any{"ref": ref.ID})
 	envID, err := s.d.Environments.StartSpecial(ctx, controller.SpecialSpec{Kind: store.KindVerify,
 		Template: s.d.Runtime.TemplateEnvironmentRef(ref), TemplateVMID: t.VMID, Cores: 2, MemoryMB: 4096,
-		Env: map[string]string{ingest.EnvMode: ingest.ModeSelfTest, ingest.EnvSelfTestBlocked: strings.Join(s.d.Config.SelfTestBlocked, ",")}})
-	s.mu.Lock()
-	if cur, gerr := s.d.Store.GetTemplate(ctx, id); gerr == nil && cur.State == store.TemplateVerifying {
-		cur.VerifyEnvID = envID
-		_ = s.d.Store.UpdateTemplate(ctx, cur)
-	}
-	s.mu.Unlock()
+		Env:       map[string]string{ingest.EnvMode: ingest.ModeSelfTest, ingest.EnvSelfTestBlocked: strings.Join(s.d.Config.SelfTestBlocked, ",")},
+		OnCreated: func(envID string) { s.recordEnv(ctx, id, envID, true) }})
+	_ = envID
 	if err != nil {
 		s.fail(ctx, id, "verify", "the verify environment did not start: "+err.Error())
 	}
@@ -444,7 +526,7 @@ func (s *Service) conclude(ctx context.Context, id string, rep ingest.SelfTestRe
 func (s *Service) pinned(ctx context.Context) bool {
 	list, _ := s.d.Store.ListTemplates(ctx)
 	for _, t := range list {
-		if t.Pinned {
+		if t.Pinned && (t.State == store.TemplateReady || t.State == store.TemplateActive) {
 			return true
 		}
 	}
@@ -484,6 +566,9 @@ func (s *Service) Pin(ctx context.Context, id string, pinned bool) error {
 	t, err := s.d.Store.GetTemplate(ctx, id)
 	if err != nil {
 		return err
+	}
+	if pinned && t.State != store.TemplateReady && t.State != store.TemplateActive {
+		return fmt.Errorf("%w: only ready or active versions can be pinned (it is %s)", ErrNotReady, t.State)
 	}
 	t.Pinned = pinned
 	if err := s.d.Store.UpdateTemplate(ctx, t); err != nil {
@@ -544,6 +629,9 @@ func (s *Service) failLocked(ctx context.Context, id, stage, reason string) {
 	}
 	if t.RuntimeRef != "" {
 		_ = s.d.Runtime.DeleteTemplate(ctx, runtime.TemplateRef{ID: t.RuntimeRef})
+	} else {
+		// The runtime may have made the template without the ref being recorded (a restart).
+		_ = s.d.Runtime.CleanupTemplate(ctx, id)
 	}
 	_ = os.Remove(s.archivePath(id))
 	_ = os.Remove(s.archivePath(id) + ".part")
@@ -614,50 +702,97 @@ func (s *Service) Tick(ctx context.Context) {
 	s.check(ctx, now)
 }
 
+// envGone reports whether a build or verify environment stopped working: destroyed, failed,
+// missing, or powered off (completing) for more than a minute without its result arriving.
 func (s *Service) envGone(ctx context.Context, envID string) bool {
 	if envID == "" {
 		return false
 	}
 	e, err := s.d.Store.GetEnvironment(ctx, envID)
-	return errors.Is(err, store.ErrNotFound) || (err == nil && (e.State == "destroyed" || e.State == "failed"))
+	if errors.Is(err, store.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	switch e.State {
+	case "destroyed", "failed", "destroying":
+		return true
+	case "completing":
+		return s.now().Sub(e.StateChangedAt) > time.Minute
+	}
+	return false
 }
 
-// retain keeps the active version and the newest Keep-1 others; older built versions are
-// retired and deleted once no environment depends on them. The bootstrap template is never touched.
+// retain keeps the active version, the newest Keep-1 previously active versions (roll-back
+// targets), the newest never-activated candidate awaiting review, and every pinned version.
+// Other built versions are retired and deleted once no environment depends on them. The
+// bootstrap template is never touched.
 func (s *Service) retain(ctx context.Context) {
 	list, err := s.d.Store.ListTemplates(ctx)
 	if err != nil {
 		return
 	}
-	kept := 1 // the active version
+	s.retainFrom(ctx, list)
+}
+
+func (s *Service) retainFrom(ctx context.Context, list []store.Template) {
+	var previous, candidates []store.Template
 	for _, t := range list {
-		if t.RuntimeRef == "" || (t.State != store.TemplateReady && t.State != store.TemplateRetired) {
+		if t.RuntimeRef == "" || t.State != store.TemplateReady || t.Pinned {
 			continue
 		}
-		if t.State == store.TemplateReady {
-			if kept < s.d.Config.Keep {
-				kept++
-				continue
-			}
-			s.mu.Lock()
-			t.State = store.TemplateRetired
-			err := s.d.Store.UpdateTemplate(ctx, t)
-			s.mu.Unlock()
-			if err != nil {
-				continue
-			}
-			s.record(ctx, "info", "template.retired", "template "+t.ID+" retired (beyond the versions kept for roll-back)", t, nil)
+		if !t.ActivatedAt.IsZero() {
+			previous = append(previous, t)
+		} else {
+			candidates = append(candidates, t)
 		}
-		ref := runtime.TemplateRef{ID: t.RuntimeRef}
-		if used, err := s.d.Runtime.TemplateInUse(ctx, ref); err != nil || used {
+	}
+	sort.SliceStable(previous, func(i, j int) bool { return previous[i].ActivatedAt.After(previous[j].ActivatedAt) })
+	var retire []store.Template
+	if keep := s.d.Config.Keep - 1; len(previous) > keep {
+		retire = append(retire, previous[max(keep, 0):]...)
+	}
+	if len(candidates) > 1 {
+		retire = append(retire, candidates[1:]...) // list is newest first
+	}
+	for _, t := range retire {
+		s.mu.Lock()
+		cur, err := s.d.Store.GetTemplate(ctx, t.ID)
+		if err != nil || cur.State != store.TemplateReady || cur.Pinned {
+			s.mu.Unlock() // activated or pinned meanwhile
 			continue
 		}
-		if err := s.d.Runtime.DeleteTemplate(ctx, ref); err != nil {
+		cur.State = store.TemplateRetired
+		err = s.d.Store.UpdateTemplate(ctx, cur)
+		s.mu.Unlock()
+		if err == nil {
+			s.record(ctx, "info", "template.retired", "template "+cur.ID+" retired (beyond the versions kept for roll-back)", cur, nil)
+		}
+	}
+	all, err := s.d.Store.ListTemplates(ctx)
+	if err != nil {
+		return
+	}
+	for _, t := range all {
+		if t.State != store.TemplateRetired || t.RuntimeRef == "" {
+			continue
+		}
+		s.cacheMu.Lock()
+		delete(s.inUse, t.RuntimeRef) // decide on fresh data
+		s.cacheMu.Unlock()
+		if s.InUse(ctx, t) {
+			continue
+		}
+		if err := s.d.Runtime.DeleteTemplate(ctx, runtime.TemplateRef{ID: t.RuntimeRef}); err != nil {
 			continue
 		}
 		s.mu.Lock()
-		t.State = store.TemplateDeleted
-		_ = s.d.Store.UpdateTemplate(ctx, t)
+		cur, err := s.d.Store.GetTemplate(ctx, t.ID)
+		if err == nil && cur.State == store.TemplateRetired {
+			cur.State = store.TemplateDeleted
+			_ = s.d.Store.UpdateTemplate(ctx, cur)
+		}
 		s.mu.Unlock()
 		s.record(ctx, "info", "template.deleted", "template "+t.ID+" deleted", t, nil)
 	}
@@ -690,7 +825,7 @@ func (s *Service) check(ctx context.Context, now time.Time) {
 		trigger = "slim-release"
 	case active.RunnerVersion != run.Version:
 		trigger = "runner-release"
-	case active.LayerVersion != layer.Version:
+	case active.LayerVersion != s.layerVersion():
 		trigger = "layer"
 	default:
 		return
@@ -698,7 +833,7 @@ func (s *Service) check(ctx context.Context, now time.Time) {
 	// Do not retry the same inputs over and over: a failed attempt waits a day, a held one forever.
 	list, _ := s.d.Store.ListTemplates(ctx)
 	for _, t := range list {
-		if t.SlimRelease == slim.Version && t.RunnerVersion == run.Version && t.LayerVersion == layer.Version &&
+		if t.SlimRelease == slim.Version && t.RunnerVersion == run.Version && t.LayerVersion == s.layerVersion() &&
 			(t.State != store.TemplateFailed || now.Sub(t.UpdatedAt) < 24*time.Hour) && t.State != store.TemplateDeleted {
 			return
 		}

@@ -29,17 +29,22 @@ type FidelityReport struct {
 	Note       string `json:"note,omitempty"`
 }
 
-// layerItems are report entries the ghrm layer adds or changes on purpose (spec §8.2).
-var layerItems = []string{"docker server", "docker engine", "containerd", "systemd", "github actions runner", "ghrm"}
+// layerItems are report tools the ghrm layer installs or reinstalls on purpose (spec §8.2):
+// a version change or an extra entry for them is explained; a missing one never is.
+var layerItems = map[string]bool{
+	"docker server": true, "docker engine": true, "containerd": true, "docker client": true, "docker-buildx": true,
+	"docker compose v2": true, "systemd version": true, "systemd": true, "ghrm-agent": true, "github actions runner": true,
+}
 
-func explained(name string) bool {
-	n := strings.ToLower(name)
-	for _, item := range layerItems {
-		if strings.Contains(n, item) {
-			return true
-		}
+func explained(kind, name string) bool {
+	if kind == "missing" {
+		return false
 	}
-	return false
+	tool := name
+	if i := strings.LastIndex(name, " / "); i >= 0 {
+		tool = name[i+3:]
+	}
+	return layerItems[strings.ToLower(strings.TrimSpace(tool))]
 }
 
 type reportNode struct {
@@ -108,14 +113,14 @@ func CompareReports(published, actual []byte, checks []ingest.Check) (FidelityRe
 		av, ok := got[name]
 		switch {
 		case !ok:
-			rep.Differences = append(rep.Differences, Difference{Kind: "missing", Name: name, Expected: ev, Explained: explained(name)})
+			rep.Differences = append(rep.Differences, Difference{Kind: "missing", Name: name, Expected: ev, Explained: explained("missing", name)})
 		case av != ev:
-			rep.Differences = append(rep.Differences, Difference{Kind: "version", Name: name, Expected: ev, Actual: av, Explained: explained(name)})
+			rep.Differences = append(rep.Differences, Difference{Kind: "version", Name: name, Expected: ev, Actual: av, Explained: explained("version", name)})
 		}
 	}
 	for name, av := range got {
 		if _, ok := want[name]; !ok {
-			rep.Differences = append(rep.Differences, Difference{Kind: "extra", Name: name, Actual: av, Explained: explained(name)})
+			rep.Differences = append(rep.Differences, Difference{Kind: "extra", Name: name, Actual: av, Explained: explained("extra", name)})
 		}
 	}
 	sort.Slice(rep.Differences, func(i, j int) bool { return rep.Differences[i].Name < rep.Differences[j].Name })

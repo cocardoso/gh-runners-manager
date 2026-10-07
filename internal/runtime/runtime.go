@@ -127,6 +127,9 @@ type Templates interface {
 	DeleteTemplate(ctx context.Context, ref TemplateRef) error
 	// TemplateInUse reports whether an environment was cloned from the template and still exists.
 	TemplateInUse(ctx context.Context, ref TemplateRef) (bool, error)
+	// CleanupTemplate removes whatever a CreateTemplate for this version left behind (template
+	// guest, archive) when its reference was never recorded. It never touches a template in use.
+	CleanupTemplate(ctx context.Context, id string) error
 	// TemplateEnvironmentRef returns the reference environments use to clone the template (EnvironmentSpec.Template).
 	TemplateEnvironmentRef(ref TemplateRef) string
 }

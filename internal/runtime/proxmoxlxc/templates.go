@@ -65,20 +65,24 @@ func (r *Runtime) CreateTemplate(ctx context.Context, spec runtime.TemplateSpec)
 		r.allocMu.Unlock()
 		return runtime.TemplateRef{}, r.dropVolume(ctx, volid, err)
 	}
-	cores, mem := t.Cores, t.MemoryMB
-	if cores <= 0 {
-		cores = 2
-	}
-	if mem <= 0 {
-		mem = 2048
-	}
+	// A template's own size does not matter: every clone gets the cores and memory of its scale set.
+	cores, mem := 2, 2048
 	err = r.client.CreateLXC(ctx, r.cfg.Node, proxmox.CreateLXCOptions{
 		VMID: vmid, OSTemplate: volid, Hostname: "ghrm-template", Pool: r.cfg.Pool, Storage: r.cfg.Storage, RootFSGB: t.RootFSGB,
 		Cores: cores, MemoryMB: mem, Nameserver: t.Nameserver, Bridge: t.Bridge, Tags: []string{TagTemplate, templateTagPrefix + spec.ID},
 	})
 	r.allocMu.Unlock()
 	if err != nil {
-		return runtime.TemplateRef{}, r.dropTemplate(ctx, vmid, volid, fmt.Errorf("create template container %d: %w", vmid, err))
+		err = fmt.Errorf("create template container %d: %w", vmid, err)
+		var taskErr *proxmox.TaskError
+		if !errors.As(err, &taskErr) {
+			// Rejected before any task started: the guest at vmid (if any) is not ours.
+			return runtime.TemplateRef{}, r.dropVolume(ctx, volid, err)
+		}
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+		_ = r.client.WaitTask(cctx, r.cfg.Node, taskErr.UPID)
+		cancel()
+		return runtime.TemplateRef{}, r.dropTemplate(ctx, vmid, volid, err)
 	}
 	if t.FirewallGroup != "" {
 		if err := r.client.EnableFirewallGroup(ctx, r.cfg.Node, vmid, t.FirewallGroup); err != nil {
@@ -181,6 +185,28 @@ func (r *Runtime) DeleteTemplate(ctx context.Context, ref runtime.TemplateRef) e
 		return err
 	}
 	return nil
+}
+
+// CleanupTemplate implements runtime.Templates: it removes the guest tagged as this version
+// (in the template range, unless in use) and the version's archive.
+func (r *Runtime) CleanupTemplate(ctx context.Context, id string) error {
+	if !idPattern(id) {
+		return fmt.Errorf("%w: template id %q", runtime.ErrInvalidSpec, id)
+	}
+	guests, err := r.client.ListLXC(ctx, r.cfg.Node)
+	if err != nil {
+		return err
+	}
+	t := r.cfg.Templates
+	for _, g := range guests {
+		if g.VMID < t.VMIDStart || g.VMID > t.VMIDEnd || !g.HasTag(templateTagPrefix+id) {
+			continue
+		}
+		if err := r.DeleteTemplate(ctx, runtime.TemplateRef{ID: strconv.Itoa(g.VMID) + "/" + id}); err != nil {
+			return err
+		}
+	}
+	return r.dropVolume(ctx, t.Storage+":vztmpl/"+archiveName(id), nil)
 }
 
 func idPattern(id string) bool {

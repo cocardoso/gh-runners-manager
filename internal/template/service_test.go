@@ -39,16 +39,24 @@ type fakeEnvs struct {
 }
 
 func (f *fakeEnvs) StartSpecial(ctx context.Context, s controller.SpecialSpec) (string, error) {
+	f.mu.Lock()
+	f.n++
+	id := s.Kind + string(rune('0'+f.n))
+	f.mu.Unlock()
+	if err := f.db.CreateEnvironment(ctx, store.Environment{ID: id, Kind: s.Kind, State: "pending"}); err != nil {
+		return "", err
+	}
+	if s.OnCreated != nil {
+		s.OnCreated(id)
+	}
 	if f.gate != nil {
 		<-f.gate
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failStart {
-		return "", errors.New("clone failed")
+		return id, errors.New("clone failed")
 	}
-	f.n++
-	id := s.Kind + string(rune('0'+f.n))
 	f.started = append(f.started, s)
 	f.ids = append(f.ids, id)
 	ref, err := f.rt.Create(ctx, runtime.EnvironmentSpec{ID: strings.ToLower(id), Hostname: "h", Cores: 1, MemoryMB: 512, Template: s.Template})
@@ -56,7 +64,14 @@ func (f *fakeEnvs) StartSpecial(ctx context.Context, s controller.SpecialSpec) (
 		return "", err
 	}
 	f.refs[id] = ref
-	return id, f.db.CreateEnvironment(ctx, store.Environment{ID: id, Kind: s.Kind, State: "booting", RuntimeRef: ref.ID})
+	_, err = f.db.UpdateEnvironment(ctx, id, func(e *store.Environment) { e.RuntimeRef = ref.ID })
+	if err == nil {
+		_, err = f.db.TransitionEnvironment(ctx, id, nil, "provisioning", nil)
+	}
+	if err == nil {
+		_, err = f.db.TransitionEnvironment(ctx, id, nil, "booting", nil)
+	}
+	return id, err
 }
 
 func (f *fakeEnvs) RequestDestroy(ctx context.Context, id string) error {
@@ -479,4 +494,195 @@ func TestSlowEnvironmentStartDoesNotBlockOtherActions(t *testing.T) {
 	}
 	close(h.envs.gate)
 	<-done
+}
+
+// buildActive builds a version and lets it auto-activate.
+func (h *tharness) buildActive(t *testing.T) store.Template {
+	t.Helper()
+	ctx := context.Background()
+	tpl, err := h.s.Build(ctx, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := h.buildToVerifyFrom(t, tpl)
+	_ = h.s.ReceiveSelfTest(ctx, got.VerifyEnvID, okReport(published))
+	h.s.Wait()
+	h.now = h.now.Add(time.Minute)
+	return h.state(t, tpl.ID)
+}
+
+func (h *tharness) buildHeld(t *testing.T) store.Template {
+	t.Helper()
+	ctx := context.Background()
+	tpl, _ := h.s.Build(ctx, "manual")
+	got := h.buildToVerifyFrom(t, tpl)
+	_ = h.s.ReceiveSelfTest(ctx, got.VerifyEnvID, okReport(actual))
+	h.s.Wait()
+	h.now = h.now.Add(time.Minute)
+	return h.state(t, tpl.ID)
+}
+
+func TestRetainNeverRetiresAVersionActivatedMeanwhile(t *testing.T) {
+	h := newService(t, func(c *config.Templates) { c.Keep = 2 })
+	ctx := context.Background()
+	a := h.buildActive(t)
+	b := h.buildHeld(t)
+	c := h.buildHeld(t)
+	// retain decided from a stale listing while an admin activated b.
+	stale, _ := h.db.ListTemplates(ctx)
+	if err := h.s.Activate(ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	h.s.retainFrom(ctx, stale)
+	if got := h.state(t, b.ID); got.State != store.TemplateActive {
+		t.Fatalf("b = %s, want active (a stale retain must not retire it)", got.State)
+	}
+	_ = a
+	_ = c
+}
+
+func TestRetentionKeepsThePreviousActiveOverHeldCandidatesAndPinned(t *testing.T) {
+	h := newService(t, func(c *config.Templates) { c.Keep = 2 })
+	ctx := context.Background()
+	a := h.buildActive(t) // active
+	b := h.buildActive(t) // active; a becomes the previous (roll-back target)
+	held := h.buildHeld(t)
+	held2 := h.buildHeld(t)
+	h.s.Tick(ctx)
+	if got := h.state(t, a.ID); got.State != store.TemplateReady {
+		t.Fatalf("previous active = %s, want ready (kept for roll-back)", got.State)
+	}
+	if got := h.state(t, held2.ID); got.State != store.TemplateReady {
+		t.Fatalf("newest held candidate = %s, want ready (awaiting review)", got.State)
+	}
+	if got := h.state(t, held.ID); got.State == store.TemplateReady {
+		t.Fatalf("older held candidate should be retired, is %s", got.State)
+	}
+	// A pinned version is never retired.
+	h2 := newService(t, func(c *config.Templates) { c.Keep = 2 })
+	p := h2.buildActive(t)
+	h2.buildActive(t)
+	_ = h2.s.Pin(ctx, p.ID, true)
+	h2.buildHeld(t)
+	h2.buildHeld(t)
+	h2.s.Tick(ctx)
+	if got := h2.state(t, p.ID); got.State != store.TemplateReady || !got.Pinned {
+		t.Fatalf("pinned = %+v", got)
+	}
+	_ = b
+}
+
+func TestPinOnlyReadyOrActiveAndStalePinsDoNotBlock(t *testing.T) {
+	h := newService(t, nil)
+	ctx := context.Background()
+	tpl, _ := h.s.Build(ctx, "manual")
+	if err := h.s.Pin(ctx, tpl.ID, true); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("pinning a building version = %v, want ErrNotReady", err)
+	}
+	// A pin left on a failed version (older data) must not block activation.
+	h.s.AgentEvent(ctx, tpl.BuildEnvID, ingest.EventBuildFailed, h.now, map[string]any{"step": "slim", "error": "x"})
+	failed := h.state(t, tpl.ID)
+	failed.Pinned = true
+	_ = h.db.UpdateTemplate(ctx, failed)
+	if got := h.buildActive(t); got.State != store.TemplateActive {
+		t.Fatalf("a pin on a failed version blocked activation: %s", got.State)
+	}
+}
+
+func TestRecoverWhileCreatingRemovesTheHalfMadeTemplate(t *testing.T) {
+	h := newService(t, nil)
+	ctx := context.Background()
+	tpl, _ := h.s.Build(ctx, "manual")
+	// The runtime created the template but the control plane died before recording it.
+	_, _ = h.rt.CreateTemplate(ctx, runtime.TemplateSpec{ID: tpl.ID, Archive: strings.NewReader("x"), Size: 1, SHA256: strings.Repeat("a", 64)})
+	cur := h.state(t, tpl.ID)
+	cur.State = store.TemplateCreating
+	_ = h.db.UpdateTemplate(ctx, cur)
+	h.s.Recover(ctx)
+	if ids := h.rt.TemplateIDs(); len(ids) != 0 {
+		t.Fatalf("half-made template left after a restart: %v", ids)
+	}
+}
+
+func TestBuilderIDIsRecordedBeforeItStarts(t *testing.T) {
+	h := newService(t, nil)
+	ctx := context.Background()
+	h.envs.gate = make(chan struct{})
+	go func() { _, _ = h.s.Build(ctx, "manual") }()
+	deadline := time.Now().Add(2 * time.Second)
+	var tpl store.Template
+	for time.Now().Before(deadline) {
+		list, _ := h.db.ListTemplates(ctx)
+		if len(list) == 2 && list[0].BuildEnvID != "" {
+			tpl = list[0]
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if tpl.BuildEnvID == "" {
+		t.Fatal("the builder ID must be recorded as soon as its row exists, so a restart can destroy it")
+	}
+	close(h.envs.gate)
+	h.s.Wait()
+}
+
+func TestAgentChangesChangeTheLayerVersion(t *testing.T) {
+	h := newService(t, nil)
+	v1 := h.s.layerVersion()
+	_ = os.WriteFile(h.s.agentPath(), []byte("\x7fELF a newer agent"), 0o755)
+	if v2 := h.s.layerVersion(); v2 == v1 || !strings.HasPrefix(v2, layerVersionPrefix()) {
+		t.Fatalf("layer version %q -> %q, want a change when the agent changes", v1, v2)
+	}
+}
+
+func TestPoweredOffBuilderFailsWithoutWaitingForTheTimeout(t *testing.T) {
+	h := newService(t, nil)
+	ctx := context.Background()
+	tpl, _ := h.s.Build(ctx, "manual")
+	_, _ = h.db.TransitionEnvironment(ctx, tpl.BuildEnvID, nil, "connected", nil)
+	_, _ = h.db.TransitionEnvironment(ctx, tpl.BuildEnvID, nil, "idle", nil)
+	_, _ = h.db.TransitionEnvironment(ctx, tpl.BuildEnvID, nil, "completing", nil)
+	h.now = h.now.Add(2 * time.Minute)
+	h.s.Tick(ctx)
+	if got := h.state(t, tpl.ID); got.State != store.TemplateFailed {
+		t.Fatalf("builder powered off without an archive: %s", got.State)
+	}
+}
+
+func TestBuildWhileBuildingNeedsNoGitHub(t *testing.T) {
+	h := newService(t, nil)
+	ctx := context.Background()
+	_, _ = h.s.Build(ctx, "manual")
+	h.rel.err = errors.New("github is down")
+	if _, err := h.s.Build(ctx, "manual"); !errors.Is(err, ErrBuildRunning) {
+		t.Fatalf("err = %v, want ErrBuildRunning without asking GitHub", err)
+	}
+}
+
+func TestConcurrentUploadsAreRefused(t *testing.T) {
+	h := newService(t, nil)
+	ctx := context.Background()
+	tpl, _ := h.s.Build(ctx, "manual")
+	pr, pw := io.Pipe()
+	first := make(chan error, 1)
+	go func() { first <- h.s.ReceiveRootFS(ctx, tpl.BuildEnvID, pr, strings.Repeat("0", 64)) }()
+	time.Sleep(50 * time.Millisecond)
+	r, sum := archiveOf([]byte("second"))
+	if err := h.s.ReceiveRootFS(ctx, tpl.BuildEnvID, r, sum); !errors.Is(err, ingest.ErrWrongKind) {
+		t.Fatalf("second upload = %v, want refused while one is in flight", err)
+	}
+	_ = pw.Close()
+	<-first
+	h.s.Wait()
+}
+
+func TestRecordedCloneKeepsATemplateInUse(t *testing.T) {
+	h := newService(t, nil)
+	ctx := context.Background()
+	a := h.buildActive(t)
+	// A job environment cloned from a, not yet visible to the runtime scan.
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "jobx", State: "provisioning", TemplateVMID: a.VMID})
+	if !h.s.InUse(ctx, a) {
+		t.Fatal("a recorded live clone must keep the template in use")
+	}
 }

@@ -84,3 +84,14 @@ func TestStartSpecialProvisionsABuilder(t *testing.T) {
 }
 
 func refOf(e store.Environment) runtime.Ref { return runtime.Ref{ID: e.RuntimeRef} }
+
+func TestStuckBuildersStillHitLifecycleTimeouts(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "bld-stuck", Kind: store.KindBuild, State: "provisioning"})
+	h.now = h.now.Add(time.Hour)
+	h.c.Reap(ctx)
+	if e, _ := h.db.GetEnvironment(ctx, "bld-stuck"); e.State == "provisioning" {
+		t.Fatal("a builder stuck in provisioning must time out like any environment")
+	}
+}

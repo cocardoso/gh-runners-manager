@@ -51,8 +51,6 @@ type TemplateConfig struct {
 	VMIDEnd       int
 	Storage       string // storage for the archives ("vztmpl" content), e.g. local
 	RootFSGB      int
-	Cores         int
-	MemoryMB      int
 	Nameserver    string
 	Bridge        string // job VNet
 	FirewallGroup string // security group, e.g. gh-runner

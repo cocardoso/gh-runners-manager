@@ -363,7 +363,10 @@ flowchart LR
     verify --> compare["compare with GitHub's published report"]
     compare -- "all checks pass, no unexpected differences, nothing pinned" --> active["active template"]
     compare -- "unexpected differences or pinned" --> ready["ready (manual activation)"]
-    verify -- "a check fails" --> failed["failed: guests, template and archive removed"]
+    verify -- "a check fails, timeout" --> failed["failed: guests, template and archive removed"]
+    b1 -- "builder stops, timeout, restart" --> failed
+    b3 -- "bad SHA-256, too large" --> failed
+    create -- "Proxmox error, restart" --> failed
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     class rel,runner,layer,b1,b2,b3,cp,up,create,verify,compare,active,ready,failed done
@@ -379,7 +382,7 @@ stateDiagram-v2
     verifying --> ready: checks pass
     ready --> active: auto (no unexpected differences, nothing pinned) or manual
     active --> ready: another version activated (kept for roll-back)
-    ready --> retired: beyond keep (default 2)
+    ready --> retired: not kept (see retention)
     retired --> deleted: no environment uses it
     building --> failed
     creating --> failed
@@ -389,3 +392,5 @@ stateDiagram-v2
 ```
 
 A failed build never changes the active template. Only one build runs at a time. The bootstrap template is never deleted.
+
+Retention keeps the active version, the newest `keep - 1` versions that were active before (roll-back targets), the newest version that was never activated (awaiting review), and every pinned version. Other built versions are retired, and deleted once no environment uses them: neither a live environment recorded as cloned from the template nor a linked clone the hypervisor reports.

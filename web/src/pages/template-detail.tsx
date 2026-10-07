@@ -125,6 +125,14 @@ function VerificationTab({ t, fid }: { t: TemplateView; fid: Fidelity }) {
 }
 
 function FidelityTab({ fid }: { fid: Fidelity }) {
+  if (!fid.differences && !fid.note)
+    return (
+      <Empty
+        icon={<QuestionIcon size={48} className="text-kumo-inactive" />}
+        title="Not verified yet"
+        description="The fidelity report appears once a clone of this template has run the self-test and its software report was compared with GitHub's."
+      />
+    );
   const diffs = [...(fid.differences ?? [])].sort((a, b) => Number(a.explained) - Number(b.explained) || a.name.localeCompare(b.name));
   const unexpected = fid.unexpected ?? 0;
   return (

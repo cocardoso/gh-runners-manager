@@ -197,3 +197,22 @@ func TestTemplatesCheckIntervalZeroDisables(t *testing.T) {
 		t.Fatalf("check_interval: 0s = %v, want 0 (disabled)", cfg.Templates.CheckInterval.Std())
 	}
 }
+
+func TestTemplatesValidationGaps(t *testing.T) {
+	for _, bad := range []string{
+		"templates:\n  vmid_range: {start: 1950, end: 1958}\n  max_archive_bytes: -1\n",
+		strings.Replace(validYAML, "template_vmid: 9000", "template_vmid: 1951", 1) + "templates:\n  vmid_range: {start: 1950, end: 1958}\n",
+	} {
+		body := bad
+		if !strings.Contains(bad, "proxmox:") {
+			body = validYAML + bad
+		}
+		c, err := load(t, body)
+		if err == nil {
+			err = c.Validate()
+		}
+		if err == nil {
+			t.Errorf("config %q should be invalid", bad)
+		}
+	}
+}

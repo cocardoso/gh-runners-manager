@@ -81,6 +81,9 @@ type Server struct {
 	FailCreate bool
 	// FailUpload makes uploads answer 500 before reading the body.
 	FailUpload bool
+	// TakeVMIDOnCreate makes the next container creation find its VMID taken by a foreign
+	// guest (created at that moment) and answer synchronously with an error.
+	TakeVMIDOnCreate bool
 
 	volumes   map[string]Volume
 	firewalls map[int]*Firewall
@@ -563,6 +566,10 @@ func (s *Server) createLXC(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	_ = r.ParseForm()
 	vmid, _ := strconv.Atoi(r.PostForm.Get("vmid"))
+	if s.TakeVMIDOnCreate {
+		s.TakeVMIDOnCreate = false
+		s.guests[vmid] = &Guest{VMID: vmid, Type: "lxc", Status: "stopped", Name: "foreign", Config: map[string]string{}}
+	}
 	if _, taken := s.guests[vmid]; taken {
 		fail(w, http.StatusInternalServerError, fmt.Sprintf("CT %d already exists", vmid))
 		return

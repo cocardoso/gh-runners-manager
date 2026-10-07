@@ -132,3 +132,40 @@ func sha256hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
+
+func TestCleanupTemplateRemovesAnUnrecordedTemplate(t *testing.T) {
+	h := templateHarness(t)
+	ctx := context.Background()
+	if _, err := h.rt.CreateTemplate(ctx, withSHA(archive())); err != nil {
+		t.Fatal(err)
+	}
+	h.srv.AddGuest(proxmoxtest.Guest{VMID: 952, Type: "lxc", Template: true, Tags: "ghrm-template;ghrmtpl-other", Config: map[string]string{"pool": "ghrm"}})
+	if err := h.rt.CleanupTemplate(ctx, "tpl01"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.srv.Guest(950); ok {
+		t.Fatal("the unrecorded template guest must be removed")
+	}
+	if _, ok := h.srv.Guest(952); !ok {
+		t.Fatal("another version's template must be left alone")
+	}
+	if vols := h.srv.Volumes(); len(vols) != 0 {
+		t.Fatalf("archive left: %+v", vols)
+	}
+}
+
+func TestCreateTemplateRejectedSynchronouslyKeepsTheExistingGuest(t *testing.T) {
+	h := templateHarness(t)
+	ctx := context.Background()
+	// Another client takes the VMID between allocation and creation.
+	h.srv.TakeVMIDOnCreate = true
+	if _, err := h.rt.CreateTemplate(ctx, withSHA(archive())); err == nil {
+		t.Fatal("want an error")
+	}
+	if g, ok := h.srv.Guest(950); !ok || g.Name != "foreign" {
+		t.Fatal("a guest ghrm did not create must never be deleted")
+	}
+	if vols := h.srv.Volumes(); len(vols) != 0 {
+		t.Fatalf("archive left: %+v", vols)
+	}
+}

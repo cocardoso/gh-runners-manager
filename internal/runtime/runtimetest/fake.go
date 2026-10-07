@@ -41,6 +41,7 @@ type Fake struct {
 	TemplateDelay time.Duration
 
 	templates map[string]int64 // template ID -> archive size
+	tplVMID   int              // last template "VMID" handed out (refs look like Proxmox ones)
 }
 
 type fakeEnv struct {
@@ -179,7 +180,11 @@ func (f *Fake) CreateTemplate(ctx context.Context, spec runtime.TemplateSpec) (r
 		f.templates = map[string]int64{}
 	}
 	f.templates[spec.ID] = n
-	return runtime.TemplateRef{ID: "tpl/" + spec.ID}, nil
+	if f.tplVMID == 0 {
+		f.tplVMID = 949
+	}
+	f.tplVMID++
+	return runtime.TemplateRef{ID: fmt.Sprintf("%d/%s", f.tplVMID, spec.ID)}, nil
 }
 
 // TemplateEnvironmentRef implements runtime.Templates.
@@ -204,7 +209,16 @@ func (f *Fake) DeleteTemplate(ctx context.Context, ref runtime.TemplateRef) erro
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.templates, strings.TrimPrefix(ref.ID, "tpl/"))
+	_, id, _ := strings.Cut(ref.ID, "/")
+	delete(f.templates, id)
+	return nil
+}
+
+// CleanupTemplate implements runtime.Templates.
+func (f *Fake) CleanupTemplate(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.templates, id)
 	return nil
 }
 

@@ -385,6 +385,9 @@ type SpecialSpec struct {
 	MemoryMB     int
 	DiskGB       int
 	Env          map[string]string // mode variables; the ingest variables are added here
+	// OnCreated, when set, receives the environment ID as soon as its row exists, before the
+	// slow runtime work, so the caller can record it (and clean it up after a restart).
+	OnCreated func(id string)
 }
 
 // StartSpecial provisions a build or verify environment and starts it. It has no scale set
@@ -403,6 +406,9 @@ func (c *Controller) StartSpecial(ctx context.Context, s SpecialSpec) (string, e
 	_, _ = c.d.Recorder.Info(ctx, "environment.created", "environment created for a template "+s.Kind,
 		events.Refs{EnvironmentID: id}, map[string]any{"kind": s.Kind})
 	c.log(ctx, id, "control-plane", "created for a template %s", s.Kind)
+	if s.OnCreated != nil {
+		s.OnCreated(id)
+	}
 	if _, err := c.transition(ctx, id, []string{"pending"}, environment.Provisioning, nil); err != nil {
 		return id, err
 	}

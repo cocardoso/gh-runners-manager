@@ -69,3 +69,30 @@ func TestCompareIdenticalAndMalformed(t *testing.T) {
 		t.Fatal("malformed actual report must be an error")
 	}
 }
+
+func TestExplainedOnlyForLayerItems(t *testing.T) {
+	pub := `{"NodeType":"HeaderNode","Title":"R","Children":[
+	 {"NodeType":"ToolVersionNode","ToolName":"GitHub Actions Runner","Version":"2.338.0"},
+	 {"NodeType":"ToolVersionNode","ToolName":"Docker Client","Version":"28.4.0"},
+	 {"NodeType":"ToolVersionNode","ToolName":"Docker Engine API helper","Version":"1"}]}`
+	act := `{"NodeType":"HeaderNode","Title":"R","Children":[
+	 {"NodeType":"ToolVersionNode","ToolName":"Docker Client","Version":"28.5.1"},
+	 {"NodeType":"ToolVersionNode","ToolName":"Docker Engine API helper","Version":"2"}]}`
+	rep, err := CompareReports([]byte(pub), []byte(act), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, d := range rep.Differences {
+		got[d.Kind+" "+d.Name] = d.Explained
+	}
+	if got["missing GitHub Actions Runner"] {
+		t.Error("a missing runner is never explained by the layer")
+	}
+	if !got["version Docker Client"] {
+		t.Error("the layer reinstalls the Docker CLI from Docker's repository: a version change is explained")
+	}
+	if got["version Docker Engine API helper"] {
+		t.Error("only exact layer items are explained, not substrings")
+	}
+}

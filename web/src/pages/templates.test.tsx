@@ -114,3 +114,10 @@ test("formatBytes", async () => {
   expect(formatBytes(5 * 1024 ** 2)).toBe("5 MB");
   expect(formatBytes(1_900_000_000)).toBe("1.77 GB");
 });
+
+test("an unverified version does not claim to match", async () => {
+  mockApi({ "/api/v1/templates/tplb": { ...templates[0], id: "tplb", state: "building", report: undefined }, "/api/v1/settings": settings });
+  renderApp("/templates/tplb?tab=fidelity");
+  expect(await screen.findByText("Not verified yet")).toBeInTheDocument();
+  expect(screen.queryByText("Matches GitHub's software report")).not.toBeInTheDocument();
+});
