@@ -21,10 +21,15 @@ const (
 	TagEnvironment = "ghrm-env"
 	idTagPrefix    = "ghrmid-"
 	cleanupTimeout = 2 * time.Minute
+	destroyRetries = 3
 )
 
-// ErrNoFreeVMID means every VMID in the configured range is taken.
-var ErrNoFreeVMID = errors.New("proxmoxlxc: no free VMID in range")
+var (
+	// ErrNoFreeVMID means every VMID in the configured range is taken.
+	ErrNoFreeVMID = errors.New("proxmoxlxc: no free VMID in range")
+	// ErrNotOwned means a ref points at a guest that ghrm does not manage.
+	ErrNotOwned = errors.New("proxmoxlxc: guest is not a ghrm environment")
+)
 
 // Config configures the runtime.
 type Config struct {
@@ -38,16 +43,26 @@ type Config struct {
 }
 
 // Runtime implements runtime.Runtime on Proxmox LXC.
+//
+// Refs have the form "<vmid>/<environment id>". Every operation on an existing
+// environment first looks the guest up in the node's LXC list, which a
+// pool-scoped token sees only for guests in its pool. A guest that is absent,
+// or whose ghrmid tag names another environment (the VMID was reused), is
+// treated as gone; per-guest endpoints are never asked about guests that may
+// have left the pool, because Proxmox answers those with 403.
 type Runtime struct {
 	client *proxmox.Client
 	cfg    Config
 	sleep  func(context.Context, time.Duration) error
-	mu     sync.Mutex // serializes Create so VMID allocation cannot race
+
+	allocMu sync.Mutex // held from VMID allocation until the clone exists
+	idMu    sync.Mutex
+	idLocks map[string]*sync.Mutex // per environment ID, for Create idempotency
 }
 
 // New returns a Runtime.
 func New(client *proxmox.Client, cfg Config) *Runtime {
-	return &Runtime{client: client, cfg: cfg, sleep: sleepContext}
+	return &Runtime{client: client, cfg: cfg, sleep: sleepContext, idLocks: map[string]*sync.Mutex{}}
 }
 
 // SetSleep replaces the firewall-settle sleep (tests only).
@@ -67,14 +82,20 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func refFor(vmid int) runtime.Ref { return runtime.Ref{ID: strconv.Itoa(vmid)} }
+func refFor(vmid int, envID string) runtime.Ref {
+	return runtime.Ref{ID: strconv.Itoa(vmid) + "/" + envID}
+}
 
-func vmidOf(ref runtime.Ref) (int, error) {
-	vmid, err := strconv.Atoi(ref.ID)
-	if err != nil || vmid <= 0 {
-		return 0, fmt.Errorf("proxmoxlxc: invalid ref %q", ref.ID)
+func (r *Runtime) parseRef(ref runtime.Ref) (int, string, error) {
+	vmidStr, envID, ok := strings.Cut(ref.ID, "/")
+	vmid, err := strconv.Atoi(vmidStr)
+	if !ok || err != nil || vmid <= 0 || envID == "" {
+		return 0, "", fmt.Errorf("proxmoxlxc: invalid ref %q", ref.ID)
 	}
-	return vmid, nil
+	if vmid < r.cfg.VMIDStart || vmid > r.cfg.VMIDEnd {
+		return 0, "", fmt.Errorf("%w: VMID %d is outside %d-%d", ErrNotOwned, vmid, r.cfg.VMIDStart, r.cfg.VMIDEnd)
+	}
+	return vmid, envID, nil
 }
 
 func idTag(id string) string { return idTagPrefix + id }
@@ -101,13 +122,39 @@ func encodeEnv(env map[string]string) string {
 	return strings.Join(pairs, "\x00")
 }
 
+func (r *Runtime) lockID(id string) func() {
+	r.idMu.Lock()
+	m, ok := r.idLocks[id]
+	if !ok {
+		m = &sync.Mutex{}
+		r.idLocks[id] = m
+	}
+	r.idMu.Unlock()
+	m.Lock()
+	return m.Unlock
+}
+
+// lookup returns the guest for vmid if it exists, is visible and belongs to envID.
+func (r *Runtime) lookup(ctx context.Context, vmid int, envID string) (*proxmox.LXC, error) {
+	guests, err := r.client.ListLXC(ctx, r.cfg.Node)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range guests {
+		if g.VMID == vmid && g.Template != 1 && g.HasTag(idTag(envID)) {
+			return &g, nil
+		}
+	}
+	return nil, nil
+}
+
 // Create implements runtime.Runtime.
 func (r *Runtime) Create(ctx context.Context, spec runtime.EnvironmentSpec) (runtime.Ref, error) {
 	if err := spec.Validate(); err != nil {
 		return runtime.Ref{}, err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	unlock := r.lockID(spec.ID)
+	defer unlock()
 
 	guests, err := r.client.ListLXC(ctx, r.cfg.Node)
 	if err != nil {
@@ -115,42 +162,64 @@ func (r *Runtime) Create(ctx context.Context, spec runtime.EnvironmentSpec) (run
 	}
 	for _, g := range guests {
 		if g.HasTag(idTag(spec.ID)) {
-			return refFor(g.VMID), nil
+			return refFor(g.VMID, spec.ID), nil
 		}
 	}
 
-	vmid, err := r.allocateVMID(ctx)
+	vmid, err := r.cloneNew(ctx, spec)
 	if err != nil {
 		return runtime.Ref{}, err
-	}
-	opts := proxmox.CloneOptions{
-		Hostname:    spec.Hostname,
-		Description: "Managed by gh-runners-manager. Environment " + spec.ID + ".",
-		Pool:        r.cfg.Pool,
-	}
-	if err := r.client.CloneLXC(ctx, r.cfg.Node, r.cfg.TemplateVMID, vmid, opts); err != nil {
-		return runtime.Ref{}, fmt.Errorf("clone template %d to %d: %w", r.cfg.TemplateVMID, vmid, err)
 	}
 
 	values := url.Values{
 		"cores":  {strconv.Itoa(spec.Cores)},
 		"memory": {strconv.Itoa(spec.MemoryMB)},
 		"swap":   {"0"},
-		"tags":   {TagEnvironment + ";" + idTag(spec.ID)},
 	}
 	if len(spec.Env) > 0 {
 		values.Set("env", encodeEnv(spec.Env))
 	}
 	if err := r.client.SetLXCConfig(ctx, r.cfg.Node, vmid, values); err != nil {
-		r.cleanup(ctx, vmid)
-		return runtime.Ref{}, fmt.Errorf("configure %d: %w", vmid, err)
+		return runtime.Ref{}, r.abandon(ctx, vmid, fmt.Errorf("configure %d: %w", vmid, err))
 	}
 	// The firewall rules of a new guest are applied on pve-firewall's next cycle (spec §10.3).
 	if err := r.sleep(ctx, r.cfg.FirewallSettle); err != nil {
-		r.cleanup(ctx, vmid)
-		return runtime.Ref{}, fmt.Errorf("wait for firewall on %d: %w", vmid, err)
+		return runtime.Ref{}, r.abandon(ctx, vmid, fmt.Errorf("wait for firewall on %d: %w", vmid, err))
 	}
-	return refFor(vmid), nil
+	return refFor(vmid, spec.ID), nil
+}
+
+// cloneNew allocates a VMID, clones the template into it and tags the clone at once,
+// so that a half-created guest is always visible to List. The allocation lock is
+// released as soon as the clone exists: from then on its VMID is taken.
+func (r *Runtime) cloneNew(ctx context.Context, spec runtime.EnvironmentSpec) (int, error) {
+	r.allocMu.Lock()
+	vmid, err := r.allocateVMID(ctx)
+	if err != nil {
+		r.allocMu.Unlock()
+		return 0, err
+	}
+	opts := proxmox.CloneOptions{
+		Hostname:    spec.Hostname,
+		Description: "Managed by gh-runners-manager. Environment " + spec.ID + ".",
+		Pool:        r.cfg.Pool,
+	}
+	err = r.client.CloneLXC(ctx, r.cfg.Node, r.cfg.TemplateVMID, vmid, opts)
+	r.allocMu.Unlock()
+	if err != nil {
+		err = fmt.Errorf("clone template %d to %d: %w", r.cfg.TemplateVMID, vmid, err)
+		var taskErr *proxmox.TaskError
+		if errors.As(err, &taskErr) {
+			// The clone task started: wait for it to end, then remove whatever it produced.
+			return 0, r.abandonTask(ctx, vmid, taskErr.UPID, err)
+		}
+		return 0, err // rejected before any task started: nothing of ours exists
+	}
+	tags := url.Values{"tags": {TagEnvironment + ";" + idTag(spec.ID)}}
+	if err := r.client.SetLXCConfig(ctx, r.cfg.Node, vmid, tags); err != nil {
+		return 0, r.abandon(ctx, vmid, fmt.Errorf("tag %d: %w", vmid, err))
+	}
+	return vmid, nil
 }
 
 func (r *Runtime) allocateVMID(ctx context.Context) (int, error) {
@@ -166,79 +235,138 @@ func (r *Runtime) allocateVMID(ctx context.Context) (int, error) {
 	return 0, fmt.Errorf("%w %d-%d", ErrNoFreeVMID, r.cfg.VMIDStart, r.cfg.VMIDEnd)
 }
 
-// cleanup destroys a half-created guest even if ctx was cancelled.
-func (r *Runtime) cleanup(ctx context.Context, vmid int) {
+// abandon destroys a guest this Create made, even if ctx was cancelled, and
+// reports a cleanup failure together with the original error.
+func (r *Runtime) abandon(ctx context.Context, vmid int, cause error) error {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 	defer cancel()
-	_ = r.destroy(cctx, vmid)
+	if err := r.destroyVMID(cctx, vmid, ""); err != nil {
+		return errors.Join(cause, fmt.Errorf("cleanup of %d failed, remove it manually: %w", vmid, err))
+	}
+	return cause
+}
+
+// abandonTask waits for a started clone task to finish, then destroys its result.
+func (r *Runtime) abandonTask(ctx context.Context, vmid int, upid string, cause error) error {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	defer cancel()
+	_ = r.client.WaitTask(cctx, r.cfg.Node, upid) // a failed clone leaves nothing or a partial guest
+	if err := r.destroyVMID(cctx, vmid, ""); err != nil {
+		return errors.Join(cause, fmt.Errorf("cleanup of %d failed, remove it manually: %w", vmid, err))
+	}
+	return cause
 }
 
 // Start implements runtime.Runtime.
 func (r *Runtime) Start(ctx context.Context, ref runtime.Ref) error {
-	vmid, err := vmidOf(ref)
+	vmid, envID, err := r.parseRef(ref)
 	if err != nil {
 		return err
 	}
-	return mapNotFound(r.client.StartLXC(ctx, r.cfg.Node, vmid))
+	g, err := r.lookup(ctx, vmid, envID)
+	if err != nil {
+		return err
+	}
+	if g == nil {
+		return fmt.Errorf("%w: %s", runtime.ErrNotFound, ref)
+	}
+	return r.client.StartLXC(ctx, r.cfg.Node, vmid)
 }
 
-// Stop implements runtime.Runtime.
+// Stop implements runtime.Runtime. Stopping a stopped environment succeeds.
 func (r *Runtime) Stop(ctx context.Context, ref runtime.Ref) error {
-	vmid, err := vmidOf(ref)
+	vmid, envID, err := r.parseRef(ref)
 	if err != nil {
 		return err
 	}
-	return mapNotFound(r.client.StopLXC(ctx, r.cfg.Node, vmid))
+	g, err := r.lookup(ctx, vmid, envID)
+	if err != nil {
+		return err
+	}
+	if g == nil {
+		return fmt.Errorf("%w: %s", runtime.ErrNotFound, ref)
+	}
+	if g.Status != "running" {
+		return nil
+	}
+	return r.client.StopLXC(ctx, r.cfg.Node, vmid)
 }
 
 // Destroy implements runtime.Runtime.
 func (r *Runtime) Destroy(ctx context.Context, ref runtime.Ref) error {
-	vmid, err := vmidOf(ref)
+	vmid, envID, err := r.parseRef(ref)
 	if err != nil {
 		return err
 	}
-	return r.destroy(ctx, vmid)
+	return r.destroyVMID(ctx, vmid, envID)
 }
 
-func (r *Runtime) destroy(ctx context.Context, vmid int) error {
-	st, err := r.client.LXCCurrentStatus(ctx, r.cfg.Node, vmid)
-	if errors.Is(err, proxmox.ErrNotFound) {
+// destroyVMID stops and deletes vmid. With envID set, a guest that is not visible
+// or belongs to another environment is left alone and reported as gone. With envID
+// empty (cleanup of a guest this process just cloned), the ownership check is skipped.
+// Each attempt re-reads the guest, so a concurrent destroy or a guest stopping on
+// its own does not turn into a failure.
+func (r *Runtime) destroyVMID(ctx context.Context, vmid int, envID string) error {
+	var lastErr error
+	for range destroyRetries {
+		st, err := r.guestState(ctx, vmid, envID)
+		if err != nil {
+			return err
+		}
+		if st == "" {
+			return nil
+		}
+		if st == "running" {
+			if err := r.client.StopLXC(ctx, r.cfg.Node, vmid); err != nil {
+				lastErr = fmt.Errorf("stop %d: %w", vmid, err)
+				continue
+			}
+		}
+		if err := r.client.DeleteLXC(ctx, r.cfg.Node, vmid); err != nil {
+			if errors.Is(err, proxmox.ErrNotFound) {
+				return nil
+			}
+			lastErr = fmt.Errorf("delete %d: %w", vmid, err)
+			continue
+		}
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-	if st.Status == "running" {
-		if err := r.client.StopLXC(ctx, r.cfg.Node, vmid); err != nil && !errors.Is(err, proxmox.ErrNotFound) {
-			return fmt.Errorf("stop %d: %w", vmid, err)
+	return lastErr
+}
+
+// guestState returns the guest's status, or "" when it is gone (or not ours).
+func (r *Runtime) guestState(ctx context.Context, vmid int, envID string) (string, error) {
+	if envID != "" {
+		g, err := r.lookup(ctx, vmid, envID)
+		if err != nil || g == nil {
+			return "", err
 		}
+		return g.Status, nil
 	}
-	if err := r.client.DeleteLXC(ctx, r.cfg.Node, vmid); err != nil && !errors.Is(err, proxmox.ErrNotFound) {
-		return fmt.Errorf("delete %d: %w", vmid, err)
+	cur, err := r.client.LXCCurrentStatus(ctx, r.cfg.Node, vmid)
+	if errors.Is(err, proxmox.ErrNotFound) {
+		return "", nil
 	}
-	return nil
+	if err != nil {
+		return "", err
+	}
+	return cur.Status, nil
 }
 
 // Status implements runtime.Runtime.
 func (r *Runtime) Status(ctx context.Context, ref runtime.Ref) (runtime.Status, error) {
-	vmid, err := vmidOf(ref)
+	vmid, envID, err := r.parseRef(ref)
 	if err != nil {
 		return runtime.Status{}, err
 	}
-	cur, err := r.client.LXCCurrentStatus(ctx, r.cfg.Node, vmid)
-	if err != nil {
-		return runtime.Status{}, mapNotFound(err)
-	}
-	st := runtime.Status{Ref: ref, Running: cur.Status == "running"}
-	guests, err := r.client.ListLXC(ctx, r.cfg.Node)
+	g, err := r.lookup(ctx, vmid, envID)
 	if err != nil {
 		return runtime.Status{}, err
 	}
-	for _, g := range guests {
-		if g.VMID == vmid {
-			st.EnvironmentID = environmentID(g)
-		}
+	if g == nil {
+		return runtime.Status{}, fmt.Errorf("%w: %s", runtime.ErrNotFound, ref)
 	}
+	st := runtime.Status{Ref: ref, EnvironmentID: envID, Running: g.Status == "running"}
 	if st.Running {
 		if ifaces, err := r.client.LXCInterfaces(ctx, r.cfg.Node, vmid); err == nil {
 			for _, i := range ifaces {
@@ -262,7 +390,8 @@ func (r *Runtime) List(ctx context.Context) ([]runtime.Status, error) {
 		if g.Template == 1 || !g.HasTag(TagEnvironment) {
 			continue
 		}
-		out = append(out, runtime.Status{Ref: refFor(g.VMID), EnvironmentID: environmentID(g), Running: g.Status == "running"})
+		id := environmentID(g)
+		out = append(out, runtime.Status{Ref: refFor(g.VMID, id), EnvironmentID: id, Running: g.Status == "running"})
 	}
 	return out, nil
 }
@@ -308,11 +437,4 @@ func percent(used, size int64) float64 {
 		return 0
 	}
 	return float64(used) * 100 / float64(size)
-}
-
-func mapNotFound(err error) error {
-	if errors.Is(err, proxmox.ErrNotFound) {
-		return fmt.Errorf("%w: %v", runtime.ErrNotFound, err)
-	}
-	return err
 }

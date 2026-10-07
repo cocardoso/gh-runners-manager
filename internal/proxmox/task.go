@@ -54,11 +54,25 @@ func (c *Client) taskLogTail(ctx context.Context, path string) string {
 	return "\n" + strings.Join(parts, "\n")
 }
 
+// TaskError means the server accepted the request and started a task, but waiting
+// for it failed (the task failed, or ctx ended first). The task may still be running.
+type TaskError struct {
+	UPID string
+	Err  error
+}
+
+func (e *TaskError) Error() string { return e.Err.Error() }
+func (e *TaskError) Unwrap() error { return e.Err }
+
 // postTask issues a request that returns a UPID and waits for the task.
+// Errors after the task started are wrapped in *TaskError.
 func (c *Client) postTask(ctx context.Context, node, method, path string, params url.Values) error {
 	var upid string
 	if err := c.do(ctx, method, path, params, &upid); err != nil {
 		return err
 	}
-	return c.WaitTask(ctx, node, upid)
+	if err := c.WaitTask(ctx, node, upid); err != nil {
+		return &TaskError{UPID: upid, Err: err}
+	}
+	return nil
 }

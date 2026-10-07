@@ -44,8 +44,18 @@ type Server struct {
 	tasks    map[string]string // upid -> exit status
 	requests []string
 
-	FailConfigPut   bool
+	// FailConfigPutOn makes PUT config fail when the form contains this key.
+	FailConfigPutOn string
 	FailStart       bool
+	FailDelete      bool
+	// PoolScoped emulates a token whose permissions come only from a resource pool:
+	// only guests with a "pool" config entry are listed, and per-guest calls for
+	// guests that do not exist answer 403, as real Proxmox does.
+	PoolScoped bool
+	// HoldTasks keeps every task "running" until it is set back to false.
+	HoldTasks bool
+	// PowerOffOnNextStop simulates a guest that powers itself off just before a stop request.
+	PowerOffOnNextStop bool
 	MemoryTotal     int64
 	MemoryAvailable int64
 	ThinPools       []ThinPool
@@ -108,6 +118,13 @@ func (s *Server) Guest(vmid int) (Guest, bool) {
 	return c, true
 }
 
+// SetHoldTasks sets HoldTasks under the server lock (safe while requests are in flight).
+func (s *Server) SetHoldTasks(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.HoldTasks = v
+}
+
 // Requests returns "METHOD path" for every authenticated request, in order.
 func (s *Server) Requests() []string {
 	s.mu.Lock()
@@ -142,7 +159,10 @@ func fail(w http.ResponseWriter, code int, msg string) {
 func (s *Server) guestOr404(w http.ResponseWriter, r *http.Request) (*Guest, bool) {
 	vmid, _ := strconv.Atoi(r.PathValue("vmid"))
 	g, ok := s.guests[vmid]
-	if !ok {
+	switch {
+	case !ok && s.PoolScoped:
+		fail(w, http.StatusForbidden, fmt.Sprintf("Permission check failed (/vms/%d, VM.Audit)", vmid))
+	case !ok:
 		fail(w, http.StatusInternalServerError, fmt.Sprintf("Configuration file 'nodes/%s/lxc/%d.conf' does not exist", s.node, vmid))
 	}
 	return g, ok
@@ -176,7 +196,7 @@ func (s *Server) listLXC(w http.ResponseWriter, _ *http.Request) {
 	sort.Ints(ids)
 	for _, id := range ids {
 		g := s.guests[id]
-		if g.Type != "lxc" {
+		if g.Type != "lxc" || (s.PoolScoped && g.Config["pool"] == "") {
 			continue
 		}
 		e := map[string]any{"vmid": g.VMID, "name": g.Name, "status": g.Status, "tags": g.Tags}
@@ -227,11 +247,11 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.FailConfigPut {
+	_ = r.ParseForm()
+	if s.FailConfigPutOn != "" && r.PostForm.Has(s.FailConfigPutOn) {
 		fail(w, http.StatusInternalServerError, "config update failed")
 		return
 	}
-	_ = r.ParseForm()
 	for k, v := range r.PostForm {
 		g.Config[k] = v[0]
 		if k == "tags" {
@@ -251,6 +271,16 @@ func (s *Server) power(state string) http.HandlerFunc {
 		}
 		if state == "running" && s.FailStart {
 			data(w, s.task("vzstart", g.VMID, "command 'lxc-start' failed: exit code 1"))
+			return
+		}
+		if state == "stopped" && s.PowerOffOnNextStop {
+			s.PowerOffOnNextStop = false
+			g.Status = "stopped"
+			fail(w, http.StatusInternalServerError, fmt.Sprintf("CT %d not running", g.VMID))
+			return
+		}
+		if state == "stopped" && g.Status == "stopped" {
+			fail(w, http.StatusInternalServerError, fmt.Sprintf("CT %d not running", g.VMID))
 			return
 		}
 		g.Status = state
@@ -295,6 +325,10 @@ func (s *Server) deleteLXC(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, fmt.Sprintf("CT %d is running - destroy failed", g.VMID))
 		return
 	}
+	if s.FailDelete {
+		fail(w, http.StatusInternalServerError, "can't lock file '/run/lock/lxc/pve-config-"+strconv.Itoa(g.VMID)+".lock' - got timeout")
+		return
+	}
 	delete(s.guests, g.VMID)
 	data(w, s.task("vzdestroy", g.VMID, "OK"))
 }
@@ -305,6 +339,10 @@ func (s *Server) taskStatus(w http.ResponseWriter, r *http.Request) {
 	exit, ok := s.tasks[r.PathValue("upid")]
 	if !ok {
 		fail(w, http.StatusInternalServerError, "no such task")
+		return
+	}
+	if s.HoldTasks {
+		data(w, map[string]string{"status": "running"})
 		return
 	}
 	data(w, map[string]string{"status": "stopped", "exitstatus": exit})
