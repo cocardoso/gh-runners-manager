@@ -11,6 +11,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/cocardoso/gh-runners-manager/internal/auth"
 	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
@@ -45,6 +46,17 @@ type Deps struct {
 	GitHubJobs GitHubJobs
 	// Templates builds and activates template versions (nil: read-only listing).
 	Templates TemplateService
+	// Auth signs users in; without it only the admin bearer token is accepted.
+	Auth *auth.Service
+	// Now is the clock (tests); time.Now when nil.
+	Now func() time.Time
+}
+
+func (d Deps) now() time.Time {
+	if d.Now != nil {
+		return d.Now()
+	}
+	return time.Now()
 }
 
 // Environment is the API view of an environment.
@@ -204,13 +216,7 @@ func New(d Deps) http.Handler {
 
 	huma.Register(a, huma.Operation{OperationID: "destroy-environment", Method: http.MethodPost, Path: "/api/v1/environments/{id}/destroy",
 		Summary: "Destroy an environment (admin)", Tags: []string{"environments"}, DefaultStatus: http.StatusAccepted},
-		func(ctx context.Context, in *struct {
-			ID            string `path:"id"`
-			Authorization string `header:"Authorization"`
-		}) (*struct{}, error) {
-			if err := requireAdmin(d, in.Authorization); err != nil {
-				return nil, err
-			}
+		func(ctx context.Context, in *idInput) (*struct{}, error) {
 			e, err := d.Store.GetEnvironment(ctx, in.ID)
 			if errors.Is(err, store.ErrNotFound) {
 				return nil, huma.Error404NotFound("environment not found")
@@ -218,7 +224,7 @@ func New(d Deps) http.Handler {
 			if err != nil {
 				return nil, err
 			}
-			_, _ = d.Recorder.Warn(ctx, "audit.destroy", "destroy requested through the API",
+			audit(ctx, d, "destroy", "destroy requested by "+Actor(ctx),
 				events.Refs{ScaleSet: e.ScaleSet, EnvironmentID: e.ID, JobID: e.JobID}, nil)
 			if err := d.Controller.RequestDestroy(ctx, in.ID); err != nil {
 				return nil, huma.Error409Conflict(err.Error())
@@ -344,6 +350,7 @@ func New(d Deps) http.Handler {
 
 	registerOverview(a, d)
 	registerTemplates(a, d)
+	registerAuth(a, d)
 
 	s := &sse{d: d}
 	mux.HandleFunc("GET /api/v1/events/stream", s.events)
@@ -367,7 +374,7 @@ func New(d Deps) http.Handler {
 	}
 
 	// follow=true on the logs endpoint switches to SSE before huma sees the request.
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return authenticate(d, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Query().Get("follow") == "true" && strings.HasPrefix(r.URL.Path, "/api/v1/environments/") {
 			if parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/environments/"), "/"); len(parts) == 3 && parts[1] == "logs" {
 				s.logs(w, r, parts[0], parts[2])
@@ -375,5 +382,5 @@ func New(d Deps) http.Handler {
 			}
 		}
 		mux.ServeHTTP(w, r)
-	})
+	}))
 }

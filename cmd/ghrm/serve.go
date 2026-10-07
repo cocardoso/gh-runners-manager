@@ -117,6 +117,10 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 			fmt.Sprintf("Proxmox %s of %d finished with warnings; check the host for leftovers", w.Type, w.VMID),
 			events.Refs{}, map[string]any{"upid": w.UPID, "log": w.Log})
 	}
+	signIn, err := newAuth(ctx, db, cfg.DataDir, logger)
+	if err != nil {
+		return err
+	}
 	logStore := logs.New(filepath.Join(cfg.DataDir, "logs"), db)
 	gh := github.New(cfg, logger)
 	ctl := controller.New(controller.Deps{Store: db, Recorder: rec, Runtime: rt, GitHub: gh, Logs: logStore, Config: cfg,
@@ -170,7 +174,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		BaseContext: func(net.Listener) context.Context { return baseCtx },
 		Addr:        cfg.Listen,
 		Handler: api.New(api.Deps{Store: db, Recorder: rec, Logs: logStore, Controller: ctl, AdminToken: cfg.AdminToken,
-			Config: cfg, Capacity: rt.Capacity, GitHubJobs: gh, UI: uiHandler(), Templates: tpl,
+			Config: cfg, Capacity: rt.Capacity, GitHubJobs: gh, UI: uiHandler(), Templates: tpl, Auth: signIn,
 			Ready: func(ctx context.Context) error { _, err := rt.Capacity(ctx); return err }}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

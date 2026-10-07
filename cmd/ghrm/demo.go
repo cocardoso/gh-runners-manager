@@ -55,14 +55,19 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer d.Close()
 	go d.Run(ctx)
 
+	signIn, err := demoAuth(ctx, d.Store)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	srv := &http.Server{
 		Addr:              *listen,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 		ReadHeaderTimeout: 10 * time.Second,
 		Handler: api.New(api.Deps{Store: d.Store, Recorder: d.Recorder, Logs: d.Logs, Controller: d.Controller,
-			Config: d.Config, Capacity: d.Runtime.Capacity, AdminToken: "demo", UI: uiHandler(), Templates: d.Templates}),
+			Config: d.Config, Capacity: d.Runtime.Capacity, AdminToken: "demo", UI: uiHandler(), Templates: d.Templates, Auth: signIn}),
 	}
-	fmt.Fprintf(stdout, "ghrm demo: serving a simulated fleet on http://%s (admin token: demo)\n", *listen)
+	fmt.Fprintf(stdout, "ghrm demo: serving a simulated fleet on http://%s (sign in as admin / %s; API token: demo)\n", *listen, demoPassword)
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
 	select {

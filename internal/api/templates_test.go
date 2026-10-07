@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/cocardoso/gh-runners-manager/internal/store"
@@ -78,8 +79,8 @@ func TestTemplatesListAndActions(t *testing.T) {
 		t.Fatalf("missing = %d", code)
 	}
 
-	if code := post(t, h.srv.URL+"/api/v1/templates/build", ""); code != http.StatusUnauthorized {
-		t.Fatalf("build without token = %d", code)
+	if resp, _ := h.call(t, "POST", "/api/v1/templates/build", nil, nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("build without credentials = %d", resp.StatusCode)
 	}
 	if code := post(t, h.srv.URL+"/api/v1/templates/build", "admin"); code != http.StatusAccepted || ft.built != 1 {
 		t.Fatalf("build = %d", code)
@@ -92,6 +93,18 @@ func TestTemplatesListAndActions(t *testing.T) {
 	}
 	if code := post(t, h.srv.URL+"/api/v1/templates/t2/unpin", "admin"); code != http.StatusNoContent || ft.pinned["t2"] {
 		t.Fatalf("unpin = %d", code)
+	}
+	evs, _ := h.db.ListEvents(context.Background(), store.EventFilter{})
+	audited := map[string]any{}
+	for _, e := range evs {
+		if strings.HasPrefix(e.Kind, "audit.template_") {
+			audited[e.Kind] = e.Data["actor"]
+		}
+	}
+	for _, k := range []string{"audit.template_build", "audit.template_activate", "audit.template_pin", "audit.template_unpin"} {
+		if audited[k] != "token" {
+			t.Errorf("%s actor = %v, want token (all: %v)", k, audited[k], audited)
+		}
 	}
 	ft.err = template.ErrBuildRunning
 	if code := post(t, h.srv.URL+"/api/v1/templates/build", "admin"); code != http.StatusConflict {
