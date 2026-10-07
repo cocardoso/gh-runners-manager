@@ -128,3 +128,22 @@ func TestRejectsUnknownStreamAndPathTraversal(t *testing.T) {
 		}
 	}
 }
+
+// A crash (or a cancelled request) between the file write and the metadata update
+// leaves bytes in the file that the metadata does not know about; the next append
+// must not keep them, or replayed lines would appear twice.
+func TestAppendDiscardsBytesNotRecordedInMetadata(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Append(ctx, "env1", "job", lines(1, 2))
+	f, _ := os.OpenFile(s.path("env1", "job"), os.O_APPEND|os.O_WRONLY, 0)
+	_, _ = f.WriteString("2026-01-01T00:00:03Z\tline 3\n") // written, metadata never updated
+	_ = f.Close()
+	if n, err := s.Append(ctx, "env1", "job", lines(3, 3)); err != nil || n != 1 {
+		t.Fatalf("replay append = %d, %v", n, err)
+	}
+	entries, _, _ := s.Read(ctx, "env1", "job", 0, 100)
+	if len(entries) != 3 {
+		t.Fatalf("entries = %d, want 3 (no duplicate of line 3)", len(entries))
+	}
+}

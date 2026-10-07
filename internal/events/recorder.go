@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/store"
@@ -14,11 +15,15 @@ type Refs struct {
 	JobID         string
 }
 
+// testHookAfterAppend runs between append and publish (tests only).
+var testHookAfterAppend func(seq int64)
+
 // Recorder persists events, then publishes them.
 type Recorder struct {
 	store *store.Store
 	bus   *Bus
 	now   func() time.Time
+	mu    sync.Mutex // append and publish together, so subscribers see sequence order
 }
 
 // NewRecorder returns a Recorder. now may be nil (time.Now).
@@ -37,9 +42,14 @@ func (r *Recorder) Record(ctx context.Context, e store.Event) (store.Event, erro
 	if e.Time.IsZero() {
 		e.Time = r.now()
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	saved, err := r.store.AppendEvent(ctx, e)
 	if err != nil {
 		return store.Event{}, err
+	}
+	if testHookAfterAppend != nil {
+		testHookAfterAppend(saved.Seq)
 	}
 	r.bus.Publish(saved)
 	return saved, nil

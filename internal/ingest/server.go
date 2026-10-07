@@ -64,7 +64,9 @@ func (s *server) frames(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, aerr.msg, aerr.code)
 		return
 	}
-	accepted, err := s.store(r.Context(), envID, frames)
+	// Finish storing even if the agent gives up on the request: a half-stored batch
+	// would lose an event or duplicate lines when it is retried.
+	accepted, err := s.store(context.WithoutCancel(r.Context()), envID, frames)
 	if err != nil {
 		http.Error(w, "store: "+err.Error(), http.StatusInternalServerError)
 		return

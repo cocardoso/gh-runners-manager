@@ -155,8 +155,18 @@ func (s *Store) Append(ctx context.Context, envID, stream string, lines []Line) 
 	if err := os.MkdirAll(filepath.Dir(meta.Path), 0o750); err != nil {
 		return 0, err
 	}
-	f, err := os.OpenFile(meta.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+	f, err := os.OpenFile(meta.Path, os.O_CREATE|os.O_WRONLY, 0o640)
 	if err != nil {
+		return 0, err
+	}
+	// Drop bytes the metadata does not know about (a write that was never recorded),
+	// so the file and LastSeq always agree.
+	if err := f.Truncate(meta.Bytes); err != nil {
+		_ = f.Close()
+		return 0, err
+	}
+	if _, err := f.Seek(meta.Bytes, io.SeekStart); err != nil {
+		_ = f.Close()
 		return 0, err
 	}
 	n, werr := f.WriteString(buf.String())

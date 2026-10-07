@@ -87,3 +87,42 @@ func TestRecorderPersistsBeforePublish(t *testing.T) {
 		t.Fatalf("stored = %+v", stored)
 	}
 }
+
+func TestConcurrentRecordsArePublishedInSequenceOrder(t *testing.T) {
+	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	b := NewBus()
+	sub := b.Subscribe(4096)
+	defer sub.Close()
+	r := NewRecorder(st, b, time.Now)
+	// Delay the publication of the first event so a later one could overtake it.
+	testHookAfterAppend = func(seq int64) {
+		if seq == 1 {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	defer func() { testHookAfterAppend = nil }()
+	done := make(chan struct{})
+	for g := 0; g < 8; g++ {
+		go func() {
+			for range 50 {
+				_, _ = r.Info(context.Background(), "k", "m", Refs{}, nil)
+			}
+			done <- struct{}{}
+		}()
+	}
+	for range 8 {
+		<-done
+	}
+	var last int64
+	for range 400 {
+		e := recv(t, sub.C)
+		if e.Seq != last+1 {
+			t.Fatalf("published seq %d after %d: out of order", e.Seq, last)
+		}
+		last = e.Seq
+	}
+}

@@ -193,3 +193,33 @@ func TestCertificateIsReusedAcrossRestarts(t *testing.T) {
 		t.Fatalf("fingerprints %q / %q, %v", fp1, fp2, err)
 	}
 }
+
+// The agent may give up on a request (timeout) after the server started writing;
+// the store and sink phase must finish regardless, or events are lost and lines duplicated.
+func TestStoringSurvivesACancelledRequest(t *testing.T) {
+	h := newHarness(t)
+	var buf bytes.Buffer
+	for _, f := range []Frame{logFrame("job", 1, "a"), {Type: TypeEvent, Seq: 1, Name: EventRunnerExited, Time: time.Unix(1, 0)}} {
+		b, _ := json.Marshal(f)
+		buf.Write(append(b, '\n'))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, FramesPath, &buf).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer "+h.token)
+	sink := &cancelAwareSink{}
+	srv := NewServer(fakeResolver{HashToken(h.token): "env1"}, sink, h.logs, nil)
+	srv.ServeHTTP(httptest.NewRecorder(), req)
+	if got := h.read(t, "job"); len(got) != 1 {
+		t.Fatalf("job = %v, want the line stored", got)
+	}
+	if !sink.liveCtx {
+		t.Fatal("the sink must receive a context that is not cancelled")
+	}
+}
+
+type cancelAwareSink struct{ liveCtx bool }
+
+func (s *cancelAwareSink) AgentEvent(ctx context.Context, _, _ string, _ time.Time, _ map[string]any) {
+	s.liveCtx = ctx.Err() == nil
+}
