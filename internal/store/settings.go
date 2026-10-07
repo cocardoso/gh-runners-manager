@@ -22,20 +22,6 @@ type ScaleSetConfigRecord struct {
 	UpdatedAt time.Time
 }
 
-// PutCredentialRecord creates or touches a UI credential.
-func (s *Store) PutCredentialRecord(ctx context.Context, name, kind string) error {
-	now := time.Now().UnixMilli()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO credentials (name, kind, created_at, updated_at) VALUES (?,?,?,?)
-		ON CONFLICT(name) DO UPDATE SET kind = excluded.kind, updated_at = excluded.updated_at`, name, kind, now, now)
-	return err
-}
-
-// DeleteCredentialRecord removes a UI credential.
-func (s *Store) DeleteCredentialRecord(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM credentials WHERE name = ?`, name)
-	return err
-}
-
 // ListCredentialRecords returns the UI credentials by name.
 func (s *Store) ListCredentialRecords(ctx context.Context) ([]CredentialRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT name, kind, created_at, updated_at FROM credentials ORDER BY name`)
