@@ -95,3 +95,20 @@ func TestBackupDefaults(t *testing.T) {
 		t.Fatalf("midnight backups = %+v", cfg.Backup)
 	}
 }
+
+// The documented example must stay a valid configuration.
+func TestExampleConfigIsValid(t *testing.T) {
+	cfg, err := Read("../../deploy/examples/ghrm.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if err := cfg.ValidateServe(); err != nil {
+		t.Fatalf("validate serve: %v", err)
+	}
+	if cfg.Backup.AtHour() != 3 || cfg.Backup.Keep != 7 {
+		t.Fatalf("backup = %+v", cfg.Backup)
+	}
+}

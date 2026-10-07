@@ -9,6 +9,12 @@
 - Proxmox VE **9.1 or later**: ghrm injects the runner bootstrap through the LXC `env` option, which older versions do not have.
 - An LVM-thin (or other snapshot-capable) storage for linked clones.
 
+## Installing on a Proxmox host
+
+`deploy/proxmox/install.sh` does everything below in one run (as root on the host): the pool, roles, user and token, the template storage, the job network and its security group, the control-plane container with ghrm, and a bootstrap template. It checks every step first, so running it again resumes or upgrades; `--dry-run` shows what would change and `--help` lists the options (VMIDs, bridges, subnet, storages, release). It ends with the web UI address and the one-time setup token for the admin account. Its tests (`bash deploy/proxmox/test/run.sh`) run it against fake Proxmox tools.
+
+The sections below describe the same setup by hand.
+
 ## Scoped Proxmox API token
 
 ghrm never uses `root`. Create a dedicated user, role, pool and token on the Proxmox host. Replace the template VMID, storage, SDN zone and node names with yours:
@@ -30,7 +36,21 @@ ghrm never uses `root`. Create a dedicated user, role, pool and token on the Pro
     pveum role add GhrmTemplates --privs "Datastore.AllocateTemplate Datastore.Allocate Datastore.Audit"
     pveum acl modify /storage/ghrm-tpl --users ghrm@pve --roles GhrmTemplates
 
-Store the printed secret in `/etc/ghrm/proxmox-token` (mode `0600`) or export it as `GHRM_PROXMOX_TOKEN_SECRET`.
+Store the printed secret in the control plane's vault: `ghrm secret set proxmox/token-secret` (it reads the value from standard input). A file named by `proxmox.token_secret_file` (mode `0600`) or `GHRM_PROXMOX_TOKEN_SECRET` also work, and win over the vault.
+
+## Secrets
+
+Secrets are sealed in the database with AES-256-GCM; the key lives in `secret_key_file` (default `<data_dir>/secret.key`, created `0600` on first use, refused when others can read it). Back the key up with the database: without it the sealed secrets cannot be read, and ghrm refuses to start with a different key rather than run without them.
+
+- `ghrm secret set|delete|list [--config path] [name]` manages them; `list` never prints values.
+- Names: `proxmox/token-secret`, and `github/<credential>` for GitHub tokens (the UI writes those).
+- Precedence for each secret: environment variable, then file, then vault.
+
+## Sign-in
+
+The web UI and the API need a signed-in session. On first start ghrm writes a one-time setup token to `<data_dir>/setup-token` (and logs it); the first visitor creates the admin account with it, and the file is removed. Passwords are hashed with argon2id; sessions last seven days from their last use, live in HttpOnly, SameSite=Strict cookies (Secure behind HTTPS, via `X-Forwarded-Proto` from a reverse proxy), and state-changing requests need the session's CSRF token. Five failed sign-ins from one address lock it out for a minute, doubling up to an hour. Scripts can use `Authorization: Bearer <admin token>` (from `admin_token_file`). Every administrative action is an `audit.*` event with its actor.
+
+Recommended exposure: the LAN only, or behind an identity-aware proxy.
 
 The role does not include `Sys.Audit` on `/`, so the token cannot read the thin pool's metadata usage. ghrm then reports disk usage from the storage status (`proxmox.storage`, data usage only). Grant `Sys.Audit` on `/` if you also want metadata usage checked.
 
@@ -49,32 +69,26 @@ The template must be an LXC template (`pct template <vmid>`) attached to the job
 
 Expected output: the host capacity, then creation (about 12–15 s including the firewall settle), start, a running IP on the job network, and destruction.
 
-## End-to-end deployment on Proxmox (development)
+## Development deployment
 
-Until the installer (M5) and the template builder (M4) exist, a development deployment is assembled by hand. Addresses below are examples.
+To try a branch on a host that already has the setup (for example one made by the installer), build with `make build-linux`, copy `dist/linux-amd64/ghrm` and `ghrm-agent` to the host, stop the service in the control-plane container, `pct push` both binaries to `/usr/local/bin`, and start it again. `install.sh --binary-dir <dir>` does the same, and creates whatever is missing.
 
-1. **Job network and security group.** An SDN Simple zone with SNAT and DHCP (for example `10.50.0.0/24`, gateway `.1`, DHCP `.100–.199`). Security group rules for job guests, in this order:
-   1. OUT ACCEPT TCP to the control plane's job-network address on port 8443 (ingest);
-   2. OUT ACCEPT UDP 67;
-   3. IN DROP;
-   4. OUT DROP 169.254.0.0/16, 192.168.0.0/16, 172.16.0.0/12 and 10.0.0.0/8.
-2. **Job template with the agent.**
-   1. Build the binaries with `make build-linux`.
-   2. On the Proxmox host, run `deploy/proxmox/dev-template.sh <source-template> <new-template> dist/linux-amd64/ghrm-agent template/layer/ghrm-agent.service ghrm`. The source template must already contain the GitHub runner in `/home/runner/actions-runner`, Docker, and the job security group on its NIC.
-3. **Control-plane LXC.** A small Debian container with two NICs:
-   - one on the LAN, used for the UI/API and to reach the Proxmox API;
-   - one on the job network at the ingest address.
+GitHub credentials (a fine-grained PAT with **Administration: read and write** on the repository; **Actions: read** shows job steps) and scale sets are added in the UI (Settings, Scale sets), or in `ghrm.yaml`. Workflows use `runs-on: <scale set name>`.
 
-   Install `ghrm` to `/usr/local/bin`, `deploy/systemd/ghrm.service`, and `/etc/ghrm/ghrm.yaml` (see `deploy/examples/ghrm.example.yaml`) with its secret files (mode `0600`).
-4. **GitHub.** A fine-grained PAT with **Administration: read and write** on the repository is enough for a repository-level scale set. `ghrm serve` creates the scale set on first start.
-5. **Workflow.** Use `runs-on: <scale set name>`.
+Useful API calls (with the admin token from `/etc/ghrm/admin-token`):
 
-Useful API calls:
+    export H="Authorization: Bearer $(cat /etc/ghrm/admin-token)"
+    curl -H "$H" http://<ghrm>:8080/api/v1/scale-sets
+    curl -H "$H" http://<ghrm>:8080/api/v1/environments
+    curl -H "$H" -N 'http://<ghrm>:8080/api/v1/events/stream'
+    curl -H "$H" -N 'http://<ghrm>:8080/api/v1/environments/<id>/logs/job?follow=true'
+    curl -H "$H" -X POST http://<ghrm>:8080/api/v1/templates/build
 
-    curl http://<ghrm>:8080/api/v1/scale-sets
-    curl http://<ghrm>:8080/api/v1/environments
-    curl -N 'http://<ghrm>:8080/api/v1/events/stream'
-    curl -N 'http://<ghrm>:8080/api/v1/environments/<id>/logs/job?follow=true'
+## Operations
+
+- `/healthz` and `/readyz` (the store and the Proxmox API answer), unauthenticated.
+- `/metrics` (Prometheus, unauthenticated): `ghrm_environments{scale_set,state}`, `ghrm_environment_failures_total{stage}`, `ghrm_jobs_total{scale_set,result}`, `ghrm_scale_set_desired` (queue depth) and `ghrm_scale_set_listening`, `ghrm_template_builds_total{result}`, `ghrm_stage_duration_seconds{stage}`, `ghrm_build_info{version}`, plus Go process metrics.
+- Backups: every day at `backup.hour` (default 3, local time) ghrm writes a consistent copy of the database with `VACUUM INTO` to `backup.dir` (default `<data_dir>/backups`, mode `0600`) and keeps `backup.keep` copies (default 7). Each run is a `backup.done` or `backup.failed` event. Keep `secret.key` with them, and back up the container with Proxmox backups too.
 
 ## Docker
 
@@ -85,7 +99,7 @@ Useful API calls:
 The UI lives in `web/` (Vite, React, TypeScript, Tailwind CSS v4 and Kumo). `make web` builds it into `web/dist`, which `web/embed.go` embeds into the `ghrm` binary; the API serves it for every non-API path, with an SPA fallback and long cache headers for hashed assets.
 
 - `make web-api` regenerates `web/src/api/schema.d.ts` from `ghrm openapi` after an API change.
-- `go run ./cmd/ghrm demo` serves the real API backed by a simulated fleet (fake runtime and GitHub). Flags: `--listen`, `--seed`, `--tick`, `--job-seconds min-max`, `--data-dir`. The admin token is `demo`.
+- `go run ./cmd/ghrm demo` serves the real API backed by a simulated fleet (fake runtime and GitHub). Flags: `--listen`, `--seed`, `--tick`, `--job-seconds min-max`, `--data-dir`. Sign in as `admin` / `demo-password`; the API token is `demo`.
 - `cd web && pnpm dev` serves the UI with hot reload and proxies `/api` to `GHRM_API` (default `http://127.0.0.1:8080`).
 - `pnpm lint`, `pnpm typecheck` and `pnpm test` run ESLint, TypeScript and Vitest. Component tests fail on any Kumo console warning.
 - `pnpm e2e` builds `ghrm` with the current `web/dist` and runs the Playwright browser tests against `ghrm demo`, including a control-plane restart and a phone viewport.
@@ -95,7 +109,7 @@ The UI lives in `web/` (Vite, React, TypeScript, Tailwind CSS v4 and Kumo). `mak
 
 With `templates.vmid_range` set, ghrm builds templates itself (spec §8): a builder environment, cloned from the active template, builds GitHub's official `ubuntu-slim` image unmodified, then the ghrm layer in `template/layer`; the control plane uploads the root filesystem to Proxmox, creates and converts the template, and verifies a clone (Docker, buildx, compose, DNS, HTTPS, blocked addresses, the runner binary and the software report).
 
-- The first template is the bootstrap template (`proxmox.template_vmid`), made with `deploy/proxmox/dev-template.sh`. Its `ghrm-agent` must support the build mode, so recreate it with the current agent when upgrading from M3.
+- The first template is the bootstrap template (`proxmox.template_vmid`), made by the installer (or, from an existing runner template, with `deploy/proxmox/dev-template.sh`). Its `ghrm-agent` must support the build mode, so recreate it with the current agent when upgrading from M3.
 - `ghrm-agent` must sit next to the `ghrm` binary (or set `templates.agent_path`): builders receive it with the layer.
 - Change any file in `template/layer` together with `layer.Version`; a new version triggers a rebuild.
 - A build needs about 10 GB of free space in the builder (`templates.builder_disk_gb`, default 48) and room for the archive in the control plane's `data_dir` until it is uploaded.

@@ -1,9 +1,13 @@
-# Example ghrm configuration. Copy to /etc/ghrm/ghrm.yaml and adjust.
+# Example ghrm configuration. install.sh writes one for you; otherwise copy this to
+# /etc/ghrm/ghrm.yaml and adjust. GitHub credentials and scale sets can also be added in
+# the web UI instead of here.
 proxmox:
   url: https://pve.example.test:8006
   node: pve
   token_id: ghrm@pve!ghrm
-  token_secret_file: /etc/ghrm/proxmox-token   # or set GHRM_PROXMOX_TOKEN_SECRET
+  # The token secret: "ghrm secret set proxmox/token-secret" seals it in the database
+  # (preferred); a file or GHRM_PROXMOX_TOKEN_SECRET also work and take precedence.
+  # token_secret_file: /etc/ghrm/proxmox-token
   # Pin the self-signed Proxmox certificate instead of disabling verification.
   # Proxmox UI: Datacenter > <node> > System > Certificates > pve-ssl.pem > View Certificate.
   # Or: openssl s_client -connect pve.example.test:8006 </dev/null | openssl x509 -noout -fingerprint -sha256
@@ -11,9 +15,9 @@ proxmox:
   insecure_skip_verify: false
   template_vmid: 9000                           # must be outside vmid_range
   pool: ghrm                                    # required; the API token is scoped to this pool
-  vmid_range:
+  vmid_range:                                   # job environments; keep templates.vmid_range outside it
     start: 900
-    end: 999
+    end: 948
   thin_pool: data                               # LV name; read when the token has Sys.Audit on "/"
   storage: local-lvm                            # storage ID; used for disk usage otherwise
   firewall_settle: 12s
@@ -23,7 +27,14 @@ data_dir: /var/lib/ghrm
 # REST API, SSE and the web UI. Bind to the LAN address only: 0.0.0.0 would also
 # expose it on the job network, where jobs run.
 listen: 192.0.2.10:8080
-admin_token_file: /etc/ghrm/admin-token   # enables mutating API calls (Bearer token)
+admin_token_file: /etc/ghrm/admin-token   # API access for scripts (Bearer token); people sign in
+# secret_key_file: /var/lib/ghrm/secret.key   # seals secrets in the database (default: <data_dir>/secret.key)
+
+# Daily database copy (VACUUM INTO).
+backup:
+  dir: /var/lib/ghrm/backups
+  keep: 7
+  hour: 3                            # local time
 
 ingest:
   listen: 10.50.0.2:8443             # control-plane address on the job network
@@ -32,7 +43,8 @@ ingest:
 github:
   credentials:
     - name: personal
-      token_file: /etc/ghrm/github-personal   # or GHRM_GITHUB_TOKEN_PERSONAL
+      # The token: GHRM_GITHUB_TOKEN_PERSONAL, token_file, or "ghrm secret set github/personal".
+      token_file: /etc/ghrm/github-personal
 
 capacity:
   max_environments: 4
