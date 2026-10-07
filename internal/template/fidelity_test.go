@@ -96,3 +96,31 @@ func TestExplainedOnlyForLayerItems(t *testing.T) {
 		t.Error("only exact layer items are explained, not substrings")
 	}
 }
+
+// PowerShell's ConvertTo-Json writes a one-element array as a bare value, as in
+// GitHub's published ubuntu-slim report ("PowerShell Tools", "Installed apt packages").
+func TestCompareReportsWithSingleElementArrays(t *testing.T) {
+	report := []byte(`{"NodeType":"HeaderNode","Title":"Ubuntu","Children":[
+	  {"NodeType":"HeaderNode","Title":"Installed Software","Children":[
+	    {"NodeType":"HeaderNode","Title":"PowerShell Tools","Children":{"NodeType":"ToolVersionNode","ToolName":"PowerShell","Version":"7.5.4"}},
+	    {"NodeType":"HeaderNode","Title":"Installed apt packages","Children":{"NodeType":"TableNode","Headers":"Name|Version","Rows":"acl|2.3.2"}},
+	    {"NodeType":"ToolVersionsListNode","ToolName":"Node.js","Versions":"22.20.0"}]}]}`)
+	got, err := flatten(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"Installed Software / PowerShell Tools / PowerShell": "7.5.4",
+		"Installed Software / Installed apt packages / acl":  "2.3.2",
+		"Installed Software / Node.js":                       "22.20.0",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q (all: %v)", k, got[k], v, got)
+		}
+	}
+	rep, err := CompareReports(report, report, nil)
+	if err != nil || rep.Unexpected != 0 || len(rep.Differences) != 0 {
+		t.Fatalf("identical single-element reports = %+v, %v", rep, err)
+	}
+}

@@ -1,6 +1,7 @@
 package template
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -48,15 +49,38 @@ func explained(kind, name string) bool {
 }
 
 type reportNode struct {
-	NodeType string          `json:"NodeType"`
-	Title    string          `json:"Title"`
-	ToolName string          `json:"ToolName"`
-	Version  string          `json:"Version"`
-	Versions []string        `json:"Versions"`
-	Headers  string          `json:"Headers"`
-	Rows     []string        `json:"Rows"`
-	Children []*reportNode   `json:"Children"`
-	Content  json.RawMessage `json:"Content"`
+	NodeType string                 `json:"NodeType"`
+	Title    string                 `json:"Title"`
+	ToolName string                 `json:"ToolName"`
+	Version  string                 `json:"Version"`
+	Versions oneOrMany[string]      `json:"Versions"`
+	Headers  string                 `json:"Headers"`
+	Rows     oneOrMany[string]      `json:"Rows"`
+	Children oneOrMany[*reportNode] `json:"Children"`
+	Content  json.RawMessage        `json:"Content"`
+}
+
+// oneOrMany decodes a JSON array, or the bare value PowerShell's ConvertTo-Json
+// writes for a one-element array (GitHub's reports have both).
+type oneOrMany[T any] []T
+
+func (o *oneOrMany[T]) UnmarshalJSON(b []byte) error {
+	if t := bytes.TrimSpace(b); len(t) > 0 && t[0] == '[' {
+		var many []T
+		err := json.Unmarshal(t, &many)
+		*o = many
+		return err
+	}
+	if string(bytes.TrimSpace(b)) == "null" {
+		*o = nil
+		return nil
+	}
+	var one T
+	if err := json.Unmarshal(b, &one); err != nil {
+		return err
+	}
+	*o = oneOrMany[T]{one}
+	return nil
 }
 
 // flatten maps "Section / Subsection / Tool" to its version for every leaf of a report.
