@@ -18,7 +18,7 @@ test("renders 50k lines quickly by only mounting the visible rows", () => {
   const start = performance.now();
   render(<LogView {...base} lines={lines(50_000)} />);
   expect(performance.now() - start).toBeLessThan(2000);
-  expect(screen.getAllByRole("row").length).toBeLessThan(200);
+  expect(screen.getAllByRole("listitem").length).toBeLessThan(200);
   expect(screen.getByText("line 0")).toBeInTheDocument();
 });
 
@@ -72,4 +72,16 @@ test("the runner's own timestamp prefix is folded into the timestamp column", ()
 test("a byte-order mark before the runner timestamp is dropped too", () => {
   render(<LogView {...base} lines={lines(1, () => "﻿2026-10-07T15:18:40.9736953Z Current runner version: '2.338.0'")} />);
   expect(screen.getByText("Current runner version: '2.338.0'")).toBeInTheDocument();
+});
+
+test("line numbers start at the given first line", () => {
+  render(<LogView {...base} lines={lines(2)} firstLineNumber={100} />);
+  expect(screen.getByText("100")).toBeInTheDocument();
+  expect(screen.getByText("101")).toBeInTheDocument();
+});
+
+test("rows use valid list roles inside the log", () => {
+  render(<LogView {...base} lines={lines(2)} />);
+  expect(screen.getByRole("list")).toBeInTheDocument();
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
 });

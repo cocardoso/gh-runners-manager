@@ -57,3 +57,13 @@ test("unknown states are kept with their raw name", () => {
   });
   expect(stages.at(-1)).toMatchObject({ key: "hibernating", label: "hibernating" });
 });
+
+test("a completed job without an environment ends instead of running forever", () => {
+  const stages = buildTimeline({
+    job: job({ queued_at: "2026-10-07T12:00:00Z", started_at: "2026-10-07T12:00:10Z", finished_at: "2026-10-07T12:01:00Z", status: "completed", result: "succeeded" }),
+    events: [],
+    now: new Date("2026-10-08T12:00:00Z"),
+  });
+  expect(stages.some((s) => s.status === "current")).toBe(false);
+  expect(stages.at(-1)).toMatchObject({ key: "finished", detail: "Job succeeded" });
+});

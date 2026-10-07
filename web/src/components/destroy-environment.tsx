@@ -7,7 +7,7 @@ import { useSettings } from "@/api/queries";
 import { DeleteResource } from "@/blocks/delete-resource/delete-resource";
 import { getAdminToken, setAdminToken } from "@/lib/admin-token";
 
-function TokenDialog({ open, onCancel, onToken }: { open: boolean; onCancel: () => void; onToken: (t: string) => void }) {
+function TokenDialog({ open, error, onCancel, onToken }: { open: boolean; error?: string; onCancel: () => void; onToken: (t: string) => void }) {
   const [value, setValue] = useState("");
   return (
     <DialogRoot open={open} onOpenChange={(o) => !o && onCancel()}>
@@ -16,6 +16,7 @@ function TokenDialog({ open, onCancel, onToken }: { open: boolean; onCancel: () 
         <p className="text-sm text-kumo-subtle">
           Destroying an environment needs the control plane's admin token. It is kept for this browser tab only.
         </p>
+        {error && <p className="text-sm text-kumo-danger">{error}</p>}
         <form
           className="flex flex-col gap-4"
           onSubmit={(e) => {
@@ -66,7 +67,10 @@ export function DestroyEnvironment({ id, disabled }: { id: string; disabled?: bo
       void qc.invalidateQueries({ queryKey: ["environment", id] });
       void qc.invalidateQueries({ queryKey: ["environments"] });
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) setAdminToken(null);
+      if (e instanceof ApiError && e.status === 401) {
+        setAdminToken(null);
+        setStep("token");
+      }
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
@@ -83,6 +87,7 @@ export function DestroyEnvironment({ id, disabled }: { id: string; disabled?: bo
       {allowed ? button : <Tooltip content="Start the control plane with an admin token to enable this action." render={<span>{button}</span>} />}
       <TokenDialog
         open={step === "token"}
+        error={error}
         onCancel={() => setStep("idle")}
         onToken={(t) => {
           setAdminToken(t);
@@ -97,7 +102,7 @@ export function DestroyEnvironment({ id, disabled }: { id: string; disabled?: bo
         onDelete={destroy}
         isDeleting={busy}
         deleteButtonText="Destroy environment"
-        errorMessage={error}
+        errorMessage={step === "confirm" ? error : undefined}
       />
     </>
   );

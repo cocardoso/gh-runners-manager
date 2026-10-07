@@ -123,3 +123,38 @@ test("LogFollower: an undefined factory falls back to the global EventSource", (
   f.stop();
   vi.unstubAllGlobals();
 });
+
+describe("LogFollower stale detection", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeEventSource.reset();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  test("a silent follow is replaced; pings keep it alive", () => {
+    const states: string[] = [];
+    const f = new LogFollower({ url: (o) => `/l?offset=${o}`, createEventSource: (u) => new FakeEventSource(u) as unknown as EventSource, onEntries: () => {}, onState: (s) => states.push(s), staleAfterMs: 40_000 });
+    f.start(0);
+    const es = FakeEventSource.last();
+    es.open();
+    vi.advanceTimersByTime(30_000);
+    es.emit({}, undefined, "ping");
+    vi.advanceTimersByTime(30_000);
+    expect(es.closed).toBe(false);
+    vi.advanceTimersByTime(10_001);
+    expect(es.closed).toBe(true);
+    expect(states.at(-1)).toBe("reconnecting");
+    f.stop();
+  });
+});
+
+test("LogBuffer keeps line numbers stable across trimming and prepending", () => {
+  const b = new LogBuffer(3);
+  b.append(range(10, 13));
+  b.firstLine = 100;
+  b.append([entry(13)]);
+  expect(b.firstLine).toBe(101);
+  b.prepend([entry(9), entry(10)]);
+  expect(b.firstLine).toBe(99);
+  expect(b.lines.map((l) => l.offset)).toEqual([9, 10, 11]);
+});

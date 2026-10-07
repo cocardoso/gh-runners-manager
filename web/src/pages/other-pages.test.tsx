@@ -90,7 +90,27 @@ test("live logs list the newest event first", async () => {
   });
   renderApp("/logs");
   await screen.findByText("newer");
-  const rows = screen.getAllByRole("row").map((r) => r.textContent);
+  const rows = within(screen.getByRole("log")).getAllByRole("listitem").map((r) => r.textContent);
   expect(rows[0]).toContain("newer");
   expect(rows[1]).toContain("older");
+});
+
+test("scrolling into the live logs pauses them, so the list does not move under the reader", async () => {
+  mockApi({ "/api/v1/events": { events: [{ seq: 1, kind: "job.started", level: "info", message: "first", time: "2026-10-07T12:00:00Z" }] } });
+  renderApp("/logs");
+  await screen.findByText("first");
+  const log = screen.getByRole("log");
+  log.scrollTop = 200;
+  log.dispatchEvent(new Event("scroll"));
+  expect(await screen.findByRole("button", { name: "Resume" })).toBeInTheDocument();
+});
+
+test("loading older events pauses, so live events do not trim them away", async () => {
+  const page = (from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ seq: from + i, kind: "job.started", level: "info", message: `e${from + i}`, time: "2026-10-07T12:00:00Z" }));
+  mockApi({ "/api/v1/events": (u: URL) => ({ events: u.searchParams.get("before") ? page(1, 500) : page(501, 500) }) });
+  const user = userEvent.setup();
+  renderApp("/logs");
+  await user.click(await screen.findByRole("button", { name: "Load older" }));
+  expect(await screen.findByRole("button", { name: "Resume" })).toBeInTheDocument();
 });

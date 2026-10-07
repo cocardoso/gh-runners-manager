@@ -5,7 +5,7 @@ import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import type { ApiEvent, Job, JobDetails } from "@/api/client";
 import { ApiError } from "@/api/client";
 import { useEnvironment, useJob, useJobEvents, useJobGitHub } from "@/api/queries";
-import { ErrorState, Loading, Page, RelativeTime, useNow } from "@/components/common";
+import { ErrorState, Loading, Page, RelativeTime, Truncate, useNow } from "@/components/common";
 import { DetailTabs } from "@/components/detail-tabs";
 import { EnvironmentPanel } from "@/components/environment-panel";
 import { LiveLog } from "@/components/live-log";
@@ -34,15 +34,7 @@ function Steps({ details, loading, error, onOpen }: { details?: JobDetails; load
         variant="secondary"
         icon={<LockKeyIcon weight="fill" />}
         title="Steps are not available"
-        description={
-          details?.reason?.includes("Actions: read") ? (
-            sentence(details.reason)
-          ) : (
-            <>
-              {sentence(details?.reason || "GitHub did not return this job")} To see steps, give the scale set's token the <strong>Actions: read</strong> permission.
-            </>
-          )
-        }
+        description={sentence(details?.reason || "GitHub did not return this job")}
       />
     );
   const steps = details.steps ?? [];
@@ -109,7 +101,7 @@ function Summary({ job, now }: { job: Job; now: Date }) {
       {items.map(([k, v]) => (
         <div key={k} className="flex min-w-0 flex-col">
           <dt className="text-xs text-kumo-subtle">{k}</dt>
-          <dd className="min-w-0 truncate text-sm">{v}</dd>
+          <dd className="min-w-0 max-w-[70vw] text-sm">{typeof v === "string" ? <Truncate text={v} /> : v}</dd>
         </div>
       ))}
     </dl>

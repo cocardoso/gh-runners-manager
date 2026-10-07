@@ -30,7 +30,8 @@ export function useJob(id: string) {
 
 export function useJobGitHub(id: string, enabled = true) {
   return useQuery({
-    queryKey: ["job", id, "github"],
+    // Not under ["job", id]: job events must not re-query GitHub.
+    queryKey: ["job-github", id],
     queryFn: async () => unwrap(await api.GET("/api/v1/jobs/{id}/github", { params: { path: { id } } })),
     enabled,
     staleTime: 15_000,

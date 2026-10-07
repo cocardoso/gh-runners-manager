@@ -24,6 +24,8 @@ export interface LogViewProps {
   dropped?: number;
   className?: string;
   empty?: ReactNode;
+  /** Line number of lines[0]. */
+  firstLineNumber?: number;
   /** Initial viewport size, for tests and the first paint. */
   initialRect?: Rect;
 }
@@ -116,7 +118,7 @@ const Row = memo(function Row({
   focused: boolean;
 }) {
   return (
-    <div role="row" className={cn("flex gap-3 px-3 hover:bg-kumo-tint", focused && "bg-kumo-tint")}>
+    <div role="listitem" className={cn("flex gap-3 px-3 hover:bg-kumo-tint", focused && "bg-kumo-tint")}>
       {showLineNumbers && <span className="w-12 shrink-0 select-none text-right text-kumo-inactive tabular-nums">{number}</span>}
       {showTimestamps && <span className="shrink-0 select-none text-kumo-subtle tabular-nums">{entry.time.slice(11, 23)}</span>}
       <span className={cn("min-w-0 flex-1", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
@@ -148,6 +150,7 @@ export function LogView({
   className,
   empty,
   initialRect,
+  firstLineNumber = 1,
 }: LogViewProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const v = useVirtualizer({
@@ -211,7 +214,7 @@ export function LogView({
         {lines.length === 0 ? (
           <div className="p-4 font-sans text-sm text-kumo-subtle">{empty ?? "No lines yet."}</div>
         ) : (
-          <div role="table" style={{ height: v.getTotalSize(), position: "relative", minWidth: "100%", width: wrap ? "100%" : "max-content" }}>
+          <div role="list" style={{ height: v.getTotalSize(), position: "relative", minWidth: "100%", width: wrap ? "100%" : "max-content" }}>
             {v.getVirtualItems().map((item) => {
               const entry = lines[item.index]!;
               return (
@@ -223,7 +226,7 @@ export function LogView({
                 >
                   <Row
                     entry={entry}
-                    number={item.index + 1}
+                    number={item.index + firstLineNumber}
                     showTimestamps={showTimestamps}
                     showLineNumbers={showLineNumbers}
                     search={search || undefined}

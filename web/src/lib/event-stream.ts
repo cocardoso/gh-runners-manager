@@ -88,6 +88,18 @@ export class EventStream {
     es.addEventListener("ping", () => {
       if (es === this.es) this.touch();
     });
+    // hello carries the server's newest sequence: adopt it as the resume point on the first
+    // connection, and follow it down when the store went back in time (restore, new demo).
+    es.addEventListener("hello", (m: MessageEvent) => {
+      if (es !== this.es) return;
+      this.touch();
+      try {
+        const latest = (JSON.parse(String(m.data)) as { latest?: unknown }).latest;
+        if (typeof latest === "number" && (this.lastSeq === 0 || latest < this.lastSeq)) this.lastSeq = latest;
+      } catch {
+        // ignore a malformed hello
+      }
+    });
     es.onerror = () => {
       if (es === this.es) this.reconnect();
     };

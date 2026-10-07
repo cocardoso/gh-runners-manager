@@ -59,3 +59,9 @@ test("explains when filters match nothing", async () => {
   renderApp("/jobs?status=canceled");
   expect(await screen.findByText("No job matches these filters")).toBeInTheDocument();
 });
+
+test("says when the list is capped", async () => {
+  mockApi({ "/api/v1/jobs": { jobs: Array.from({ length: 1000 }, (_, i) => job({ id: `j${i}` })) } });
+  renderApp("/jobs");
+  expect(await screen.findByText(/newest 1,000 matching jobs/)).toBeInTheDocument();
+});

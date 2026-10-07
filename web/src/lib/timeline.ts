@@ -25,9 +25,11 @@ const labels: Record<string, string> = {
   destroying: "Destroying",
   destroyed: "Destroyed",
   failed: "Failed",
+  started: "Job started",
+  finished: "Job finished",
 };
 
-const terminal = new Set(["destroyed", "failed"]);
+const terminal = new Set(["destroyed", "failed", "finished"]);
 
 /** The lifecycle of a job and its environment as ordered stages with durations. */
 export function buildTimeline({
@@ -53,6 +55,11 @@ export function buildTimeline({
   for (const e of states) {
     const to = typeof e.data?.to === "string" ? e.data.to : undefined;
     if (to) add(to, e.time);
+  }
+  // Without an environment, the job's own end closes the timeline.
+  if (job && !environment && job.status === "completed") {
+    add("started", job.started_at);
+    add("finished", job.finished_at, job.result ? `Job ${job.result}` : undefined);
   }
   stages.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 

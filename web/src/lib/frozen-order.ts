@@ -5,18 +5,20 @@ function same(a: string[], b: string[]) {
 }
 
 /**
- * Keeps the order of rows stable while frozen (the pointer is over the table): existing
- * rows update in place and new rows are held back and counted until the table is released.
+ * Keeps the rows stable while frozen (the pointer is over the table): existing rows update in
+ * place, rows that left keep their last data and position, and new rows are held back and
+ * counted until the table is released.
  */
 export function useFrozenOrder<T>(items: T[], key: (item: T) => string, frozen: boolean): { rows: T[]; pending: number } {
   const keys = items.map(key);
-  const [order, setOrder] = useState(keys);
+  const [shown, setShown] = useState({ keys, items });
   if (!frozen) {
-    if (!same(order, keys)) setOrder(keys);
+    if (!same(shown.keys, keys)) setShown({ keys, items });
     return { rows: items, pending: 0 };
   }
   const latest = new Map(items.map((i) => [key(i), i]));
-  const rows = order.flatMap((k) => latest.get(k) ?? []);
-  const shown = new Set(order);
-  return { rows, pending: keys.filter((k) => !shown.has(k)).length };
+  const known = new Map(shown.items.map((i) => [key(i), i]));
+  const rows = shown.keys.flatMap((k) => latest.get(k) ?? known.get(k) ?? []);
+  const visible = new Set(shown.keys);
+  return { rows, pending: keys.filter((k) => !visible.has(k)).length };
 }

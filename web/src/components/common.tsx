@@ -78,7 +78,11 @@ export function Page({
                 </span>
               ))}
               <Breadcrumbs.Separator />
-              <Breadcrumbs.Current>{title}</Breadcrumbs.Current>
+              <Breadcrumbs.Current>
+                <span className="block max-w-[40vw] truncate sm:max-w-md" title={title}>
+                  {title}
+                </span>
+              </Breadcrumbs.Current>
             </Breadcrumbs>
           }
           title={title}

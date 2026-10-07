@@ -150,3 +150,41 @@ test("an undefined factory falls back to the global EventSource", () => {
   s.stop();
   vi.unstubAllGlobals();
 });
+
+describe("EventStream hello handshake", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeEventSource.reset();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const make = (received: ApiEvent[]) =>
+    new EventStream({ url: "/s", createEventSource: (u) => new FakeEventSource(u) as unknown as EventSource, onEvent: (e) => received.push(e), onState: () => {} });
+
+  test("a store that went back in time (restarted demo, restore) resets the resume point", () => {
+    const received: ApiEvent[] = [];
+    const s = make(received);
+    s.start();
+    FakeEventSource.last().open();
+    FakeEventSource.last().emit(ev(7, "job.started"), 7);
+    FakeEventSource.last().fail();
+    vi.advanceTimersByTime(1000);
+    const es = FakeEventSource.last();
+    es.open();
+    es.emit({ latest: 2 }, undefined, "hello");
+    es.emit(ev(3, "job.started"), 3);
+    expect(received.map((e) => e.seq)).toEqual([7, 3]);
+    s.stop();
+  });
+
+  test("a reconnect before the first event resumes from the hello's latest seq", () => {
+    const s = make([]);
+    s.start();
+    FakeEventSource.last().open();
+    FakeEventSource.last().emit({ latest: 10 }, undefined, "hello");
+    FakeEventSource.last().fail();
+    vi.advanceTimersByTime(1000);
+    expect(FakeEventSource.last().url).toBe("/s?after=10");
+    s.stop();
+  });
+});

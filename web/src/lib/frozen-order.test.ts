@@ -16,3 +16,11 @@ test("while frozen, rows keep their order, update in place and new rows wait", (
   expect(result.current.rows.map((r) => r.id)).toEqual(["c", "b", "a"]);
   expect(result.current.pending).toBe(0);
 });
+
+test("rows that leave while frozen stay in place with their last data", () => {
+  const { result, rerender } = renderHook(({ items, frozen }) => useFrozenOrder(items, key, frozen), {
+    initialProps: { items: [{ id: "a", v: 1 }, { id: "b", v: 1 }, { id: "c", v: 1 }], frozen: false },
+  });
+  rerender({ items: [{ id: "a", v: 1 }, { id: "c", v: 2 }], frozen: true });
+  expect(result.current.rows).toEqual([{ id: "a", v: 1 }, { id: "b", v: 1 }, { id: "c", v: 2 }]);
+});

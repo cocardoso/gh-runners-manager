@@ -3,7 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 export type ThemePreference = "system" | "light" | "dark";
 const KEY = "ghrm.theme";
 
-function read(): ThemePreference {
+/** The stored preference; blocked or empty storage means "system". */
+export function readThemePreference(): ThemePreference {
   try {
     const v = localStorage.getItem(KEY);
     if (v === "light" || v === "dark") return v;
@@ -24,7 +25,7 @@ export function applyTheme(pref: ThemePreference) {
 }
 
 export function useTheme() {
-  const [pref, setPref] = useState<ThemePreference>(read);
+  const [pref, setPref] = useState<ThemePreference>(readThemePreference);
   useEffect(() => {
     applyTheme(pref);
     if (pref !== "system" || typeof window.matchMedia !== "function") return;

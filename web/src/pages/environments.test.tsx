@@ -82,3 +82,15 @@ test("destroy is disabled when the server has no admin token", async () => {
   renderApp("/environments/env-run");
   expect(await screen.findByRole("button", { name: "Destroy" })).toBeDisabled();
 });
+
+test("after a rejected token the next attempt asks for a new one", async () => {
+  sessionStorage.setItem("ghrm.adminToken", "wrong");
+  mockApi(detailRoutes(() => new Response(JSON.stringify({ detail: "invalid admin token" }), { status: 401, headers: { "Content-Type": "application/json" } })));
+  const user = userEvent.setup();
+  renderApp("/environments/env-run");
+  await clickDestroy(user);
+  await user.type(await screen.findByRole("textbox", { name: "Type env-run to confirm deletion" }), "env-run");
+  await user.click(screen.getByRole("button", { name: "Destroy environment" }));
+  expect(await screen.findByLabelText("Admin token")).toBeInTheDocument();
+  expect(screen.getByText(/invalid admin token/)).toBeInTheDocument();
+});

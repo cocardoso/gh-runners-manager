@@ -3,7 +3,7 @@ import { Empty, LayerCard, Link, Pagination, Table } from "@cloudflare/kumo";
 import { BriefcaseIcon, FunnelSimpleIcon } from "@phosphor-icons/react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { Job } from "@/api/client";
-import { useJobs } from "@/api/queries";
+import { useJobs, useScaleSets } from "@/api/queries";
 import { ErrorState, Loading, Page, RelativeTime, Truncate, useNow } from "@/components/common";
 import { JobStatusBadge } from "@/components/status-badge";
 import { ListToolbar } from "@/components/list-toolbar";
@@ -12,6 +12,7 @@ import { useFrozenOrder } from "@/lib/frozen-order";
 import type { ListSearch } from "@/router";
 
 const PER_PAGE = 25;
+const LIST_LIMIT = 1000;
 
 const statusOptions = { running: "Running", assigned: "Waiting", succeeded: "Succeeded", failed: "Failed", canceled: "Canceled" };
 const rangeOptions = { "1h": "Last hour", "24h": "Last 24 hours", "7d": "Last 7 days" };
@@ -32,7 +33,10 @@ export function JobsPage() {
   const search = useSearch({ strict: false }) as ListSearch;
   const navigate = useNavigate();
   const now = useNow();
-  const jobs = useJobs({ limit: 1000 });
+  // Status and scale set filter on the server, so they reach past the newest LIST_LIMIT jobs.
+  const serverStatus = search.status === "running" || search.status === "assigned" ? search.status : search.status ? "completed" : undefined;
+  const jobs = useJobs({ limit: LIST_LIMIT, status: serverStatus, scaleSet: search.scale_set });
+  const sets = useScaleSets();
   const [hovering, setHovering] = useState(false);
 
   const set = (patch: Partial<ListSearch>) =>
@@ -56,7 +60,7 @@ export function JobsPage() {
   const pageRows = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const { rows, pending } = useFrozenOrder(pageRows, (j) => j.id, hovering);
 
-  const scaleSets = Object.fromEntries([...new Set(all.map((j) => j.scale_set))].sort().map((s) => [s, s]));
+  const scaleSets = Object.fromEntries([...new Set([...(sets.data ?? []).map((s) => s.name), ...all.map((j) => j.scale_set)])].sort().map((s) => [s, s]));
   const repos = Object.fromEntries([...new Set(all.map((j) => j.repository))].sort().map((s) => [s, s]));
 
   let body;
@@ -123,7 +127,9 @@ export function JobsPage() {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-kumo-line px-3 py-2">
           <span className="text-sm text-kumo-subtle" aria-live="polite">
-            {pending > 0 ? `${pending} new — move the pointer away to show them` : `${filtered.length.toLocaleString()} jobs`}
+            {pending > 0
+              ? `${pending} new — move the pointer away to show them`
+              : `${filtered.length.toLocaleString()} jobs${all.length >= LIST_LIMIT ? ` (only the newest ${LIST_LIMIT.toLocaleString()} matching jobs are loaded)` : ""}`}
           </span>
           <Pagination page={page} setPage={(p) => set({ page: p > 1 ? p : undefined })} perPage={PER_PAGE} totalCount={filtered.length} />
         </div>

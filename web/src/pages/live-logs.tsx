@@ -25,7 +25,7 @@ function mergeSorted(a: ApiEvent[], b: ApiEvent[]) {
 
 function Row({ e }: { e: ApiEvent }) {
   return (
-    <div role="row" className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-kumo-line px-3 py-1.5 text-sm sm:flex-nowrap">
+    <div role="listitem" className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-kumo-line px-3 py-1.5 text-sm sm:flex-nowrap">
       <time className="shrink-0 font-mono text-xs text-kumo-subtle tabular-nums" dateTime={e.time}>
         {new Date(e.time).toLocaleTimeString(undefined, { hour12: false })}
       </time>
@@ -79,6 +79,7 @@ export function LiveLogsPage() {
   const loadEarlier = async () => {
     const first = events[0]?.seq;
     if (!first) return;
+    pause(); // reading history: keep it from being trimmed or pushed around
     setLoadingEarlier(true);
     try {
       const page = unwrap(await api.GET("/api/v1/events", { params: { query: { newest: true, before: first, limit: PAGE } } })).events ?? [];
@@ -109,14 +110,16 @@ export function LiveLogsPage() {
   const scroller = useRef<HTMLDivElement>(null);
   const v = useVirtualizer({ count: filtered.length, getScrollElement: () => scroller.current, estimateSize: () => 34, overscan: 15, getItemKey: (i) => filtered[i]!.seq });
 
+  const pause = () => {
+    if (paused) return;
+    setPaused(true);
+    setShownUpTo(events.at(-1)?.seq ?? 0);
+  };
   const togglePause = () => {
-    if (paused) {
-      setPaused(false);
-      setShownUpTo(Infinity);
-    } else {
-      setPaused(true);
-      setShownUpTo(events.at(-1)?.seq ?? 0);
-    }
+    if (!paused) return pause();
+    setPaused(false);
+    setShownUpTo(Infinity);
+    scroller.current?.scrollTo({ top: 0 });
   };
 
   return (
@@ -148,11 +151,18 @@ export function LiveLogsPage() {
       {error && <p className="text-sm text-kumo-danger">{error}</p>}
       <LayerCard>
         <LayerCard.Primary className="p-0">
-          <div ref={scroller} role="log" aria-live="off" className="h-[65vh] min-h-80 overflow-auto">
+          <div
+            ref={scroller}
+            role="log"
+            aria-live="off"
+            className="h-[65vh] min-h-80 overflow-auto"
+            // Newest events are inserted at the top: reading further down pauses so rows stay put.
+            onScroll={(e) => e.currentTarget.scrollTop > 0 && pause()}
+          >
             {filtered.length === 0 ? (
               <p className="p-4 text-sm text-kumo-subtle">No events match. New events appear here as the fleet works.</p>
             ) : (
-              <div role="table" style={{ height: v.getTotalSize(), position: "relative" }}>
+              <div role="list" style={{ height: v.getTotalSize(), position: "relative" }}>
                 {v.getVirtualItems().map((item) => (
                   <div key={item.key} data-index={item.index} ref={v.measureElement} style={{ position: "absolute", top: 0, left: 0, right: 0, transform: `translateY(${item.start}px)` }}>
                     <Row e={filtered[item.index]!} />

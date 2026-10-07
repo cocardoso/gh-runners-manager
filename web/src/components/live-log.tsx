@@ -82,11 +82,12 @@ export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "
   const [timestamps, setTimestamps] = useState(false);
   const [numbers, setNumbers] = useState(true);
   const [query, setQuery] = useState(initialSearch);
-  const [matchIndex, setMatchIndex] = useState(0);
+  // -1 means no match is focused (following the tail).
+  const [matchIndex, setMatchIndex] = useState(initialSearch ? 0 : -1);
   const [downloading, setDownloading] = useState(false);
   const search = useDeferredValue(query.trim());
 
-  const log = useLogStream({ envId, stream, follow: follow && live, createEventSource });
+  const log = useLogStream({ envId, stream, follow: follow && live && !(search && matchIndex >= 0), createEventSource });
   const matches = useMemo(() => {
     if (!search) return [];
     const q = search.toLowerCase();
@@ -96,12 +97,12 @@ export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "
     });
     return out;
   }, [log.lines, search]);
-  const current = matches.length ? Math.min(matchIndex, matches.length - 1) : -1;
+  const current = matches.length && matchIndex >= 0 ? Math.min(matchIndex, matches.length - 1) : -1;
 
   const step = (d: number) => {
     if (!matches.length) return;
     setFollow(false);
-    setMatchIndex((current + d + matches.length) % matches.length);
+    setMatchIndex(current < 0 ? (d > 0 ? 0 : matches.length - 1) : (current + d + matches.length) % matches.length);
   };
 
   const copy = async () => {
@@ -122,7 +123,8 @@ export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "
       a.href = url;
       a.download = `${envId}-${stream}.log`;
       a.click();
-      URL.revokeObjectURL(url);
+      // Revoking in the same task can cancel the download in some browsers.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (e) {
       toast.add({ title: "Download failed", description: e instanceof Error ? e.message : String(e), variant: "error" });
     } finally {
@@ -144,7 +146,7 @@ export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "
           onValueChange={(v) => {
             setStream(v as LogStreamName);
             setFollow(true);
-            setMatchIndex(0);
+            setMatchIndex(-1);
           }}
           className="max-w-full overflow-x-auto"
         />
@@ -199,12 +201,16 @@ export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "
         lines={log.lines}
         follow={follow && live && current < 0}
         canFollow={live}
-        onFollowChange={setFollow}
+        onFollowChange={(f) => {
+          setFollow(f);
+          if (f) setMatchIndex(-1);
+        }}
         wrap={wrap}
         showTimestamps={timestamps}
         showLineNumbers={numbers}
         search={search}
         focusLine={current >= 0 ? matches[current] : undefined}
+        firstLineNumber={log.firstLine}
         hasEarlier={log.hasEarlier}
         loadingEarlier={log.loadingEarlier}
         onLoadEarlier={log.loadEarlier}

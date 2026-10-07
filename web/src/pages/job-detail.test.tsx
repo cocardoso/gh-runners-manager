@@ -82,3 +82,17 @@ test("the permission hint is not repeated when the server already gives it", asy
   const text = (await screen.findByText(/cannot read workflow runs/)).closest("div")!.textContent ?? "";
   expect(text.match(/Actions: read/g)).toHaveLength(1);
 });
+
+test("reasons that are not about permissions get no permission hint", async () => {
+  mockApi(routes({ available: false, reason: "no workflow run is known for this job", steps: [] }));
+  renderApp("/jobs/j1?tab=steps");
+  await screen.findByText(/No workflow run is known for this job/);
+  expect(screen.queryByText(/Actions: read/)).not.toBeInTheDocument();
+});
+
+test("long names wrap instead of overflowing", async () => {
+  mockApi({ ...routes(), "/api/v1/jobs/j1": { ...theJob, display_name: "x".repeat(300) } });
+  renderApp("/jobs/j1");
+  const h1 = await screen.findByRole("heading", { level: 1, name: "x".repeat(300) });
+  expect(h1.className).toMatch(/break-words|wrap-anywhere/);
+});

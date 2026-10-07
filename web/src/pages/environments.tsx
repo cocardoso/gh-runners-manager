@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Empty, LayerCard, Link, Pagination, Table } from "@cloudflare/kumo";
 import { CubeIcon, FunnelSimpleIcon } from "@phosphor-icons/react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useEnvironments, useJobs } from "@/api/queries";
+import { useEnvironments, useJobs, useScaleSets } from "@/api/queries";
 import { ErrorState, Loading, Page, RelativeTime, Truncate } from "@/components/common";
 import { EnvironmentStateBadge } from "@/components/status-badge";
 import { ListToolbar } from "@/components/list-toolbar";
@@ -11,13 +11,17 @@ import { useFrozenOrder } from "@/lib/frozen-order";
 import type { ListSearch } from "@/router";
 
 const PER_PAGE = 25;
+const LIST_LIMIT = 1000;
 const LIVE = new Set(["pending", "provisioning", "booting", "connected", "idle", "running", "completing", "destroying", "failed"]);
 const stateOptions = { live: "Live", failed: "Failed", destroyed: "Destroyed" };
 
 export function EnvironmentsPage() {
   const search = useSearch({ strict: false }) as ListSearch;
   const navigate = useNavigate();
-  const envs = useEnvironments({ limit: 1000 });
+  // State and scale set filter on the server, so they reach past the newest LIST_LIMIT environments.
+  const serverState = search.state === "live" ? [...LIVE].join(",") : search.state;
+  const envs = useEnvironments({ limit: LIST_LIMIT, state: serverState, scaleSet: search.scale_set });
+  const sets = useScaleSets();
   const jobs = useJobs({ limit: 1000 });
   const [hovering, setHovering] = useState(false);
   const set = (patch: Partial<ListSearch>) =>
@@ -36,7 +40,7 @@ export function EnvironmentsPage() {
   }, [all, search]);
   const page = search.page ?? 1;
   const { rows, pending } = useFrozenOrder(filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE), (e) => e.id, hovering);
-  const scaleSets = Object.fromEntries([...new Set(all.map((e) => e.scale_set))].sort().map((s) => [s, s]));
+  const scaleSets = Object.fromEntries([...new Set([...(sets.data ?? []).map((s) => s.name), ...all.map((e) => e.scale_set)])].sort().map((s) => [s, s]));
 
   let body;
   if (envs.isLoading) body = <Loading />;
@@ -101,7 +105,9 @@ export function EnvironmentsPage() {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-kumo-line px-3 py-2">
           <span className="text-sm text-kumo-subtle" aria-live="polite">
-            {pending > 0 ? `${pending} new — move the pointer away to show them` : `${filtered.length.toLocaleString()} environments`}
+            {pending > 0
+              ? `${pending} new — move the pointer away to show them`
+              : `${filtered.length.toLocaleString()} environments${all.length >= LIST_LIMIT ? ` (only the newest ${LIST_LIMIT.toLocaleString()} matching environments are loaded)` : ""}`}
           </span>
           <Pagination page={page} setPage={(p) => set({ page: p > 1 ? p : undefined })} perPage={PER_PAGE} totalCount={filtered.length} />
         </div>

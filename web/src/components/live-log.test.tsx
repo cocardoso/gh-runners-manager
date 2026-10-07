@@ -78,3 +78,35 @@ test("switching streams loads the other stream", async () => {
   fireEvent.click(screen.getByRole("tab", { name: "runner" }));
   expect(await screen.findByText("runner line")).toBeInTheDocument();
 });
+
+test("a focused search pauses the stream, and jump to latest clears the focus and follows again", async () => {
+  const user = userEvent.setup();
+  setup();
+  await screen.findByText("hello");
+  await waitFor(() => expect(FakeEventSource.instances.length).toBeGreaterThan(0));
+  await user.type(screen.getByRole("searchbox", { name: "Search the log" }), "boom");
+  await screen.findByText("1 of 1");
+  expect(FakeEventSource.last().closed).toBe(true);
+  await user.click(screen.getByRole("button", { name: /jump to latest/i }));
+  await waitFor(() => expect(FakeEventSource.last().closed).toBe(false));
+  expect(screen.queryByRole("button", { name: /jump to latest/i })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+});
+
+test("the download URL is revoked only after the click", async () => {
+  const user = userEvent.setup();
+  setup();
+  let revokedAtClick: boolean | undefined;
+  const revoke = vi.fn();
+  URL.createObjectURL = vi.fn(() => "blob:x");
+  URL.revokeObjectURL = revoke;
+  // A revoke in the same task as the click can cancel the download in some browsers.
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {
+    queueMicrotask(() => (revokedAtClick = revoke.mock.calls.length > 0));
+  });
+  await screen.findByText("hello");
+  await user.click(screen.getByRole("button", { name: "Download" }));
+  await waitFor(() => expect(revoke).toHaveBeenCalledWith("blob:x"));
+  expect(revokedAtClick).toBe(false);
+  click.mockRestore();
+});
