@@ -289,3 +289,57 @@ func TestStartupAdoptsLiveEnvironments(t *testing.T) {
 		t.Fatalf("count %d err %v envs %d; want the running environment adopted, nothing new", n, err, len(h.envs(t)))
 	}
 }
+
+func TestReaperDestroysOrphans(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	orphan, _ := h.rt.Create(ctx, runtime.EnvironmentSpec{ID: "orphan", Hostname: "ghrm-orphan", Cores: 1, MemoryMB: 512})
+	gone, _ := h.rt.Create(ctx, runtime.EnvironmentSpec{ID: "gone", Hostname: "ghrm-gone", Cores: 1, MemoryMB: 512})
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "gone", ScaleSet: "lab", State: "destroyed", RuntimeRef: gone.ID})
+	h.c.Reap(ctx)
+	if list, _ := h.rt.List(ctx); len(list) != 0 {
+		t.Fatalf("runtime still has %+v; want orphan %s and destroyed-row guest removed", list, orphan)
+	}
+}
+
+func TestReaperMarksGoneEnvironments(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	_ = h.rt.Destroy(ctx, runtime.Ref{ID: e.RuntimeRef}) // vanished outside ghrm
+	h.c.Reap(ctx)
+	got, _ := h.db.GetEnvironment(ctx, e.ID)
+	if got.State != "destroyed" || got.FailureStage != "runtime_gone" {
+		t.Fatalf("env = %s / %s, want destroyed with failure stage runtime_gone", got.State, got.FailureStage)
+	}
+}
+
+func TestReaperEnforcesTimeouts(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0] // booting, guest running, agent never says hello
+	h.now = h.now.Add(3 * time.Minute)
+	h.c.Reap(ctx)
+	got, _ := h.db.GetEnvironment(ctx, e.ID)
+	if got.State != "destroyed" || got.FailureStage != "timeout:booting" {
+		t.Fatalf("env = %s / %s, want destroyed after timeout:booting", got.State, got.FailureStage)
+	}
+	if list, _ := h.rt.List(ctx); len(list) != 0 {
+		t.Fatalf("guest not destroyed: %+v", list)
+	}
+}
+
+func TestReaperHandlesSilentPowerOff(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	h.c.AgentEvent(ctx, e.ID, ingest.EventHello, time.Now(), nil)
+	h.c.AgentEvent(ctx, e.ID, ingest.EventRunnerOnline, time.Now(), nil)
+	_ = h.rt.Stop(ctx, runtime.Ref{ID: e.RuntimeRef}) // powered off without reporting
+	h.c.Reap(ctx)
+	h.c.Teardown(ctx)
+	got, _ := h.db.GetEnvironment(ctx, e.ID)
+	if got.State != "destroyed" {
+		t.Fatalf("state = %s, want destroyed", got.State)
+	}
+}

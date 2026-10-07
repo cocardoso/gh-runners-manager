@@ -144,10 +144,13 @@ func (c *Controller) Kick() {
 // Wait blocks until in-flight provisioning finishes.
 func (c *Controller) Wait() { c.inflight.Wait() }
 
-// Run reconciles and tears down environments until ctx ends.
+// Run reconciles, tears down and reaps environments until ctx ends.
 func (c *Controller) Run(ctx context.Context) {
+	c.Reap(ctx)
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
+	reap := time.NewTicker(30 * time.Second)
+	defer reap.Stop()
 	for {
 		if err := c.Reconcile(ctx); err != nil && ctx.Err() == nil {
 			_, _ = c.d.Recorder.Error(ctx, "controller.error", "reconcile failed: "+err.Error(), events.Refs{}, nil)
@@ -158,6 +161,8 @@ func (c *Controller) Run(ctx context.Context) {
 			return
 		case <-t.C:
 		case <-c.kick:
+		case <-reap.C:
+			c.Reap(ctx)
 		}
 	}
 }
