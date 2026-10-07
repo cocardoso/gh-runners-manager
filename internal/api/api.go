@@ -12,9 +12,11 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
+	"github.com/cocardoso/gh-runners-manager/internal/runtime"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 	"github.com/cocardoso/gh-runners-manager/internal/version"
 )
@@ -34,8 +36,14 @@ type Deps struct {
 	AdminToken string
 	// Ready, when set, is called by /readyz in addition to the store ping.
 	Ready func(ctx context.Context) error
-	// UI, when set, serves every path that is not an API path (M3).
+	// UI, when set, serves every path that is not an API path.
 	UI http.Handler
+	// Config is shown (without secrets) on the settings endpoint and used for limits.
+	Config *config.Config
+	// Capacity reports runtime capacity for the overview.
+	Capacity func(ctx context.Context) (runtime.Capacity, error)
+	// GitHubJobs fetches job steps from GitHub.
+	GitHubJobs GitHubJobs
 }
 
 // Environment is the API view of an environment.
@@ -262,6 +270,8 @@ func New(d Deps) http.Handler {
 
 	type listEventsInput struct {
 		After       int64  `query:"after" minimum:"0"`
+		Before      int64  `query:"before" minimum:"0" doc:"Only events with a lower sequence number"`
+		Newest      bool   `query:"newest" doc:"Return the newest matching events (still in ascending order)"`
 		Environment string `query:"environment"`
 		Job         string `query:"job"`
 		Limit       int    `query:"limit" minimum:"0" maximum:"5000"`
@@ -272,7 +282,7 @@ func New(d Deps) http.Handler {
 				Events []store.Event `json:"events"`
 			}
 		}, error) {
-			evs, err := d.Store.ListEvents(ctx, store.EventFilter{AfterSeq: in.After, EnvironmentID: in.Environment, JobID: in.Job, Limit: limit(in.Limit, 1000, 5000)})
+			evs, err := d.Store.ListEvents(ctx, store.EventFilter{AfterSeq: in.After, BeforeSeq: in.Before, Newest: in.Newest, EnvironmentID: in.Environment, JobID: in.Job, Limit: limit(in.Limit, 1000, 5000)})
 			if err != nil {
 				return nil, err
 			}
@@ -292,6 +302,8 @@ func New(d Deps) http.Handler {
 		ID     string `path:"id"`
 		Stream string `path:"stream" enum:"control-plane,runtime,agent,runner,job,metrics"`
 		Offset int64  `query:"offset" minimum:"0"`
+		Tail   bool   `query:"tail" doc:"Return the last entries ending at before (default: the end of the stream)"`
+		Before int64  `query:"before" minimum:"-1" default:"-1"`
 		Limit  int    `query:"limit" minimum:"0" maximum:"10000"`
 	}
 	huma.Register(a, huma.Operation{OperationID: "read-logs", Method: http.MethodGet, Path: "/api/v1/environments/{id}/logs/{stream}",
@@ -300,24 +312,40 @@ func New(d Deps) http.Handler {
 			Body struct {
 				Entries []logs.Entry `json:"entries"`
 				Next    int64        `json:"next"`
+				// FirstLine is the line number of the first entry of a tail page read from the end (0 otherwise).
+				FirstLine int64 `json:"first_line,omitempty"`
 			}
 		}, error) {
-			entries, next, err := d.Logs.Read(ctx, in.ID, in.Stream, in.Offset, limit(in.Limit, 2000, 10000))
+			var entries []logs.Entry
+			var next, firstLine int64
+			var err error
+			if in.Tail && in.Before < 0 {
+				var t logs.Tail
+				t, err = d.Logs.ReadTail(ctx, in.ID, in.Stream, limit(in.Limit, 2000, 10000))
+				entries, next, firstLine = t.Entries, t.Next, t.FirstLine
+			} else if in.Tail {
+				entries, next, err = d.Logs.ReadBefore(ctx, in.ID, in.Stream, in.Before, limit(in.Limit, 2000, 10000))
+			} else {
+				entries, next, err = d.Logs.Read(ctx, in.ID, in.Stream, in.Offset, limit(in.Limit, 2000, 10000))
+			}
 			if err != nil {
 				return nil, huma.Error400BadRequest(err.Error())
 			}
 			out := &struct {
 				Body struct {
-					Entries []logs.Entry `json:"entries"`
-					Next    int64        `json:"next"`
+					Entries   []logs.Entry `json:"entries"`
+					Next      int64        `json:"next"`
+					FirstLine int64        `json:"first_line,omitempty"`
 				}
 			}{}
-			out.Body.Entries, out.Body.Next = entries, next
+			out.Body.Entries, out.Body.Next, out.Body.FirstLine = entries, next, firstLine
 			if out.Body.Entries == nil {
 				out.Body.Entries = []logs.Entry{}
 			}
 			return out, nil
 		})
+
+	registerOverview(a, d)
 
 	s := &sse{d: d}
 	mux.HandleFunc("GET /api/v1/events/stream", s.events)
@@ -337,7 +365,7 @@ func New(d Deps) http.Handler {
 		_, _ = w.Write([]byte("ready\n"))
 	})
 	if d.UI != nil {
-		mux.Handle("/", d.UI)
+		mux.Handle("/", d.UI) // the UI handler answers 404 for unknown /api/ paths
 	}
 
 	// follow=true on the logs endpoint switches to SSE before huma sees the request.

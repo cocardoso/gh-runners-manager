@@ -21,9 +21,10 @@ Legend used in the diagrams: **green** = implemented, **grey dashed** = planned 
 | Controller and reaper | `internal/controller` | Implemented (M2) |
 | Ingest (TLS, per-environment tokens) | `internal/ingest` | Implemented (M2) |
 | Agent | `cmd/ghrm-agent`, `internal/agent` | Implemented (M2) |
-| REST API and SSE | `internal/api` | Implemented (M2) |
-| `ghrm version`, `smoke`, `serve` | `cmd/ghrm` | Implemented (M1, M2) |
-| Web UI (React, Kumo) | `web/` | Planned (M3) |
+| REST API and SSE | `internal/api` | Implemented (M2, paging and heartbeats M3) |
+| `ghrm version`, `smoke`, `serve`, `openapi`, `demo` | `cmd/ghrm` | Implemented (M1–M3) |
+| Simulated fleet for UI work and browser tests | `internal/demo` | Implemented (M3) |
+| Web UI (React, Kumo), embedded in the binary | `web/` | Implemented (M3); template pages in M4, sign-in and editable settings in M5 |
 | Template builder (`ubuntu-slim`) | `internal/template`, `template/layer` | Planned (M4); M2 uses `deploy/proxmox/dev-template.sh` |
 | UI auth, secrets, installer | `internal/auth`, `internal/secrets`, `deploy/` | Planned (M5) |
 
@@ -78,9 +79,44 @@ flowchart LR
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef planned fill:#f1f3f5,stroke:#868e96,stroke-dasharray:5 5,color:#000
-    class runtime,scheduler,listener,reaper,store,ingest,api done
-    class ui planned
+    class runtime,scheduler,listener,reaper,store,ingest,api,ui done
 ```
+
+## 1a. Web UI data flow
+
+The UI is a single-page app embedded in `ghrm` (`web/embed.go`) and served for every non-API path. Server state is fetched over REST through a client generated from the OpenAPI document. One shared event stream keeps every page live by invalidating the queries an event affects; each open log view has its own stream.
+
+```mermaid
+flowchart LR
+    subgraph browser["Operator browser"]
+        pages["Pages: overview, jobs, environments,<br/>scale sets, live logs, settings"]
+        query["TanStack Query cache"]
+        live["Shared EventStream<br/>(backoff, resume after seq, stale detection)"]
+        viewer["Log viewer (virtualized, ANSI)<br/>LogBuffer cap 50k lines"]
+        follower["LogFollower per open log"]
+    end
+    subgraph ghrm["ghrm"]
+        static["Embedded UI (SPA fallback)"]
+        rest["REST: /api/v1/* (huma, OpenAPI)"]
+        evsse["SSE: /api/v1/events/stream<br/>after=latest | after=seq, named ping every 15 s"]
+        logsse["SSE: …/logs/{stream}?follow=true&offset="]
+        tail["REST: …/logs/{stream}?tail=true&before="]
+    end
+    pages --> query
+    query -- "GET (generated client)" --> rest
+    live -- "one EventSource" --> evsse
+    live -- "invalidate by event kind (batched 250 ms)" --> query
+    viewer --> follower
+    follower -- "last page first, load earlier" --> tail
+    follower -- "follow from last offset; closed while paused" --> logsse
+    browser -- "first load" --> static
+
+    classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
+    class pages,query,live,viewer,follower,static,rest,evsse,logsse,tail done
+```
+
+- A fresh page starts the event stream at `after=latest` and reconnects with `after=<last seq>`, so a control-plane restart or a network blip replays what was missed. A connection that stays silent past two heartbeats is treated as stale and replaced; the Live indicator shows `Reconnecting` meanwhile.
+- Destroying an environment is the only mutating action. It needs the admin token, kept in `sessionStorage` until M5 adds sign-in, and a type-the-name confirmation.
 
 ## 2. Network and isolation
 
@@ -261,6 +297,10 @@ flowchart LR
     ghrm --> ingest["internal/ingest"]
     ghrm --> github["internal/github"]
     ghrm --> proxmoxlxc["internal/runtime/proxmoxlxc"]
+    ghrm --> demo["internal/demo"]
+    ghrm --> webui["web (embedded UI)"]
+    demo --> controller
+    demo --> runtimetest
     controller --> scheduler["internal/scheduler"]
     controller --> environment["internal/environment"]
     controller --> runtime["internal/runtime"]
@@ -283,12 +323,12 @@ flowchart LR
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef testonly fill:#fff3bf,stroke:#e67700,color:#000
     classDef ext fill:#e7f5ff,stroke:#1971c2,color:#000
-    class ghrm,config,api,controller,ingest,github,proxmoxlxc,scheduler,environment,runtime,store,events,logs,proxmox,agentcmd,agent,ingestproto done
+    class ghrm,config,api,controller,ingest,github,proxmoxlxc,scheduler,environment,runtime,store,events,logs,proxmox,agentcmd,agent,ingestproto,demo,webui done
     class runtimetest,proxmoxtest testonly
     class scaleset ext
 ```
 
-Yellow packages are test doubles. `cmd/ghrm-agent` shares only the wire protocol with the control plane.
+Yellow packages are test doubles; `internal/demo` uses the fake runtime to serve a simulated fleet (`ghrm demo`). `cmd/ghrm-agent` shares only the wire protocol with the control plane.
 
 ## 7. Template pipeline (planned, M4)
 

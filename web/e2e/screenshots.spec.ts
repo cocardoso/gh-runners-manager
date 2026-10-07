@@ -1,0 +1,32 @@
+import path from "node:path";
+import { expect, test } from "./fixtures";
+
+// Refreshes the README screenshots: `pnpm screenshots` (needs a built UI).
+test.skip(!process.env.SCREENSHOTS, "set SCREENSHOTS=1 to refresh docs/images");
+test.use({ viewport: { width: 1440, height: 900 } });
+
+const shots: [string, string][] = [
+  ["overview", "/"],
+  ["jobs", "/jobs"],
+  ["environments", "/environments"],
+  ["scale-sets", "/scale-sets"],
+  ["live-logs", "/logs"],
+];
+
+test("README screenshots", async ({ page, demo, request }) => {
+  test.setTimeout(180_000);
+  // Let the simulated fleet run long enough to have history.
+  await expect.poll(async () => ((await (await request.get(`${demo.url}/api/v1/jobs?status=completed`)).json()).jobs ?? []).length, { timeout: 90_000 }).toBeGreaterThan(12);
+  const { jobs } = await (await request.get(`${demo.url}/api/v1/jobs?status=running`)).json();
+  if (jobs?.[0]) shots.push(["job-logs", `/jobs/${jobs[0].id}?tab=logs`], ["job-timeline", `/jobs/${jobs[0].id}`]);
+  const out = path.resolve(import.meta.dirname, "../../docs/images");
+  for (const mode of ["light", "dark"]) {
+    await page.addInitScript((m) => localStorage.setItem("ghrm.theme", m), mode);
+    for (const [name, url] of shots) {
+      await page.goto(demo.url + url);
+      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      await page.waitForTimeout(1500);
+      await page.screenshot({ path: path.join(out, `${name}-${mode}.png`) });
+    }
+  }
+});

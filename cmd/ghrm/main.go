@@ -18,6 +18,8 @@ Commands:
   version   Print version information
   smoke     Create, start and destroy one environment to check the runtime
   serve     Run the control plane
+  demo      Serve the API and UI backed by a simulated fleet
+  openapi   Print the API's OpenAPI document
 `
 
 func main() {
@@ -36,6 +38,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "version":
 		fmt.Fprintln(stdout, version.String())
 		return 0
+	case "openapi":
+		return openapi(stdout, stderr)
+	case "demo":
+		return demoCmd(ctx, args[1:], stdout, stderr)
 	case "serve":
 		return serve(ctx, args[1:], stdout, stderr)
 	case "smoke":

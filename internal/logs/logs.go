@@ -4,6 +4,7 @@ package logs
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -230,6 +231,115 @@ func (s *Store) Read(ctx context.Context, envID, stream string, offset int64, ma
 		out = append(out, e)
 	}
 	return out, pos, nil
+}
+
+// ReadBefore returns up to max entries that end at or before the byte offset before
+// (an entry offset, or -1 for the end of the stream), and the offset where they end.
+func (s *Store) ReadBefore(ctx context.Context, envID, stream string, before int64, max int) ([]Entry, int64, error) {
+	if err := validate(envID, stream); err != nil {
+		return nil, 0, err
+	}
+	meta, err := s.meta(ctx, envID, stream)
+	if err != nil {
+		return nil, 0, err
+	}
+	end := meta.Bytes
+	if before >= 0 && before < end {
+		end = before
+	}
+	return s.readBefore(envID, stream, end, max)
+}
+
+// Tail is the last page of a stream.
+type Tail struct {
+	Entries []Entry
+	// Next is the offset where the stream ended when it was read.
+	Next int64
+	// FirstLine is the 1-based line number of the first entry (0 when there is none).
+	FirstLine int64
+}
+
+// ReadTail returns the last max entries of a stream with the line number of the first one.
+func (s *Store) ReadTail(ctx context.Context, envID, stream string, max int) (Tail, error) {
+	if err := validate(envID, stream); err != nil {
+		return Tail{}, err
+	}
+	meta, err := s.meta(ctx, envID, stream)
+	if err != nil {
+		return Tail{}, err
+	}
+	entries, next, err := s.readBefore(envID, stream, meta.Bytes, max)
+	t := Tail{Entries: entries, Next: next}
+	if len(entries) > 0 && next == meta.Bytes {
+		t.FirstLine = meta.Lines - int64(len(entries)) + 1
+	}
+	return t, err
+}
+
+func (s *Store) meta(ctx context.Context, envID, stream string) (store.LogStream, error) {
+	meta, err := s.db.GetLogStream(ctx, envID, stream)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.LogStream{}, nil
+	}
+	return meta, err
+}
+
+// readBefore reads backwards from end (clamped to a line boundary at or before it).
+func (s *Store) readBefore(envID, stream string, end int64, max int) ([]Entry, int64, error) {
+	if end <= 0 || max <= 0 {
+		return nil, max64(end, 0), nil
+	}
+	f, err := os.Open(s.path(envID, stream))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, end, nil
+	}
+	if err != nil {
+		return nil, end, err
+	}
+	defer f.Close()
+	// Read backwards in chunks until the buffer holds max complete lines.
+	const chunk = 64 * 1024
+	pos := end
+	var buf []byte
+	for pos > 0 && bytes.Count(buf, []byte{'\n'}) <= max {
+		n := min(int64(chunk), pos)
+		pos -= n
+		part := make([]byte, n)
+		if _, err := f.ReadAt(part, pos); err != nil {
+			return nil, end, err
+		}
+		buf = append(part, buf...)
+	}
+	start := pos
+	if pos > 0 { // drop the partial line at the front
+		i := bytes.IndexByte(buf, '\n')
+		buf, start = buf[i+1:], pos+int64(i+1)
+	}
+	var out []Entry
+	off := start
+	for len(buf) > 0 {
+		i := bytes.IndexByte(buf, '\n')
+		if i < 0 {
+			break // end fell inside a line: it is not returned
+		}
+		ts, text, _ := strings.Cut(string(buf[:i]), "\t")
+		e := Entry{Offset: off, Text: text}
+		e.Time, _ = time.Parse(time.RFC3339Nano, ts)
+		out = append(out, e)
+		off += int64(i + 1)
+		buf = buf[i+1:]
+	}
+	if len(out) > max {
+		out = out[len(out)-max:]
+	}
+	return out, off, nil
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // Follow emits entries from offset, then new entries as they are appended, until ctx ends.

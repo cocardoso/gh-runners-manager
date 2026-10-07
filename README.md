@@ -11,13 +11,41 @@ Ephemeral, isolated GitHub Actions runners on Proxmox LXC: one fresh environment
 - Job environments live on an isolated network that cannot reach your LAN or the hypervisor.
 - A web UI shows queues, environments, jobs and the live logs of every lifecycle stage.
 
+## Web UI
+
+The UI is embedded in the `ghrm` binary and follows the Cloudflare dashboard patterns, built with [Kumo](https://github.com/cloudflare/kumo). Everything updates live over server-sent events.
+
+| Overview | Jobs |
+| --- | --- |
+| ![Overview](docs/images/overview-light.png) | ![Jobs](docs/images/jobs-light.png) |
+| **Job timeline** | **Live job log** |
+| ![Job timeline](docs/images/job-timeline-light.png) | ![Job log](docs/images/job-logs-dark.png) |
+| **Scale sets** | **Live logs** |
+| ![Scale sets](docs/images/scale-sets-light.png) | ![Live logs](docs/images/live-logs-dark.png) |
+
+Dark versions of every screenshot are in [docs/images](docs/images).
+
+## Documentation
+
 - [Architecture diagrams](docs/architecture.md): system overview, network isolation, job lifecycle, environment states and implementation status. Kept up to date with every change.
 - [Design document](docs/superpowers/specs/2026-10-07-gh-runners-manager-design.md): the reasoning behind the design.
 - [Development guide](docs/development.md): building, testing and running against a Proxmox host.
 
 ## Development
 
-Requirements: Go 1.27+.
+Requirements: Go 1.27+, and Node.js 22 with pnpm for the web UI.
 
+    make web     # build the UI into web/dist (embedded by the next Go build)
     make check   # vet, test (with -race) and build
     make build   # produces bin/ghrm
+
+`go build` works without Node.js: the binary then serves a page explaining how to build the UI.
+
+To work on the UI, run a simulated fleet and the Vite dev server:
+
+    go run ./cmd/ghrm demo            # API and a simulated fleet on 127.0.0.1:8080 (admin token: demo)
+    cd web && pnpm dev                # http://localhost:5173, proxies /api to the demo
+
+    cd web && pnpm test               # unit and component tests (Vitest)
+    cd web && pnpm build && pnpm e2e  # browser tests (Playwright) against ghrm demo
+    cd web && pnpm screenshots        # refresh docs/images

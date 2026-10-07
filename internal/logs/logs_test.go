@@ -2,6 +2,7 @@ package logs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,5 +146,64 @@ func TestAppendDiscardsBytesNotRecordedInMetadata(t *testing.T) {
 	entries, _, _ := s.Read(ctx, "env1", "job", 0, 100)
 	if len(entries) != 3 {
 		t.Fatalf("entries = %d, want 3 (no duplicate of line 3)", len(entries))
+	}
+}
+
+func TestReadBeforeReturnsTheLinesEndingBeforeAnOffset(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	var many []Line
+	for i := 1; i <= 3000; i++ {
+		many = append(many, Line{Seq: int64(i), Time: time.Unix(int64(i), 0), Text: fmt.Sprintf("line %d", i)})
+	}
+	_, _ = s.Append(ctx, "env1", "job", many)
+	tail, end, err := s.ReadBefore(ctx, "env1", "job", -1, 2)
+	if err != nil || len(tail) != 2 || tail[0].Text != "line 2999" || tail[1].Text != "line 3000" {
+		t.Fatalf("tail = %+v, %v", tail, err)
+	}
+	if rest, _, _ := s.Read(ctx, "env1", "job", end, 10); len(rest) != 0 {
+		t.Fatalf("end offset %d is not the end of the stream: %+v", end, rest)
+	}
+	earlier, next, _ := s.ReadBefore(ctx, "env1", "job", tail[0].Offset, 1500)
+	if len(earlier) != 1500 || earlier[0].Text != "line 1499" || earlier[1499].Text != "line 2998" || next != tail[0].Offset {
+		t.Fatalf("earlier = %d lines from %q to %q, next %d", len(earlier), earlier[0].Text, earlier[len(earlier)-1].Text, next)
+	}
+	first, _, _ := s.ReadBefore(ctx, "env1", "job", earlier[0].Offset, 5000)
+	if len(first) != 1498 || first[0].Offset != 0 || first[0].Text != "line 1" {
+		t.Fatalf("first = %d lines starting %+v", len(first), first[0])
+	}
+	if none, n, err := s.ReadBefore(ctx, "env1", "metrics", -1, 10); err != nil || len(none) != 0 || n != 0 {
+		t.Fatalf("missing stream = %+v %d %v", none, n, err)
+	}
+}
+
+func TestReadBeforeEndOffsetsAndFirstLine(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Append(ctx, "env1", "job", lines(1, 5))
+	all, end, _ := s.Read(ctx, "env1", "job", 0, 10)
+	// A before inside a line returns the lines that end before it, and where they end.
+	mid := all[3].Offset + 3
+	got, next, err := s.ReadBefore(ctx, "env1", "job", mid, 10)
+	if err != nil || len(got) != 3 || next != all[3].Offset {
+		t.Fatalf("mid-line: %d entries, next %d, want 3 and %d", len(got), next, all[3].Offset)
+	}
+	// From the end, the first entry's absolute line number is known.
+	tail, err := s.ReadTail(ctx, "env1", "job", 2)
+	if err != nil || len(tail.Entries) != 2 || tail.FirstLine != 4 || tail.Next != end {
+		t.Fatalf("tail = %+v, %v; want lines 4-5 and next %d", tail, err, end)
+	}
+}
+
+func TestReadBeforeMissingFileReportsMetadataEnd(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Append(ctx, "env1", "job", lines(1, 2))
+	_, end, _ := s.Read(ctx, "env1", "job", 0, 10)
+	if err := os.RemoveAll(filepath.Dir(s.path("env1", "job"))); err != nil {
+		t.Fatal(err)
+	}
+	if got, next, err := s.ReadBefore(ctx, "env1", "job", -1, 10); err != nil || len(got) != 0 || next != end {
+		t.Fatalf("missing file: %d entries, next %d (%v); want 0 and %d", len(got), next, err, end)
 	}
 }
