@@ -21,6 +21,8 @@ export interface ListSearch {
   repo?: string;
   range?: string;
   state?: string;
+  level?: string;
+  kind?: string;
   page?: number;
 }
 
@@ -31,6 +33,8 @@ const listSearch = (s: Record<string, unknown>): ListSearch => ({
   repo: str(s.repo),
   range: str(s.range),
   state: str(s.state),
+  level: str(s.level),
+  kind: str(s.kind),
   page: num(s.page),
 });
 
@@ -50,7 +54,7 @@ const routes = [
   createRoute({ getParentRoute: () => rootRoute, path: "/environments/$id", component: EnvironmentDetailPage, validateSearch: detailSearch }),
   createRoute({ getParentRoute: () => rootRoute, path: "/scale-sets", component: ScaleSetsPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/templates", component: TemplatesPage }),
-  createRoute({ getParentRoute: () => rootRoute, path: "/logs", component: LiveLogsPage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/logs", component: LiveLogsPage, validateSearch: listSearch }),
   createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage }),
 ];
 

@@ -32,7 +32,7 @@ export class ApiError extends Error {
 
 /** Unwraps an openapi-fetch result, throwing ApiError on failure. */
 export function unwrap<T>(res: { data?: T; error?: unknown; response: Response }): T {
-  if (res.data !== undefined && res.response.ok) return res.data;
+  if (res.response.ok) return res.data as T; // 202/204 answers have no body
   const err = res.error as { detail?: string; title?: string } | undefined;
   throw new ApiError(res.response.status, err?.detail ?? err?.title ?? res.response.statusText ?? "request failed");
 }

@@ -25,7 +25,7 @@ export function useJobs(filter: { status?: string; scaleSet?: string; limit?: nu
 }
 
 export function useJob(id: string) {
-  return useQuery({ queryKey: ["job", id], queryFn: async () => unwrap(await api.GET("/api/v1/jobs/{id}", { params: { path: { id } } })) });
+  return useQuery({ queryKey: ["job", id], queryFn: async () => unwrap(await api.GET("/api/v1/jobs/{id}", { params: { path: { id } } })), enabled: id !== "" });
 }
 
 export function useJobGitHub(id: string, enabled = true) {
