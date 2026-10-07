@@ -187,7 +187,7 @@ flowchart LR
     class file,reg,ui,vault,db,ctl,sup,gh done
 ```
 
-A removed scale set drains: its running environments finish, it gets no new ones, and it disappears once empty. It stays registered on GitHub (without runners) until deleted there.
+A removed scale set drains: its running environments finish, it gets no new ones, and its listener keeps running (with the last GitHub client and token, so job messages and runner removal still work) until the last environment is gone; then it disappears. It stays registered on GitHub (without runners) until deleted there.
 
 ## 2. Network and isolation
 
