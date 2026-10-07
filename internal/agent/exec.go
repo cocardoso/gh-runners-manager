@@ -18,8 +18,10 @@ type Commander interface {
 	Stream(ctx context.Context, dir, name string, args []string, stdout io.Writer, out func(string)) error
 }
 
-// OSCommander runs real processes.
-type OSCommander struct{}
+// OSCommander runs real processes, with Env as their environment (nil: inherit the agent's).
+type OSCommander struct {
+	Env []string
+}
 
 func lines(r io.Reader, out func(string), wg *sync.WaitGroup) {
 	defer wg.Done()
@@ -32,9 +34,10 @@ func lines(r io.Reader, out func(string), wg *sync.WaitGroup) {
 }
 
 // Run implements Commander.
-func (OSCommander) Run(ctx context.Context, dir, name string, args []string, out func(string)) error {
+func (o OSCommander) Run(ctx context.Context, dir, name string, args []string, out func(string)) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	cmd.Env = o.Env
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
 	var wg sync.WaitGroup
@@ -50,9 +53,10 @@ func (OSCommander) Run(ctx context.Context, dir, name string, args []string, out
 }
 
 // Stream implements Commander.
-func (OSCommander) Stream(ctx context.Context, dir, name string, args []string, stdout io.Writer, out func(string)) error {
+func (o OSCommander) Stream(ctx context.Context, dir, name string, args []string, stdout io.Writer, out func(string)) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	cmd.Env = o.Env
 	cmd.Stdout = stdout
 	pr, pw := io.Pipe()
 	cmd.Stderr = pw

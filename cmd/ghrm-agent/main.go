@@ -188,7 +188,9 @@ func runTemplateMode(ctx context.Context, client *agent.Client, boot agent.Boots
 	case ingest.ModeSelfTest:
 		work := "/var/lib/ghrm-selftest"
 		_ = os.MkdirAll(work, 0o755)
-		rep, err := agent.RunSelfTest(ctx, client, cmd, agent.SelfTestOptions{Work: work, RunnerDir: runnerDir, BlockedAddrs: boot.Blocked})
+		// Checks run in the image's environment, as jobs and GitHub's report tooling see it.
+		env := agent.MergeEnvironmentFile(append(os.Environ(), "HOME=/root", "USER=root", "LANG=C.UTF-8"), "/etc/environment")
+		rep, err := agent.RunSelfTest(ctx, client, agent.OSCommander{Env: env}, agent.SelfTestOptions{Work: work, RunnerDir: runnerDir, BlockedAddrs: boot.Blocked})
 		if err != nil {
 			client.Log("agent", "self-test could not report: "+err.Error())
 			code = 1

@@ -178,7 +178,7 @@ func TestRunBuildBuildsTheOfficialRecipeThenTheLayer(t *testing.T) {
 	calls := strings.Join(cmd.calls, "\n")
 	for _, want := range []string{
 		"git clone --depth 1 --branch ubuntu-slim/20261005.17 https://github.com/actions/runner-images " + filepath.Join(work, "runner-images"),
-		"docker build --progress=plain -t ghrm-slim:tpl1 " + filepath.Join(work, "runner-images", "images", "ubuntu-slim"),
+		"docker build --progress=plain --build-arg IMAGE_VERSION=20261005.17 -t ghrm-slim:tpl1 " + filepath.Join(work, "runner-images", "images", "ubuntu-slim"),
 		"docker build --progress=plain --build-arg BASE=ghrm-slim:tpl1 --build-arg RUNNER_VERSION=2.338.0 --build-arg RUNNER_SHA256=" + strings.Repeat("c", 64) + " --build-arg LAYER_VERSION=1 -t ghrm-tpl:tpl1 " + filepath.Join(work, "layer"),
 		"docker create --name ghrm-export-tpl1 ghrm-tpl:tpl1",
 		"docker export ghrm-export-tpl1",
@@ -238,5 +238,13 @@ func TestUnsafeLayerPathsAreRejected(t *testing.T) {
 	_ = tw.Close()
 	if err := untar(&buf, t.TempDir()); err == nil {
 		t.Fatal("a path escaping the directory must be rejected")
+	}
+}
+
+func TestOSCommanderUsesItsEnvironment(t *testing.T) {
+	var lines []string
+	err := OSCommander{Env: []string{"PATH=/usr/bin:/bin", "ImageVersion=20261005.17"}}.Run(context.Background(), t.TempDir(), "sh", []string{"-c", "echo v=$ImageVersion"}, func(l string) { lines = append(lines, l) })
+	if err != nil || len(lines) != 1 || lines[0] != "v=20261005.17" {
+		t.Fatalf("lines = %v, %v", lines, err)
 	}
 }

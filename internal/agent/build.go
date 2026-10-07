@@ -58,7 +58,10 @@ func RunBuild(ctx context.Context, c *Client, cmd Commander, work string) (err e
 	}
 
 	begin("slim", "building the official ubuntu-slim image")
-	if err := cmd.Run(ctx, work, "docker", []string{"build", "--progress=plain", "-t", slim, filepath.Join(recipe, "images", "ubuntu-slim")}, log); err != nil {
+	// GitHub builds the image with its release as IMAGE_VERSION; the software report shows it.
+	imageVersion := strings.TrimPrefix(spec.SlimTag, "ubuntu-slim/")
+	if err := cmd.Run(ctx, work, "docker", []string{"build", "--progress=plain", "--build-arg", "IMAGE_VERSION=" + imageVersion,
+		"-t", slim, filepath.Join(recipe, "images", "ubuntu-slim")}, log); err != nil {
 		return err
 	}
 
