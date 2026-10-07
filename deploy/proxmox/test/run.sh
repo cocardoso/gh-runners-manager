@@ -35,7 +35,9 @@ test_install_creates_everything() {
     "setup token: setup-token-xyz" "web UI: http://192.0.2.20:8080"; do
     expect_out "$want"
   done
-  expect_log 'pct exec 100 -- ghrm secret set --config /etc/ghrm/ghrm.yaml proxmox/token-secret'
+  expect_log 'pct exec 100 -- /usr/local/bin/ghrm secret set --config /etc/ghrm/ghrm.yaml proxmox/token-secret'
+  # pct exec has no /usr/local/bin in its PATH: ghrm is always called by its full path.
+  expect_no_log 'pct exec [0-9]+ -- ghrm '
   expect_log 'pct create 100 local:vztmpl/debian-13-standard.* --net1 name=eth1,bridge=jobnet,ip=10.50.0.2/24'
   expect_log 'pct create 101 local:vztmpl/ubuntu-24.04-standard.* --pool ghrm'
   expect_log 'pvesh create /nodes/pve/lxc/101/firewall/rules --type group --action ghrm-job'
@@ -99,7 +101,7 @@ test_token_without_its_secret_is_created_again() {
   install --vmid 310 --security-group gh-runner || fail "exit $?"
   expect_log 'pveum user token remove ghrm@pve ghrm'
   expect_log 'pveum user token add ghrm@pve ghrm --privsep 0'
-  expect_log 'pct exec 310 -- ghrm secret set'
+  expect_log 'pct exec 310 -- /usr/local/bin/ghrm secret set'
 }
 
 test_token_in_a_secret_file_is_kept() {

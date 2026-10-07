@@ -193,7 +193,7 @@ token() {
   local have_secret=0
   if [ -n "$CT_VMID" ] && pct status "$CT_VMID" >/dev/null 2>&1; then
     # In the vault, or (installs made by hand) in the file the configuration names.
-    if pct exec "$CT_VMID" -- ghrm secret list --config /etc/ghrm/ghrm.yaml 2>/dev/null | grep -qx 'proxmox/token-secret' ||
+    if pct exec "$CT_VMID" -- /usr/local/bin/ghrm secret list --config /etc/ghrm/ghrm.yaml 2>/dev/null | grep -qx 'proxmox/token-secret' ||
       pct exec "$CT_VMID" -- sh -c 'f=$(sed -n "s/^ *token_secret_file: *\([^ #]*\).*/\1/p" /etc/ghrm/ghrm.yaml); [ -n "$f" ] && [ -s "$f" ]' 2>/dev/null; then
       have_secret=1
     fi
@@ -432,7 +432,7 @@ install_ghrm() {
     created "API admin token in /etc/ghrm/admin-token"
   fi
   if [ -n "$TOKEN_SECRET" ]; then
-    printf '%s\n' "$TOKEN_SECRET" | pct exec "$CT_VMID" -- ghrm secret set --config /etc/ghrm/ghrm.yaml proxmox/token-secret
+    printf '%s\n' "$TOKEN_SECRET" | pct exec "$CT_VMID" -- /usr/local/bin/ghrm secret set --config /etc/ghrm/ghrm.yaml proxmox/token-secret
     created "Proxmox token secret sealed in the control plane's vault"
   fi
   printf '%s\n' "$GHRM_SERVICE" >"$tmp/ghrm.service"
