@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -13,11 +14,13 @@ import (
 // Difference is one item that differs between GitHub's published software report and
 // the report generated inside a new template (spec §8.4).
 type Difference struct {
-	Kind      string `json:"kind"` // "missing", "extra" or "version"
-	Name      string `json:"name"`
-	Expected  string `json:"expected,omitempty"`
-	Actual    string `json:"actual,omitempty"`
-	Explained bool   `json:"explained"` // an item the ghrm layer adds on purpose
+	Kind     string `json:"kind"` // "missing", "extra" or "version"
+	Name     string `json:"name"`
+	Expected string `json:"expected,omitempty"`
+	Actual   string `json:"actual,omitempty"`
+	// Explained differences do not hold a version back; Reason says why they are expected.
+	Explained bool   `json:"explained"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // FidelityReport is stored with each template version.
@@ -37,15 +40,37 @@ var layerItems = map[string]bool{
 	"docker compose v2": true, "systemd version": true, "systemd": true, "ghrm-agent": true, "github actions runner": true,
 }
 
-func explained(kind, name string) bool {
+// explain says whether a difference is expected, and why: the ghrm layer installs the
+// item, GitHub's image version carries a build suffix, or the version moved within its
+// major release (the recipe installs the latest releases, so a build made after
+// GitHub's picks up newer ones). A missing item never is, nor is a major change.
+func explain(kind, name, expected, actual string) (bool, string) {
 	if kind == "missing" {
-		return false
+		return false, ""
 	}
 	tool := name
 	if i := strings.LastIndex(name, " / "); i >= 0 {
 		tool = name[i+3:]
 	}
-	return layerItems[strings.ToLower(strings.TrimSpace(tool))]
+	switch {
+	case layerItems[strings.ToLower(strings.TrimSpace(tool))]:
+		return true, "installed by the ghrm layer"
+	case kind != "version":
+		return false, ""
+	case name == "Image Version" && strings.HasPrefix(expected, actual):
+		return true, "GitHub's image version adds a build suffix"
+	case sameMajor(expected, actual):
+		return true, "same major version: built after GitHub's image, the recipe installed a newer release"
+	}
+	return false, ""
+}
+
+var leadingNumber = regexp.MustCompile(`^(?:\d+:)?\D*?(\d+)`)
+
+// sameMajor compares the first number of two versions (after a Debian epoch).
+func sameMajor(a, b string) bool {
+	ma, mb := leadingNumber.FindStringSubmatch(a), leadingNumber.FindStringSubmatch(b)
+	return ma != nil && mb != nil && ma[1] == mb[1]
 }
 
 type reportNode struct {
@@ -122,6 +147,11 @@ func flatten(raw []byte) (map[string]string, error) {
 	return out, nil
 }
 
+func difference(kind, name, expected, actual string) Difference {
+	ok, reason := explain(kind, name, expected, actual)
+	return Difference{Kind: kind, Name: name, Expected: expected, Actual: actual, Explained: ok, Reason: reason}
+}
+
 // CompareReports diffs GitHub's published report with the one generated in a template.
 func CompareReports(published, actual []byte, checks []ingest.Check) (FidelityReport, error) {
 	rep := FidelityReport{Checks: checks, Differences: []Difference{}}
@@ -137,14 +167,14 @@ func CompareReports(published, actual []byte, checks []ingest.Check) (FidelityRe
 		av, ok := got[name]
 		switch {
 		case !ok:
-			rep.Differences = append(rep.Differences, Difference{Kind: "missing", Name: name, Expected: ev, Explained: explained("missing", name)})
+			rep.Differences = append(rep.Differences, difference("missing", name, ev, ""))
 		case av != ev:
-			rep.Differences = append(rep.Differences, Difference{Kind: "version", Name: name, Expected: ev, Actual: av, Explained: explained("version", name)})
+			rep.Differences = append(rep.Differences, difference("version", name, ev, av))
 		}
 	}
 	for name, av := range got {
 		if _, ok := want[name]; !ok {
-			rep.Differences = append(rep.Differences, Difference{Kind: "extra", Name: name, Actual: av, Explained: explained("extra", name)})
+			rep.Differences = append(rep.Differences, difference("extra", name, "", av))
 		}
 	}
 	sort.Slice(rep.Differences, func(i, j int) bool { return rep.Differences[i].Name < rep.Differences[j].Name })

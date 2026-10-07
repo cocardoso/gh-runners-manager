@@ -20,8 +20,11 @@ func releasesServer(t *testing.T, runnerBody string) *httptest.Server {
 				{"tag_name":"ubuntu-slim/20261008.9","draft":false,"prerelease":true},
 				{"tag_name":"ubuntu-slim/20261005.17","draft":false,"prerelease":false},
 				{"tag_name":"ubuntu-slim/20260925.9","draft":false,"prerelease":false}]`))
-		case "/actions/runner-images/ubuntu-slim/20261005.17/images/ubuntu-slim/ubuntu-slim-Report.json":
-			_, _ = w.Write([]byte(`{"NodeType":"HeaderNode","Title":"Ubuntu-Slim"}`))
+		case "/actions/runner-images/releases/download/ubuntu-slim/20261005.17/internal.ubuntu-slim.json":
+			_, _ = w.Write([]byte(`{"NodeType":"HeaderNode","Title":"Ubuntu-Slim release asset"}`))
+		case "/actions/runner-images/ubuntu-slim/20261005.17/images/ubuntu-slim/ubuntu-slim-Report.json",
+			"/actions/runner-images/ubuntu-slim/20260925.9/images/ubuntu-slim/ubuntu-slim-Report.json":
+			_, _ = w.Write([]byte(`{"NodeType":"HeaderNode","Title":"Ubuntu-Slim recipe file"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -44,9 +47,14 @@ func TestGitHubReleases(t *testing.T) {
 		run.URL != "https://github.com/actions/runner/releases/download/v2.338.0/actions-runner-linux-x64-2.338.0.tar.gz" {
 		t.Fatalf("runner = %+v, %v", run, err)
 	}
+	// The recipe's report file is not refreshed for every release; the release asset is.
 	rep, err := r.PublishedReport(ctx, slim)
-	if err != nil || !strings.Contains(string(rep), "Ubuntu-Slim") {
-		t.Fatalf("report = %s, %v", rep, err)
+	if err != nil || !strings.Contains(string(rep), "release asset") {
+		t.Fatalf("report = %s, %v; want the release asset", rep, err)
+	}
+	rep, err = r.PublishedReport(ctx, Release{Tag: "ubuntu-slim/20260925.9", Version: "20260925.9"})
+	if err != nil || !strings.Contains(string(rep), "recipe file") {
+		t.Fatalf("report without an asset = %s, %v; want the recipe file", rep, err)
 	}
 }
 

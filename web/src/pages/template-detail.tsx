@@ -25,6 +25,7 @@ interface Difference {
   expected?: string;
   actual?: string;
   explained: boolean;
+  reason?: string;
 }
 interface Fidelity {
   checks?: Check[];
@@ -180,7 +181,7 @@ function FidelityTab({ fid }: { fid: Fidelity }) {
                           <Badge variant={d.explained ? "neutral" : "warning"} appearance="dot">
                             {d.kind}
                           </Badge>
-                          {d.explained && <Badge variant="outline">ghrm layer</Badge>}
+                          {d.explained && <Badge variant="outline">{d.reason || "ghrm layer"}</Badge>}
                         </span>
                       </Table.Cell>
                       <Table.Cell className="font-mono text-sm">{d.expected || "—"}</Table.Cell>

@@ -41,10 +41,10 @@ func TestCompareReports(t *testing.T) {
 		got[d.Kind+" "+d.Name] = d
 	}
 	want := map[string]Difference{
-		"version Installed Software / Language and Runtime / Node.js": {Expected: "24.13.0", Actual: "24.14.0"},
+		"version Installed Software / Language and Runtime / Node.js": {Expected: "24.13.0", Actual: "24.14.0", Explained: true},
 		"missing Installed Software / Language and Runtime / Python":  {Expected: "3.12.3"},
 		"extra Installed Software / Tools / Docker Server":            {Actual: "28.4.0", Explained: true},
-		"version Installed Software / Tools / jq":                     {Expected: "1.7.1", Actual: "1.7.2"},
+		"version Installed Software / Tools / jq":                     {Expected: "1.7.1", Actual: "1.7.2", Explained: true},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("differences = %+v", rep.Differences)
@@ -55,7 +55,8 @@ func TestCompareReports(t *testing.T) {
 			t.Errorf("%s = %+v (present %v), want %+v", k, d, ok, w)
 		}
 	}
-	if rep.Unexpected != 3 || len(rep.Checks) != 1 {
+	// Only the missing Python is unexpected; newer minor versions are build-date drift.
+	if rep.Unexpected != 1 || len(rep.Checks) != 1 {
 		t.Fatalf("unexpected = %d", rep.Unexpected)
 	}
 }
@@ -122,5 +123,41 @@ func TestCompareReportsWithSingleElementArrays(t *testing.T) {
 	rep, err := CompareReports(report, report, nil)
 	if err != nil || rep.Unexpected != 0 || len(rep.Differences) != 0 {
 		t.Fatalf("identical single-element reports = %+v, %v", rep, err)
+	}
+}
+
+// A build made days after GitHub's picks up newer patch and minor releases (the recipe
+// installs the latest), so those differences are shown but do not block activation.
+func TestVersionDriftIsExplainedButMajorChangesAreNot(t *testing.T) {
+	published := []byte(`{"NodeType":"HeaderNode","Title":"Ubuntu-Slim","Children":[
+	  {"NodeType":"ToolVersionNode","ToolName":"Image Version:","Version":"20260925.9.1"},
+	  {"NodeType":"HeaderNode","Title":"Installed Software","Children":[
+	    {"NodeType":"ToolVersionNode","ToolName":"GitHub CLI","Version":"2.101.0"},
+	    {"NodeType":"ToolVersionNode","ToolName":"Node.js","Version":"24.21.0"},
+	    {"NodeType":"TableNode","Headers":"Name|Version","Rows":["sudo|1.9.15p5-3ubuntu5.24.04.3","bind|1:9.18.39-0ubuntu0.24.04.2"]}]}]}`)
+	actual := []byte(`{"NodeType":"HeaderNode","Title":"Ubuntu-Slim","Children":[
+	  {"NodeType":"ToolVersionNode","ToolName":"Image Version:","Version":"20260925.9"},
+	  {"NodeType":"HeaderNode","Title":"Installed Software","Children":[
+	    {"NodeType":"ToolVersionNode","ToolName":"GitHub CLI","Version":"2.102.0"},
+	    {"NodeType":"ToolVersionNode","ToolName":"Node.js","Version":"26.1.0"},
+	    {"NodeType":"TableNode","Headers":"Name|Version","Rows":["sudo|1.9.15p5-3ubuntu5.24.04.4","bind|1:9.18.39-0ubuntu0.24.04.7"]}]}]}`)
+	rep, err := CompareReports(published, actual, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Difference{}
+	for _, d := range rep.Differences {
+		got[d.Name] = d
+	}
+	for _, name := range []string{"Image Version", "Installed Software / GitHub CLI", "Installed Software / sudo", "Installed Software / bind"} {
+		if d := got[name]; !d.Explained || d.Reason == "" {
+			t.Errorf("%s = %+v, want explained with a reason", name, d)
+		}
+	}
+	if d := got["Installed Software / Node.js"]; d.Explained {
+		t.Errorf("a major version change must not be explained: %+v", d)
+	}
+	if rep.Unexpected != 1 {
+		t.Fatalf("unexpected = %d, want 1 (the Node.js major change)", rep.Unexpected)
 	}
 }
