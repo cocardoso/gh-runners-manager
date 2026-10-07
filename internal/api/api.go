@@ -347,7 +347,7 @@ func New(d Deps) http.Handler {
 		_, _ = w.Write([]byte("ready\n"))
 	})
 	if d.UI != nil {
-		mux.Handle("/", d.UI)
+		mux.Handle("/", d.UI) // the UI handler answers 404 for unknown /api/ paths
 	}
 
 	// follow=true on the logs endpoint switches to SSE before huma sees the request.

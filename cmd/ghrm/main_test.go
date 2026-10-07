@@ -92,3 +92,13 @@ func TestDemoRejectsUnknownFlag(t *testing.T) {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
 }
+
+func TestOpenAPIPrintsTheDocument(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"openapi"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"/api/v1/overview"`) || !strings.HasPrefix(strings.TrimSpace(stdout.String()), "{") {
+		t.Fatalf("stdout = %.200s", stdout.String())
+	}
+}

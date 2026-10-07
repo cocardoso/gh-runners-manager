@@ -1,6 +1,10 @@
 package main
 
-import "net/http"
+import (
+	"net/http"
 
-// uiHandler returns the embedded web UI (nil until the UI package exists).
-func uiHandler() http.Handler { return nil }
+	"github.com/cocardoso/gh-runners-manager/web"
+)
+
+// uiHandler returns the embedded web UI.
+func uiHandler() http.Handler { return web.Handler() }

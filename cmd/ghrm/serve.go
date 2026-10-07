@@ -127,7 +127,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		BaseContext: func(net.Listener) context.Context { return baseCtx },
 		Addr:        cfg.Listen,
 		Handler: api.New(api.Deps{Store: db, Recorder: rec, Logs: logStore, Controller: ctl, AdminToken: cfg.AdminToken,
-			Config: cfg, Capacity: rt.Capacity, GitHubJobs: gh,
+			Config: cfg, Capacity: rt.Capacity, GitHubJobs: gh, UI: uiHandler(),
 			Ready: func(ctx context.Context) error { _, err := rt.Capacity(ctx); return err }}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
