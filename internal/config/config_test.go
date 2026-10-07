@@ -51,6 +51,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if p.ThinPool != "data" {
 		t.Errorf("ThinPool = %q, want data", p.ThinPool)
 	}
+	if p.Storage != "local-lvm" {
+		t.Errorf("Storage = %q, want local-lvm", p.Storage)
+	}
 	if p.FirewallSettle.Std() != 12*time.Second {
 		t.Errorf("FirewallSettle = %v, want 12s", p.FirewallSettle.Std())
 	}

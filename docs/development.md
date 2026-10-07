@@ -25,6 +25,8 @@ ghrm never uses `root`. Create a dedicated user, role, pool and token on the Pro
 
 Store the printed secret in `/etc/ghrm/proxmox-token` (mode `0600`) or export it as `GHRM_PROXMOX_TOKEN_SECRET`.
 
+The role does not include `Sys.Audit` on `/`, so the token cannot read the thin pool's metadata usage. ghrm then reports disk usage from the storage status (`proxmox.storage`, data usage only). Grant `Sys.Audit` on `/` if you also want metadata usage checked.
+
 `proxmox.pool` is required in the configuration: new environments are created in that pool, which is where the token has its permissions.
 
 ## TLS

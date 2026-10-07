@@ -34,6 +34,7 @@ type Proxmox struct {
 	Pool               string    `yaml:"pool"`
 	VMIDRange          VMIDRange `yaml:"vmid_range"`
 	ThinPool           string    `yaml:"thin_pool"`
+	Storage            string    `yaml:"storage"`
 	FirewallSettle     Duration  `yaml:"firewall_settle"`
 
 	// TokenSecret is resolved from EnvProxmoxTokenSecret or TokenSecretFile. It is never read from YAML.
@@ -95,6 +96,9 @@ func (c *Config) applyDefaults() {
 	}
 	if p.ThinPool == "" {
 		p.ThinPool = "data"
+	}
+	if p.Storage == "" {
+		p.Storage = "local-lvm"
 	}
 	if p.FirewallSettle == 0 {
 		p.FirewallSettle = Duration(12 * time.Second)

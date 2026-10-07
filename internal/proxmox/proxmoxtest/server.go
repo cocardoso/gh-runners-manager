@@ -60,6 +60,11 @@ type Server struct {
 	RejectEnvOption bool
 	// TransientTaskErrors makes the next n task status polls answer 596, as during a pveproxy reload.
 	TransientTaskErrors int
+	// DenyLVMThin answers 403 on /disks/lvmthin, as for a token without Sys.Audit on "/".
+	DenyLVMThin bool
+	// StorageTotal and StorageUsed are reported by /nodes/{node}/storage/{storage}/status.
+	StorageTotal int64
+	StorageUsed  int64
 	// PowerOffOnNextStop simulates a guest that powers itself off just before a stop request.
 	PowerOffOnNextStop bool
 	MemoryTotal     int64
@@ -93,6 +98,7 @@ func NewServer(t testing.TB, node, tokenID, tokenSecret string) *Server {
 	mux.HandleFunc("GET "+p+"/nodes/{node}/tasks/{upid}/log", s.taskLog)
 	mux.HandleFunc("GET "+p+"/nodes/{node}/status", s.nodeStatus)
 	mux.HandleFunc("GET "+p+"/nodes/{node}/disks/lvmthin", s.lvmthin)
+	mux.HandleFunc("GET "+p+"/nodes/{node}/storage/{storage}/status", s.storageStatus)
 	s.Server = httptest.NewTLSServer(s.authenticate(mux))
 	t.Cleanup(s.Close)
 	return s
@@ -394,5 +400,15 @@ func (s *Server) nodeStatus(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) lvmthin(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.DenyLVMThin {
+		fail(w, http.StatusForbidden, "Permission check failed (/, Sys.Audit)")
+		return
+	}
 	data(w, s.ThinPools)
+}
+
+func (s *Server) storageStatus(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data(w, map[string]any{"total": s.StorageTotal, "used": s.StorageUsed, "active": 1})
 }

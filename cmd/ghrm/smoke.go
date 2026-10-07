@@ -41,7 +41,7 @@ func smoke(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	rt := proxmoxlxc.New(client, proxmoxlxc.Config{
 		Node: p.Node, TemplateVMID: p.TemplateVMID, Pool: p.Pool,
 		VMIDStart: p.VMIDRange.Start, VMIDEnd: p.VMIDRange.End,
-		ThinPool: p.ThinPool, FirewallSettle: p.FirewallSettle.Std(),
+		ThinPool: p.ThinPool, Storage: p.Storage, FirewallSettle: p.FirewallSettle.Std(),
 	})
 
 	ctx, cancel := context.WithTimeout(ctx, *timeout)

@@ -14,5 +14,6 @@ proxmox:
   vmid_range:
     start: 900
     end: 999
-  thin_pool: data
+  thin_pool: data                               # LV name; read when the token has Sys.Audit on "/"
+  storage: local-lvm                            # storage ID; used for disk usage otherwise
   firewall_settle: 12s

@@ -44,6 +44,19 @@ func (c *Client) ThinPools(ctx context.Context, node string) ([]ThinPool, error)
 	return out, err
 }
 
+// StorageStatus is GET /nodes/{node}/storage/{storage}/status (bytes).
+type StorageStatus struct {
+	Total int64 `json:"total"`
+	Used  int64 `json:"used"`
+}
+
+// StorageStatus returns the usage of a storage. It needs only Datastore.Audit on the storage.
+func (c *Client) StorageStatus(ctx context.Context, node, storage string) (StorageStatus, error) {
+	var out StorageStatus
+	err := c.do(ctx, http.MethodGet, "/nodes/"+url.PathEscape(node)+"/storage/"+url.PathEscape(storage)+"/status", nil, &out)
+	return out, err
+}
+
 // VMIDAvailable reports whether no guest in the cluster uses vmid. It sees guests
 // the token has no permission on, unlike listing endpoints.
 func (c *Client) VMIDAvailable(ctx context.Context, vmid int) (bool, error) {

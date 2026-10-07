@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
@@ -39,6 +40,7 @@ type Config struct {
 	VMIDStart      int
 	VMIDEnd        int
 	ThinPool       string // LV name of the thin pool, e.g. "data"
+	Storage        string // Proxmox storage ID of the thin pool, e.g. "local-lvm"
 	FirewallSettle time.Duration
 }
 
@@ -419,21 +421,11 @@ func (r *Runtime) Capacity(ctx context.Context) (runtime.Capacity, error) {
 	}
 	c := runtime.Capacity{HostMemoryTotalMB: int(ns.Memory.Total >> 20), HostMemoryAvailableMB: int(available >> 20)}
 
-	pools, err := r.client.ThinPools(ctx, r.cfg.Node)
+	pct, err := r.diskPercent(ctx)
 	if err != nil {
 		return runtime.Capacity{}, err
 	}
-	found := false
-	for _, p := range pools {
-		if p.LV != r.cfg.ThinPool {
-			continue
-		}
-		found = true
-		c.ThinPoolPercent = max(percent(p.Used, p.Size), percent(p.MetadataUsed, p.MetadataSize))
-	}
-	if !found {
-		return runtime.Capacity{}, fmt.Errorf("proxmoxlxc: thin pool %q not found on node %s", r.cfg.ThinPool, r.cfg.Node)
-	}
+	c.ThinPoolPercent = pct
 
 	envs, err := r.List(ctx)
 	if err != nil {
@@ -441,6 +433,30 @@ func (r *Runtime) Capacity(ctx context.Context) (runtime.Capacity, error) {
 	}
 	c.Environments = len(envs)
 	return c, nil
+}
+
+// diskPercent returns the larger of the thin pool's data and metadata usage. A
+// pool-scoped token cannot read /disks/lvmthin (it needs Sys.Audit on "/"), so on
+// 403 it falls back to the storage status, which reports data usage only.
+func (r *Runtime) diskPercent(ctx context.Context) (float64, error) {
+	pools, err := r.client.ThinPools(ctx, r.cfg.Node)
+	var apiErr *proxmox.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
+		st, err := r.client.StorageStatus(ctx, r.cfg.Node, r.cfg.Storage)
+		if err != nil {
+			return 0, fmt.Errorf("storage %s status: %w", r.cfg.Storage, err)
+		}
+		return percent(st.Used, st.Total), nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range pools {
+		if p.LV == r.cfg.ThinPool {
+			return max(percent(p.Used, p.Size), percent(p.MetadataUsed, p.MetadataSize)), nil
+		}
+	}
+	return 0, fmt.Errorf("proxmoxlxc: thin pool %q not found on node %s", r.cfg.ThinPool, r.cfg.Node)
 }
 
 func percent(used, size int64) float64 {

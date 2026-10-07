@@ -31,7 +31,7 @@ func newHarness(t *testing.T, start, end int) *harness {
 	}
 	client.PollInterval = time.Millisecond
 	h := &harness{srv: srv}
-	h.rt = New(client, Config{Node: "pve", TemplateVMID: 9000, Pool: "ghrm", VMIDStart: start, VMIDEnd: end, ThinPool: "data", FirewallSettle: 12 * time.Second})
+	h.rt = New(client, Config{Node: "pve", TemplateVMID: 9000, Pool: "ghrm", VMIDStart: start, VMIDEnd: end, ThinPool: "data", Storage: "local-lvm", FirewallSettle: 12 * time.Second})
 	h.rt.SetSleep(func(ctx context.Context, d time.Duration) error {
 		h.sleeps = append(h.sleeps, d)
 		return ctx.Err()
@@ -393,5 +393,20 @@ func TestAllocationSkipsKnownGuestsWithoutProbing(t *testing.T) {
 	}
 	if probes != 1 {
 		t.Fatalf("nextid probes = %d, want 1 (900 and 901 are already known from the LXC list)", probes)
+	}
+}
+
+// A pool-scoped token cannot read /disks/lvmthin (it needs Sys.Audit on "/");
+// Capacity falls back to the storage status, which reports data usage only.
+func TestCapacityFallsBackToStorageStatus(t *testing.T) {
+	h := newHarness(t, 900, 909)
+	h.srv.DenyLVMThin = true
+	h.srv.StorageTotal, h.srv.StorageUsed = 1000, 250
+	c, err := h.rt.Capacity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ThinPoolPercent != 25 {
+		t.Fatalf("ThinPoolPercent = %v, want 25 from the storage status", c.ThinPoolPercent)
 	}
 }
