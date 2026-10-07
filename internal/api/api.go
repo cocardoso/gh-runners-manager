@@ -300,7 +300,7 @@ func New(d Deps) http.Handler {
 
 	type logsInput struct {
 		ID     string `path:"id"`
-		Stream string `path:"stream" enum:"control-plane,runtime,agent,runner,job,metrics"`
+		Stream string `path:"stream" enum:"control-plane,runtime,agent,runner,job,metrics,build,selftest"`
 		Offset int64  `query:"offset" minimum:"0"`
 		Tail   bool   `query:"tail" doc:"Return the last entries ending at before (default: the end of the stream)"`
 		Before int64  `query:"before" minimum:"-1" default:"-1"`

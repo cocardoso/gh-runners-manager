@@ -21,7 +21,7 @@ import (
 )
 
 // Streams are the log stream names of an environment (spec §6).
-var Streams = []string{"control-plane", "runtime", "agent", "runner", "job", "metrics"}
+var Streams = []string{"control-plane", "runtime", "agent", "runner", "job", "metrics", "build", "selftest"}
 
 // ValidStream reports whether name is a known stream.
 func ValidStream(name string) bool { return slices.Contains(Streams, name) }

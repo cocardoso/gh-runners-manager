@@ -32,7 +32,7 @@ const (
 )
 
 // AgentStreams are the log streams an agent may write.
-var AgentStreams = []string{"agent", "runner", "job"}
+var AgentStreams = []string{"agent", "runner", "job", "build", "selftest"}
 
 // Frame is one NDJSON line of an ingest request.
 type Frame struct {
