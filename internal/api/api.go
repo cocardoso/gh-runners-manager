@@ -3,7 +3,6 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strings"
@@ -44,6 +43,8 @@ type Deps struct {
 	Capacity func(ctx context.Context) (runtime.Capacity, error)
 	// GitHubJobs fetches job steps from GitHub.
 	GitHubJobs GitHubJobs
+	// Templates builds and activates template versions (nil: read-only listing).
+	Templates TemplateService
 }
 
 // Environment is the API view of an environment.
@@ -207,12 +208,8 @@ func New(d Deps) http.Handler {
 			ID            string `path:"id"`
 			Authorization string `header:"Authorization"`
 		}) (*struct{}, error) {
-			if d.AdminToken == "" {
-				return nil, huma.Error403Forbidden("mutating calls are disabled: no admin token is configured")
-			}
-			token, _ := strings.CutPrefix(in.Authorization, "Bearer ")
-			if subtle.ConstantTimeCompare([]byte(token), []byte(d.AdminToken)) != 1 {
-				return nil, huma.Error401Unauthorized("invalid admin token")
+			if err := requireAdmin(d, in.Authorization); err != nil {
+				return nil, err
 			}
 			e, err := d.Store.GetEnvironment(ctx, in.ID)
 			if errors.Is(err, store.ErrNotFound) {
@@ -346,6 +343,7 @@ func New(d Deps) http.Handler {
 		})
 
 	registerOverview(a, d)
+	registerTemplates(a, d)
 
 	s := &sse{d: d}
 	mux.HandleFunc("GET /api/v1/events/stream", s.events)

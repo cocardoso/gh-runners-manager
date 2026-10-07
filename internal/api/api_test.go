@@ -48,6 +48,11 @@ type harness struct {
 
 func newHarness(t *testing.T, adminToken string) *harness {
 	t.Helper()
+	return newHarnessWith(t, adminToken, nil)
+}
+
+func newHarnessWith(t *testing.T, adminToken string, mutate func(*Deps)) *harness {
+	t.Helper()
 	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "db"))
 	if err != nil {
 		t.Fatal(err)
@@ -57,8 +62,12 @@ func newHarness(t *testing.T, adminToken string) *harness {
 	cfg := &config.Config{Proxmox: config.Proxmox{URL: "https://pve.example.test:8006", TokenSecret: "pve-secret"},
 		GitHub:    config.GitHub{Credentials: []config.Credential{{Name: "c", Token: "token-value"}}},
 		ScaleSets: []config.ScaleSet{{Name: "lab", URL: "https://github.com/o/r", Credential: "c"}}, AdminToken: adminToken}
-	h.srv = httptest.NewServer(New(Deps{Store: db, Recorder: h.rec, Logs: h.logs, Controller: h.ctl, AdminToken: adminToken,
-		Config: cfg, GitHubJobs: fakeGitHubJobs{}}))
+	deps := Deps{Store: db, Recorder: h.rec, Logs: h.logs, Controller: h.ctl, AdminToken: adminToken,
+		Config: cfg, GitHubJobs: fakeGitHubJobs{}}
+	if mutate != nil {
+		mutate(&deps)
+	}
+	h.srv = httptest.NewServer(New(deps))
 	t.Cleanup(h.srv.Close)
 	return h
 }

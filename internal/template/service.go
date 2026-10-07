@@ -118,6 +118,18 @@ func inProgress(state string) bool {
 	return state == store.TemplateBuilding || state == store.TemplateCreating || state == store.TemplateVerifying
 }
 
+// Enabled reports whether template builds are configured.
+func (s *Service) Enabled() bool { return s.d.Config.Enabled() }
+
+// InUse reports whether an environment still depends on a built version.
+func (s *Service) InUse(ctx context.Context, t store.Template) bool {
+	if t.RuntimeRef == "" {
+		return false
+	}
+	used, err := s.d.Runtime.TemplateInUse(ctx, runtime.TemplateRef{ID: t.RuntimeRef})
+	return err != nil || used
+}
+
 // Running reports whether a build or verification is in progress.
 func (s *Service) Running(ctx context.Context) bool {
 	list, _ := s.d.Store.ListTemplates(ctx)
