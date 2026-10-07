@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -20,15 +21,17 @@ const EnvProxmoxTokenSecret = "GHRM_PROXMOX_TOKEN_SECRET"
 
 // Config is the root of the ghrm configuration file.
 type Config struct {
-	DataDir        string     `yaml:"data_dir"`
-	Listen         string     `yaml:"listen"`
-	AdminTokenFile string     `yaml:"admin_token_file"`
-	Proxmox        Proxmox    `yaml:"proxmox"`
-	Ingest         Ingest     `yaml:"ingest"`
-	GitHub         GitHub     `yaml:"github"`
-	Capacity       Capacity   `yaml:"capacity"`
-	ScaleSets      []ScaleSet `yaml:"scale_sets"`
-	Templates      Templates  `yaml:"templates"`
+	DataDir        string `yaml:"data_dir"`
+	Listen         string `yaml:"listen"`
+	AdminTokenFile string `yaml:"admin_token_file"`
+	// SecretKeyFile holds the key that seals secrets in the database (default <data_dir>/secret.key).
+	SecretKeyFile string     `yaml:"secret_key_file"`
+	Proxmox       Proxmox    `yaml:"proxmox"`
+	Ingest        Ingest     `yaml:"ingest"`
+	GitHub        GitHub     `yaml:"github"`
+	Capacity      Capacity   `yaml:"capacity"`
+	ScaleSets     []ScaleSet `yaml:"scale_sets"`
+	Templates     Templates  `yaml:"templates"`
 
 	// AdminToken is read from AdminTokenFile; empty disables mutating API calls.
 	AdminToken string `yaml:"-"`
@@ -168,8 +171,9 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 // Std returns the value as a time.Duration.
 func (d Duration) Std() time.Duration { return time.Duration(d) }
 
-// Load reads, defaults, resolves secrets for and validates the configuration at path.
-func Load(path string) (*Config, error) {
+// Read parses the configuration at path and applies defaults, without validating it or
+// resolving secrets (commands that manage the secrets themselves use it).
+func Read(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
@@ -181,6 +185,15 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	cfg.applyDefaults()
+	return cfg, nil
+}
+
+// Load reads, defaults, resolves secrets for and validates the configuration at path.
+func Load(path string) (*Config, error) {
+	cfg, err := Read(path)
+	if err != nil {
+		return nil, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -196,6 +209,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:8080"
+	}
+	if c.SecretKeyFile == "" {
+		c.SecretKeyFile = filepath.Join(c.DataDir, "secret.key")
 	}
 	cp := &c.Capacity
 	if cp.MaxEnvironments == 0 {

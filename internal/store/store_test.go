@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -228,5 +229,36 @@ func TestListEventsNewestAndBefore(t *testing.T) {
 	window, _ := s.ListEvents(ctx, EventFilter{AfterSeq: 1, BeforeSeq: 4})
 	if len(window) != 2 || window[0].Seq != 2 {
 		t.Fatalf("window = %+v; want seq 2, 3", window)
+	}
+}
+
+func TestSecretsAndMeta(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	if _, err := s.GetSecret(ctx, "a"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing secret: %v", err)
+	}
+	if err := s.PutSecret(ctx, "b", []byte{1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.PutSecret(ctx, "a", []byte{3})
+	_ = s.PutSecret(ctx, "a", []byte{4})
+	if got, err := s.GetSecret(ctx, "a"); err != nil || len(got) != 1 || got[0] != 4 {
+		t.Fatalf("a = %v, %v", got, err)
+	}
+	if names, _ := s.ListSecretNames(ctx); strings.Join(names, ",") != "a,b" {
+		t.Fatalf("names = %v", names)
+	}
+	_ = s.DeleteSecret(ctx, "a")
+	if _, err := s.GetSecret(ctx, "a"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("deleted secret still there")
+	}
+	if _, err := s.GetMeta(ctx, "k"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing meta: %v", err)
+	}
+	_ = s.PutMeta(ctx, "k", "v1")
+	_ = s.PutMeta(ctx, "k", "v2")
+	if v, err := s.GetMeta(ctx, "k"); v != "v2" || err != nil {
+		t.Fatalf("meta = %q, %v", v, err)
 	}
 }
