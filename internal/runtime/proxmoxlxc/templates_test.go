@@ -17,6 +17,7 @@ var _ runtime.Templates = (*Runtime)(nil)
 
 func templateHarness(t *testing.T) *harness {
 	h := newHarness(t, 900, 909)
+	h.srv.RejectCreateTags = true
 	h.rt.cfg.Templates = TemplateConfig{VMIDStart: 950, VMIDEnd: 952, Storage: "local", RootFSGB: 16, Nameserver: "1.1.1.1", Bridge: "jobnet", FirewallGroup: "gh-runner"}
 	return h
 }
@@ -182,5 +183,20 @@ func TestTemplateDeletionKeepsTheVMIDPermissions(t *testing.T) {
 	}
 	if h.srv.Purged(950) {
 		t.Fatal("template deletion purged the VMID's ACLs (the token needs them to create the next template)")
+	}
+}
+
+func TestCleanupRemovesAnUntaggedTemplateNamedAfterTheVersion(t *testing.T) {
+	h := templateHarness(t)
+	h.srv.AddGuest(proxmoxtest.Guest{VMID: 951, Type: "lxc", Name: "ghrm-template-tplx", Config: map[string]string{"pool": "ghrm"}})
+	h.srv.AddGuest(proxmoxtest.Guest{VMID: 952, Type: "lxc", Name: "unrelated", Config: map[string]string{"pool": "ghrm"}})
+	if err := h.rt.CleanupTemplate(context.Background(), "tplx"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.srv.Guest(951); ok {
+		t.Fatal("the untagged template of this version must be removed")
+	}
+	if _, ok := h.srv.Guest(952); !ok {
+		t.Fatal("an unrelated guest must stay")
 	}
 }

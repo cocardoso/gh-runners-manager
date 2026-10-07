@@ -81,6 +81,9 @@ type Server struct {
 	FailCreate bool
 	// FailUpload makes uploads answer 500 before reading the body.
 	FailUpload bool
+	// RejectCreateTags emulates Proxmox checking tag permissions on /vms/<vmid>, ignoring the
+	// pool a new container joins: a pool-scoped token cannot create with tags.
+	RejectCreateTags bool
 	// TakeVMIDOnCreate makes the next container creation find its VMID taken by a foreign
 	// guest (created at that moment) and answer synchronously with an error.
 	TakeVMIDOnCreate bool
@@ -573,6 +576,10 @@ func (s *Server) createLXC(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	_ = r.ParseForm()
 	vmid, _ := strconv.Atoi(r.PostForm.Get("vmid"))
+	if s.RejectCreateTags && r.PostForm.Get("tags") != "" {
+		fail(w, http.StatusForbidden, fmt.Sprintf("Permission check failed (/vms/%d, VM.Config.Options)", vmid))
+		return
+	}
 	if s.TakeVMIDOnCreate {
 		s.TakeVMIDOnCreate = false
 		s.guests[vmid] = &Guest{VMID: vmid, Type: "lxc", Status: "stopped", Name: "foreign", Config: map[string]string{}}

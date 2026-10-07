@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -18,6 +19,8 @@ const (
 )
 
 func archiveName(id string) string { return "ghrm-" + id + ".tar.zst" }
+
+func templateHostname(id string) string { return "ghrm-template-" + id }
 
 func (r *Runtime) parseTemplateRef(ref runtime.TemplateRef) (int, string, error) {
 	vmidStr, id, ok := strings.Cut(ref.ID, "/")
@@ -67,9 +70,11 @@ func (r *Runtime) CreateTemplate(ctx context.Context, spec runtime.TemplateSpec)
 	}
 	// A template's own size does not matter: every clone gets the cores and memory of its scale set.
 	cores, mem := 2, 2048
+	// No tags at creation: Proxmox checks tag permissions on /vms/<vmid> before the container
+	// joins the pool. The hostname names the version until the tags are set right after.
 	err = r.client.CreateLXC(ctx, r.cfg.Node, proxmox.CreateLXCOptions{
-		VMID: vmid, OSTemplate: volid, Hostname: "ghrm-template", Pool: r.cfg.Pool, Storage: r.cfg.Storage, RootFSGB: t.RootFSGB,
-		Cores: cores, MemoryMB: mem, Nameserver: t.Nameserver, Bridge: t.Bridge, Tags: []string{TagTemplate, templateTagPrefix + spec.ID},
+		VMID: vmid, OSTemplate: volid, Hostname: templateHostname(spec.ID), Pool: r.cfg.Pool, Storage: r.cfg.Storage, RootFSGB: t.RootFSGB,
+		Cores: cores, MemoryMB: mem, Nameserver: t.Nameserver, Bridge: t.Bridge,
 	})
 	r.allocMu.Unlock()
 	if err != nil {
@@ -83,6 +88,10 @@ func (r *Runtime) CreateTemplate(ctx context.Context, spec runtime.TemplateSpec)
 		_ = r.client.WaitTask(cctx, r.cfg.Node, taskErr.UPID)
 		cancel()
 		return runtime.TemplateRef{}, r.dropTemplate(ctx, vmid, volid, err)
+	}
+	tags := url.Values{"tags": {TagTemplate + ";" + templateTagPrefix + spec.ID}}
+	if err := r.client.SetLXCConfig(ctx, r.cfg.Node, vmid, tags); err != nil {
+		return runtime.TemplateRef{}, r.dropTemplate(ctx, vmid, volid, fmt.Errorf("tag template %d: %w", vmid, err))
 	}
 	if t.FirewallGroup != "" {
 		if err := r.client.EnableFirewallGroup(ctx, r.cfg.Node, vmid, t.FirewallGroup); err != nil {
@@ -199,7 +208,16 @@ func (r *Runtime) CleanupTemplate(ctx context.Context, id string) error {
 	}
 	t := r.cfg.Templates
 	for _, g := range guests {
-		if g.VMID < t.VMIDStart || g.VMID > t.VMIDEnd || !g.HasTag(templateTagPrefix+id) {
+		if g.VMID < t.VMIDStart || g.VMID > t.VMIDEnd {
+			continue
+		}
+		if !g.HasTag(templateTagPrefix + id) {
+			// Created but not yet tagged when the control plane stopped: named after the version.
+			if g.Name == templateHostname(id) && g.Tags == "" {
+				if err := r.client.DeleteLXCKeepACLs(ctx, r.cfg.Node, g.VMID); err != nil && !errors.Is(err, proxmox.ErrNotFound) {
+					return err
+				}
+			}
 			continue
 		}
 		if err := r.DeleteTemplate(ctx, runtime.TemplateRef{ID: strconv.Itoa(g.VMID) + "/" + id}); err != nil {

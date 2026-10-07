@@ -22,9 +22,9 @@ type SelfTestOptions struct {
 	ProbeURL     string   // HTTPS URL that must be reachable (default https://api.github.com)
 	// ScriptsDir is where the report scripts are mounted in GitHub's tooling (default /scripts).
 	ScriptsDir string
-	Lookup       func(ctx context.Context, host string) error
-	HTTPGet      func(ctx context.Context, url string) error
-	Dial         func(ctx context.Context, addr string) error
+	Lookup     func(ctx context.Context, host string) error
+	HTTPGet    func(ctx context.Context, url string) error
+	Dial       func(ctx context.Context, addr string) error
 }
 
 func (o *SelfTestOptions) defaults() {
