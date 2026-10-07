@@ -117,7 +117,7 @@ func (r *Runtime) dropVolume(ctx context.Context, volid string, cause error) err
 func (r *Runtime) dropTemplate(ctx context.Context, vmid int, volid string, cause error) error {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 	defer cancel()
-	if err := r.client.DeleteLXC(cctx, r.cfg.Node, vmid); err != nil && !errors.Is(err, proxmox.ErrNotFound) {
+	if err := r.client.DeleteLXCKeepACLs(cctx, r.cfg.Node, vmid); err != nil && !errors.Is(err, proxmox.ErrNotFound) {
 		cause = errors.Join(cause, fmt.Errorf("cleanup of template %d failed, remove it manually: %w", vmid, err))
 	}
 	return r.dropVolume(ctx, volid, cause)
@@ -177,7 +177,7 @@ func (r *Runtime) DeleteTemplate(ctx context.Context, ref runtime.TemplateRef) e
 		if used {
 			return fmt.Errorf("%w: %s", runtime.ErrTemplateInUse, ref)
 		}
-		if err := r.client.DeleteLXC(ctx, r.cfg.Node, vmid); err != nil && !errors.Is(err, proxmox.ErrNotFound) {
+		if err := r.client.DeleteLXCKeepACLs(ctx, r.cfg.Node, vmid); err != nil && !errors.Is(err, proxmox.ErrNotFound) {
 			return fmt.Errorf("delete template %d: %w", vmid, err)
 		}
 	}

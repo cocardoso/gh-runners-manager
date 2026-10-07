@@ -85,6 +85,7 @@ type Server struct {
 	// guest (created at that moment) and answer synchronously with an error.
 	TakeVMIDOnCreate bool
 
+	purged    map[int]bool // VMIDs deleted with purge=1 (Proxmox also drops their ACLs)
 	volumes   map[string]Volume
 	firewalls map[int]*Firewall
 }
@@ -435,6 +436,12 @@ func (s *Server) deleteLXC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	delete(s.guests, g.VMID)
+	if r.URL.Query().Get("purge") == "1" {
+		if s.purged == nil {
+			s.purged = map[int]bool{}
+		}
+		s.purged[g.VMID] = true
+	}
 	data(w, s.task("vzdestroy", g.VMID, "OK"))
 }
 
@@ -637,4 +644,11 @@ func (s *Server) resize(w http.ResponseWriter, r *http.Request) {
 		g.Config[r.PostForm.Get("disk")+"_size"] = r.PostForm.Get("size")
 		data(w, s.task("resize", g.VMID, "OK"))
 	}
+}
+
+// Purged reports whether a guest was deleted with purge=1, which also removes its ACLs.
+func (s *Server) Purged(vmid int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.purged[vmid]
 }

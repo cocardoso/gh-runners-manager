@@ -132,6 +132,13 @@ func (c *Client) DeleteLXC(ctx context.Context, node string, vmid int) error {
 	return c.postTask(ctx, node, http.MethodDelete, lxcPath(node, vmid, ""), params)
 }
 
+// DeleteLXCKeepACLs destroys a stopped guest without purge, so ACLs on its VMID stay
+// (template VMIDs carry the token's permissions).
+func (c *Client) DeleteLXCKeepACLs(ctx context.Context, node string, vmid int) error {
+	params := url.Values{"destroy-unreferenced-disks": {"1"}}
+	return c.postTask(ctx, node, http.MethodDelete, lxcPath(node, vmid, ""), params)
+}
+
 // LXCStatus is GET /nodes/{node}/lxc/{vmid}/status/current.
 type LXCStatus struct {
 	Status string `json:"status"`

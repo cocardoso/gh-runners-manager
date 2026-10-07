@@ -169,3 +169,18 @@ func TestCreateTemplateRejectedSynchronouslyKeepsTheExistingGuest(t *testing.T) 
 		t.Fatalf("archive left: %+v", vols)
 	}
 }
+
+func TestTemplateDeletionKeepsTheVMIDPermissions(t *testing.T) {
+	h := templateHarness(t)
+	ctx := context.Background()
+	ref, err := h.rt.CreateTemplate(ctx, withSHA(archive()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.rt.DeleteTemplate(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	if h.srv.Purged(950) {
+		t.Fatal("template deletion purged the VMID's ACLs (the token needs them to create the next template)")
+	}
+}
