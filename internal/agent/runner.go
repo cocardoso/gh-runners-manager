@@ -21,6 +21,7 @@ type Runner struct {
 	JIT    string
 	UID    uint32 // run as this user when non-zero
 	GID    uint32
+	Groups []uint32 // supplementary groups (docker access needs the docker group)
 	Env    []string
 	OnLine func(line string)
 }
@@ -30,9 +31,7 @@ func (r Runner) Run(ctx context.Context) (int, error) {
 	cmd := exec.CommandContext(ctx, r.Script, "--jitconfig", r.JIT)
 	cmd.Dir = r.Dir
 	cmd.Env = r.Env
-	if r.UID != 0 {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: r.UID, Gid: r.GID}}
-	}
+	cmd.SysProcAttr = r.sysProcAttr()
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
 	var wg sync.WaitGroup
@@ -64,6 +63,24 @@ func (r Runner) Run(ctx context.Context) (int, error) {
 		return -1, err
 	}
 	return 0, nil
+}
+
+func (r Runner) sysProcAttr() *syscall.SysProcAttr {
+	if r.UID == 0 {
+		return nil
+	}
+	return &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: r.UID, Gid: r.GID, Groups: r.Groups}}
+}
+
+var jobRequest = regexp.MustCompile(`Job request \d+ for plan \S+ job (\S+) received`)
+
+// JobRecordID extracts the job's timeline record ID from a runner diagnostic line.
+// The job's full log is written to _diag/pages/<plan>_<record id>_<page>.log.
+func JobRecordID(line string) (string, bool) {
+	if m := jobRequest.FindStringSubmatch(line); m != nil {
+		return m[1], true
+	}
+	return "", false
 }
 
 var jobResult = regexp.MustCompile(`Job (.+) completed with result: (\w+)`)

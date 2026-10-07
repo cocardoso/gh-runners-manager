@@ -1,0 +1,16 @@
+[Unit]
+Description=gh-runners-manager control plane
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ghrm serve --config /etc/ghrm/ghrm.yaml
+Restart=on-failure
+RestartSec=5
+# Keep live environments on stop: they are adopted at the next start.
+KillMode=mixed
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target

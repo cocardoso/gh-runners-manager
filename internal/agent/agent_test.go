@@ -172,10 +172,10 @@ func TestRunnerEventsFromOutput(t *testing.T) {
 		t.Fatalf("lines = %q", joined)
 	}
 	cases := map[string]string{
-		"Listening for Jobs": ingest.EventRunnerOnline,
-		"2026-10-07 12:00:00Z: Running job: build": ingest.EventJobStarted,
+		"Listening for Jobs":                                               ingest.EventRunnerOnline,
+		"2026-10-07 12:00:00Z: Running job: build":                         ingest.EventJobStarted,
 		"2026-10-07 12:00:05Z: Job build completed with result: Succeeded": ingest.EventJobFinished,
-		"something else": "",
+		"something else":                                                   "",
 	}
 	for line, want := range cases {
 		if got, _ := ClassifyLine(line); got != want {
@@ -197,5 +197,56 @@ func TestMetricsReadsCgroupFiles(t *testing.T) {
 	}
 	if _, _, err := ReadCgroup(t.TempDir()); err == nil {
 		t.Fatal("want an error for a missing cgroup")
+	}
+}
+
+func TestRunnerCredentialIncludesSupplementaryGroups(t *testing.T) {
+	r := Runner{UID: 1001, GID: 1001, Groups: []uint32{1001, 999}}
+	attr := r.sysProcAttr()
+	if attr == nil || attr.Credential == nil {
+		t.Fatal("want credentials when UID is set")
+	}
+	if attr.Credential.Uid != 1001 || len(attr.Credential.Groups) != 2 || attr.Credential.Groups[1] != 999 {
+		t.Fatalf("credential = %+v, want the docker group (999) among the supplementary groups", attr.Credential)
+	}
+	if (Runner{}).sysProcAttr() != nil {
+		t.Fatal("no credentials when UID is 0")
+	}
+}
+
+func TestJobRecordIDFromDiag(t *testing.T) {
+	id, ok := JobRecordID("[2026-10-07 14:54:47Z INFO JobDispatcher] Job request 0 for plan 5004-aa job 5ad26d73-2db2-5572-b9df-81f5f8ae7fb3 received.")
+	if !ok || id != "5ad26d73-2db2-5572-b9df-81f5f8ae7fb3" {
+		t.Fatalf("JobRecordID = %q %v", id, ok)
+	}
+	if _, ok := JobRecordID("[INFO JobRunner] something else"); ok {
+		t.Fatal("unexpected match")
+	}
+}
+
+func TestTailerAcceptFilterAndNumericPageOrder(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir, "pages"), 0o755)
+	var got []string
+	jobID := ""
+	tl := NewTailer(dir, map[string]string{"pages/*.log": "job"}, func(stream, line string) { got = append(got, line) })
+	tl.Accept = func(stream, path string) bool {
+		return jobID != "" && strings.Contains(filepath.Base(path), "_"+jobID+"_")
+	}
+	write := func(name, content string) {
+		_ = os.WriteFile(filepath.Join(dir, "pages", name), []byte(content), 0o644)
+	}
+	write("plan_step1_1.log", "step line\n")
+	write("plan_job9_1.log", "job page 1\n")
+	tl.Poll()
+	if len(got) != 0 {
+		t.Fatalf("read %v before the job id was known", got)
+	}
+	jobID = "job9"
+	write("plan_job9_10.log", "job page 10\n")
+	write("plan_job9_2.log", "job page 2\n")
+	tl.Poll()
+	if strings.Join(got, ",") != "job page 1,job page 2,job page 10" {
+		t.Fatalf("got %v, want only the job log, pages in numeric order", got)
 	}
 }

@@ -5,7 +5,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -15,8 +17,11 @@ type Tailer struct {
 	dir      string
 	patterns map[string]string // glob (relative to dir) -> stream
 	emit     func(stream, line string)
-	offsets  map[string]int64
-	partial  map[string]string
+	// Accept, when set, decides whether a file is read now. A file that is not
+	// accepted keeps its offset and is read from the start once accepted.
+	Accept  func(stream, path string) bool
+	offsets map[string]int64
+	partial map[string]string
 }
 
 // NewTailer returns a Tailer.
@@ -33,8 +38,11 @@ func (t *Tailer) Poll() {
 	sort.Strings(globs)
 	for _, g := range globs {
 		files, _ := filepath.Glob(filepath.Join(t.dir, g))
-		sort.Strings(files)
+		sort.Slice(files, func(i, j int) bool { return naturalLess(files[i], files[j]) })
 		for _, f := range files {
+			if t.Accept != nil && !t.Accept(t.patterns[g], f) {
+				continue
+			}
 			t.read(f, t.patterns[g])
 		}
 	}
@@ -74,4 +82,17 @@ func (t *Tailer) Run(ctx context.Context, interval time.Duration) {
 			t.Poll()
 		}
 	}
+}
+
+var trailingNumber = regexp.MustCompile(`^(.*?)(\d+)(\.log)$`)
+
+// naturalLess orders "x_2.log" before "x_10.log".
+func naturalLess(a, b string) bool {
+	ma, mb := trailingNumber.FindStringSubmatch(a), trailingNumber.FindStringSubmatch(b)
+	if ma != nil && mb != nil && ma[1] == mb[1] {
+		na, _ := strconv.Atoi(ma[2])
+		nb, _ := strconv.Atoi(mb[2])
+		return na < nb
+	}
+	return a < b
 }

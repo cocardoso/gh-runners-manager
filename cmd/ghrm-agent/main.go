@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -59,11 +60,27 @@ func run(ctx context.Context, environ, runnerDir, runnerUser, cgroup, poweroff s
 	client.Event(ingest.EventHello, map[string]any{"version": version.Version, "hostname": host, "ip": ipv4()})
 	client.Log("agent", "ghrm-agent "+version.Version+" started for environment "+boot.EnvironmentID)
 
+	// The runner writes one log per step and one for the whole job; the job stream
+	// carries only the whole-job log, whose record ID is announced in the diag log.
+	var jobRecord atomic.Value
 	tailer := agent.NewTailer(filepath.Join(runnerDir, "_diag"), map[string]string{
 		"Runner_*.log": "runner",
 		"Worker_*.log": "runner",
 		"pages/*.log":  "job",
-	}, func(stream, line string) { client.Log(stream, line) })
+	}, func(stream, line string) {
+		if id, ok := agent.JobRecordID(line); ok {
+			jobRecord.Store(id)
+			client.Log("agent", "job record "+id)
+		}
+		client.Log(stream, line)
+	})
+	tailer.Accept = func(stream, path string) bool {
+		if stream != "job" {
+			return true
+		}
+		id, _ := jobRecord.Load().(string)
+		return id != "" && strings.Contains(filepath.Base(path), "_"+id+"_")
+	}
 	tailCtx, stopTail := context.WithCancel(ctx)
 	go tailer.Run(tailCtx, time.Second)
 	metricsCtx, stopMetrics := context.WithCancel(ctx)
@@ -94,6 +111,13 @@ func run(ctx context.Context, environ, runnerDir, runnerUser, cgroup, poweroff s
 		uid, _ := strconv.ParseUint(u.Uid, 10, 32)
 		gid, _ := strconv.ParseUint(u.Gid, 10, 32)
 		r.UID, r.GID = uint32(uid), uint32(gid)
+		if gids, err := u.GroupIds(); err == nil {
+			for _, g := range gids {
+				if n, err := strconv.ParseUint(g, 10, 32); err == nil {
+					r.Groups = append(r.Groups, uint32(n))
+				}
+			}
+		}
 		r.Env = append(r.Env, "HOME="+u.HomeDir, "USER="+u.Username, "LOGNAME="+u.Username)
 	} else {
 		client.Log("agent", "runner user "+runnerUser+" not found; running as the current user")
