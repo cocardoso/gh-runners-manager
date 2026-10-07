@@ -26,6 +26,7 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/proxmox"
 	"github.com/cocardoso/gh-runners-manager/internal/runtime/proxmoxlxc"
 	"github.com/cocardoso/gh-runners-manager/internal/secrets"
+	"github.com/cocardoso/gh-runners-manager/internal/settings"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 	"github.com/cocardoso/gh-runners-manager/internal/template"
 	"github.com/cocardoso/gh-runners-manager/internal/version"
@@ -122,7 +123,11 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 	logStore := logs.New(filepath.Join(cfg.DataDir, "logs"), db)
-	gh := github.New(cfg, logger)
+	reg, err := settings.New(ctx, cfg, db, vault)
+	if err != nil {
+		return err
+	}
+	gh := github.New(reg, logger)
 	ctl := controller.New(controller.Deps{Store: db, Recorder: rec, Runtime: rt, GitHub: gh, Logs: logStore, Config: cfg,
 		IngestURL: cfg.Ingest.AdvertiseURL, IngestFingerprint: fingerprint})
 	tpl := template.NewService(template.Deps{Store: db, Recorder: rec, Logs: logStore, Runtime: rt, Environments: ctl,
@@ -175,6 +180,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		Addr:        cfg.Listen,
 		Handler: api.New(api.Deps{Store: db, Recorder: rec, Logs: logStore, Controller: ctl, AdminToken: cfg.AdminToken,
 			Config: cfg, Capacity: rt.Capacity, GitHubJobs: gh, UI: uiHandler(), Templates: tpl, Auth: signIn,
+			Settings: reg, TestCredential: (&github.REST{}).User,
 			Ready: func(ctx context.Context) error { _, err := rt.Capacity(ctx); return err }}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

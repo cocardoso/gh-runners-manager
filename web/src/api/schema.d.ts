@@ -89,6 +89,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List GitHub credentials (never their tokens) */
+        get: operations["list-credentials"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/credentials/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Create a GitHub credential or replace its token */
+        put: operations["put-credential"];
+        post?: never;
+        /** Delete a GitHub credential that no scale set uses */
+        delete: operations["delete-credential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/credentials/{name}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check that a credential's token works */
+        post: operations["test-credential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/environments": {
         parameters: {
             query?: never;
@@ -426,6 +478,14 @@ export interface components {
             /** Format: int64 */
             memory_committed_mb: number;
         };
+        CredentialView: {
+            name: string;
+            /** @enum {string} */
+            source: "file" | "ui";
+            /** @description The token's last four characters */
+            token_hint: string;
+            used_by: string[] | null;
+        };
         Entry: {
             /** Format: int64 */
             offset: number;
@@ -602,6 +662,15 @@ export interface components {
             /** Format: int64 */
             waiting_demand: number;
         };
+        "List-credentialsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/List-credentialsResponse.json
+             */
+            readonly $schema?: string;
+            credentials: components["schemas"]["CredentialView"][] | null;
+        };
         "List-environmentsResponse": {
             /**
              * Format: uri
@@ -693,6 +762,16 @@ export interface components {
             readonly $schema?: string;
             current: string;
             next: string;
+        };
+        PutInBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/PutInBody.json
+             */
+            readonly $schema?: string;
+            /** @description A fine-grained PAT (Administration: read and write; Actions: read for job steps) */
+            token: string;
         };
         "Read-logsResponse": {
             /**
@@ -812,6 +891,17 @@ export interface components {
             verify_environment_id?: string;
             /** Format: int64 */
             vmid: number;
+        };
+        TestOutBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/TestOutBody.json
+             */
+            readonly $schema?: string;
+            error?: string;
+            login?: string;
+            ok: boolean;
         };
     };
     responses: never;
@@ -964,6 +1054,128 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionState"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-credentialsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutInBody"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "test-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestOutBody"];
                 };
             };
             /** @description Error */

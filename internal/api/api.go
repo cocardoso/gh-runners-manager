@@ -17,6 +17,7 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/events"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
 	"github.com/cocardoso/gh-runners-manager/internal/runtime"
+	"github.com/cocardoso/gh-runners-manager/internal/settings"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 	"github.com/cocardoso/gh-runners-manager/internal/version"
 )
@@ -48,6 +49,10 @@ type Deps struct {
 	Templates TemplateService
 	// Auth signs users in; without it only the admin bearer token is accepted.
 	Auth *auth.Service
+	// Settings holds the editable credentials and scale sets (nil: read-only).
+	Settings *settings.Registry
+	// TestCredential checks a GitHub token and returns its login.
+	TestCredential func(ctx context.Context, token string) (string, error)
 	// Now is the clock (tests); time.Now when nil.
 	Now func() time.Time
 }
@@ -351,6 +356,7 @@ func New(d Deps) http.Handler {
 	registerOverview(a, d)
 	registerTemplates(a, d)
 	registerAuth(a, d)
+	registerSettingsEdit(a, d)
 
 	s := &sse{d: d}
 	mux.HandleFunc("GET /api/v1/events/stream", s.events)

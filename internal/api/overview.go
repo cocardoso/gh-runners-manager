@@ -127,7 +127,7 @@ func registerOverview(a huma.API, d Deps) {
 
 	huma.Register(a, huma.Operation{OperationID: "get-settings", Method: http.MethodGet, Path: "/api/v1/settings", Summary: "Configuration without secrets", Tags: []string{"settings"}},
 		func(ctx context.Context, _ *struct{}) (*struct{ Body Settings }, error) {
-			return &struct{ Body Settings }{Body: settings(d)}, nil
+			return &struct{ Body Settings }{Body: settingsView(d)}, nil
 		})
 
 	huma.Register(a, huma.Operation{OperationID: "get-job-github", Method: http.MethodGet, Path: "/api/v1/jobs/{id}/github", Summary: "Job steps and URL from GitHub", Tags: []string{"jobs"}},
@@ -246,7 +246,7 @@ type Settings struct {
 	ScaleSets    []map[string]any  `json:"scale_sets"`
 }
 
-func settings(d Deps) Settings {
+func settingsView(d Deps) Settings {
 	s := Settings{Version: version.Version, AdminActions: d.AdminToken != "", ScaleSets: []map[string]any{}}
 	c := d.Config
 	if c == nil {

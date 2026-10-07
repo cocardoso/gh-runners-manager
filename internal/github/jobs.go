@@ -38,8 +38,7 @@ type REST struct {
 	HTTP    *http.Client
 }
 
-// JobDetails finds the job that ran on runnerName in a workflow run.
-func (r *REST) JobDetails(ctx context.Context, token, repo string, runID int64, runnerName string) (JobDetails, error) {
+func (r *REST) base() (string, *http.Client) {
 	base := r.BaseURL
 	if base == "" {
 		base = "https://api.github.com"
@@ -48,6 +47,41 @@ func (r *REST) JobDetails(ctx context.Context, token, repo string, runID int64, 
 	if hc == nil {
 		hc = &http.Client{Timeout: 20 * time.Second}
 	}
+	return base, hc
+}
+
+// User returns the login a token belongs to; it checks that a credential works.
+func (r *REST) User(ctx context.Context, token string) (string, error) {
+	base, hc := r.base()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/user", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := hc.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Login   string `json:"login"`
+		Message string `json:"message"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out)
+	if resp.StatusCode != http.StatusOK {
+		if out.Message == "" {
+			out.Message = resp.Status
+		}
+		return "", fmt.Errorf("github: %s", out.Message)
+	}
+	return out.Login, nil
+}
+
+// JobDetails finds the job that ran on runnerName in a workflow run.
+func (r *REST) JobDetails(ctx context.Context, token, repo string, runID int64, runnerName string) (JobDetails, error) {
+	base, hc := r.base()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s/actions/runs/%d/jobs?per_page=100&filter=latest", base, repo, runID), nil)
 	if err != nil {
 		return JobDetails{}, err
@@ -102,11 +136,9 @@ func (r *REST) JobDetails(ctx context.Context, token, repo string, runID int64, 
 // JobDetails looks a job up with the credential of its scale set.
 func (c *Client) JobDetails(ctx context.Context, scaleSet, repo string, runID int64, runnerName string) (JobDetails, error) {
 	var token string
-	for _, s := range c.cfg.ScaleSets {
-		if s.Name == scaleSet {
-			if cred, ok := c.cfg.Credential(s.Credential); ok {
-				token = cred.Token
-			}
+	if ss, ok := c.src.ScaleSet(scaleSet); ok {
+		if cred, ok := c.src.Credential(ss.Credential); ok {
+			token = cred.Token
 		}
 	}
 	if token == "" {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,8 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/events"
 	"github.com/cocardoso/gh-runners-manager/internal/github"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
+	"github.com/cocardoso/gh-runners-manager/internal/secrets"
+	"github.com/cocardoso/gh-runners-manager/internal/settings"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
 
@@ -46,6 +49,7 @@ type harness struct {
 	logs  *logs.Store
 	ctl   *fakeController
 	auth  *auth.Service
+	reg   *settings.Registry
 	token string // the admin token the harness adds to requests without credentials
 }
 
@@ -73,8 +77,21 @@ func newHarnessWith(t *testing.T, adminToken string, mutate func(*Deps)) *harnes
 	cfg := &config.Config{Proxmox: config.Proxmox{URL: "https://pve.example.test:8006", TokenSecret: "pve-secret"},
 		GitHub:    config.GitHub{Credentials: []config.Credential{{Name: "c", Token: "token-value"}}},
 		ScaleSets: []config.ScaleSet{{Name: "lab", URL: "https://github.com/o/r", Credential: "c"}}, AdminToken: adminToken}
+	vault, err := secrets.OpenVault(context.Background(), db, filepath.Join(t.TempDir(), "secret.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.reg, err = settings.New(context.Background(), cfg, db, vault); err != nil {
+		t.Fatal(err)
+	}
 	deps := Deps{Store: db, Recorder: h.rec, Logs: h.logs, Controller: h.ctl, AdminToken: adminToken,
-		Config: cfg, GitHubJobs: fakeGitHubJobs{}, Auth: h.auth}
+		Config: cfg, GitHubJobs: fakeGitHubJobs{}, Auth: h.auth, Settings: h.reg,
+		TestCredential: func(_ context.Context, token string) (string, error) {
+			if token == "github_pat_good" {
+				return "octocat", nil
+			}
+			return "", errors.New("Bad credentials")
+		}}
 	if mutate != nil {
 		mutate(&deps)
 	}

@@ -78,6 +78,43 @@ type ScaleSet struct {
 	KeepOnFailureMinutes int      `yaml:"keep_on_failure_minutes"`
 }
 
+// ApplyDefaults fills the unset sizes of a scale set.
+func (s *ScaleSet) ApplyDefaults() {
+	if s.RunnerGroup == "" {
+		s.RunnerGroup = "default"
+	}
+	if s.MaxConcurrent == 0 {
+		s.MaxConcurrent = 2
+	}
+	if s.Cores == 0 {
+		s.Cores = 2
+	}
+	if s.MemoryMB == 0 {
+		s.MemoryMB = 4096
+	}
+}
+
+// ValidName reports whether name is a valid scale set (or credential) name.
+func ValidName(name string) bool { return scaleSetNameRe.MatchString(name) }
+
+// Validate checks one scale set; credentialExists says whether a credential name is known.
+func (s ScaleSet) Validate(credentialExists func(string) bool) error {
+	var errs []error
+	if !scaleSetNameRe.MatchString(s.Name) {
+		errs = append(errs, fmt.Errorf("scale set name %q must match %s", s.Name, scaleSetNameRe))
+	}
+	if _, _, err := s.OwnerRepo(); err != nil {
+		errs = append(errs, err)
+	}
+	if !credentialExists(s.Credential) {
+		errs = append(errs, fmt.Errorf("scale set %s: unknown credential %q", s.Name, s.Credential))
+	}
+	if s.MaxConcurrent < 1 || s.Cores < 1 || s.MemoryMB < 256 {
+		errs = append(errs, fmt.Errorf("scale set %s: max_concurrent, cores and memory_mb must be positive (memory at least 256)", s.Name))
+	}
+	return errors.Join(errs...)
+}
+
 // OwnerRepo splits the scale set URL. repo is empty for organization scale sets.
 func (s ScaleSet) OwnerRepo() (owner, repo string, err error) {
 	m := githubURLPattern.FindStringSubmatch(s.URL)
@@ -228,19 +265,7 @@ func (c *Config) applyDefaults() {
 		cp.MaxDiskPercent = 85
 	}
 	for i := range c.ScaleSets {
-		ss := &c.ScaleSets[i]
-		if ss.RunnerGroup == "" {
-			ss.RunnerGroup = "default"
-		}
-		if ss.MaxConcurrent == 0 {
-			ss.MaxConcurrent = 2
-		}
-		if ss.Cores == 0 {
-			ss.Cores = 2
-		}
-		if ss.MemoryMB == 0 {
-			ss.MemoryMB = 4096
-		}
+		c.ScaleSets[i].ApplyDefaults()
 	}
 	p := &c.Proxmox
 	if p.VMIDRange == (VMIDRange{}) {
@@ -403,26 +428,14 @@ func (c *Config) ValidateServe() error {
 		}
 		creds[cr.Name] = true
 	}
-	if len(c.ScaleSets) == 0 {
-		errs = append(errs, errors.New("scale_sets: at least one scale set is required"))
-	}
 	seen := map[string]bool{}
 	for _, ss := range c.ScaleSets {
-		if !scaleSetNameRe.MatchString(ss.Name) {
-			errs = append(errs, fmt.Errorf("scale set name %q must match %s", ss.Name, scaleSetNameRe))
-		}
 		if seen[ss.Name] {
 			errs = append(errs, fmt.Errorf("scale set name %q is duplicated", ss.Name))
 		}
 		seen[ss.Name] = true
-		if _, _, err := ss.OwnerRepo(); err != nil {
+		if err := ss.Validate(func(name string) bool { return creds[name] }); err != nil {
 			errs = append(errs, err)
-		}
-		if !creds[ss.Credential] {
-			errs = append(errs, fmt.Errorf("scale set %s: unknown credential %q", ss.Name, ss.Credential))
-		}
-		if ss.MaxConcurrent < 1 || ss.Cores < 1 || ss.MemoryMB < 256 {
-			errs = append(errs, fmt.Errorf("scale set %s: max_concurrent, cores and memory_mb must be positive (memory at least 256)", ss.Name))
 		}
 	}
 	return errors.Join(errs...)

@@ -16,6 +16,8 @@ import (
 
 	"github.com/cocardoso/gh-runners-manager/internal/api"
 	"github.com/cocardoso/gh-runners-manager/internal/demo"
+	"github.com/cocardoso/gh-runners-manager/internal/secrets"
+	"github.com/cocardoso/gh-runners-manager/internal/settings"
 )
 
 // demoCmd serves the API (and UI) backed by a simulated fleet.
@@ -60,12 +62,23 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	vault, err := secrets.OpenVault(ctx, d.Store, filepath.Join(dir, "secret.key"))
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	reg, err := settings.New(ctx, d.Config, d.Store, vault)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	srv := &http.Server{
 		Addr:              *listen,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 		ReadHeaderTimeout: 10 * time.Second,
 		Handler: api.New(api.Deps{Store: d.Store, Recorder: d.Recorder, Logs: d.Logs, Controller: d.Controller,
-			Config: d.Config, Capacity: d.Runtime.Capacity, AdminToken: "demo", UI: uiHandler(), Templates: d.Templates, Auth: signIn}),
+			Config: d.Config, Capacity: d.Runtime.Capacity, AdminToken: "demo", UI: uiHandler(), Templates: d.Templates, Auth: signIn,
+			Settings: reg, TestCredential: demoTestCredential}),
 	}
 	fmt.Fprintf(stdout, "ghrm demo: serving a simulated fleet on http://%s (sign in as admin / %s; API token: demo)\n", *listen, demoPassword)
 	errc := make(chan error, 1)

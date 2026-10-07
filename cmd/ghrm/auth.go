@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"github.com/cocardoso/gh-runners-manager/internal/auth"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
@@ -40,4 +42,13 @@ func demoAuth(ctx context.Context, db *store.Store) (*auth.Service, error) {
 	}
 	_, err = a.Setup(ctx, "demo", "admin", demoPassword)
 	return a, err
+}
+
+// demoTestCredential accepts tokens that look like fine-grained PATs (the demo never
+// calls GitHub).
+func demoTestCredential(_ context.Context, token string) (string, error) {
+	if strings.HasPrefix(token, "github_pat_") {
+		return "demo-user", nil
+	}
+	return "", errors.New("Bad credentials (the demo accepts tokens starting with github_pat_)")
 }
