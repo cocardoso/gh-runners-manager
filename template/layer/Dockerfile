@@ -11,13 +11,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 COPY apt-ipv4.conf /etc/apt/apt.conf.d/99ghrm-ipv4
 
-# docker export drops the image's ENV: keep it in /etc/environment, where jobs read it,
-# and use LANG=C.UTF-8 like the hosted images (sort order differs with other locales).
-RUN for v in IMAGE_OWNER ImageVersion IMAGE_VERSION ImageOS IMAGE_TARGET_PLATFORM POWERSHELL_DISTRIBUTION_CHANNEL IMAGEDATA_NAME NVM_DIR; do \
-      if [ -n "${!v:-}" ] && ! grep -q "^${v}=" /etc/environment; then echo "${v}=${!v}" >> /etc/environment; fi; \
-    done \
- && sed -i '/^LANG=/d' /etc/environment \
- && echo 'LANG=C.UTF-8' >> /etc/environment \
+# docker export drops the image's ENV: keep it in /etc/environment, where jobs read it
+# (the image's values win over placeholders its scripts wrote there), with LANG=C.UTF-8.
+COPY persist-env.sh /tmp/persist-env.sh
+RUN /tmp/persist-env.sh /etc/environment IMAGE_OWNER ImageVersion IMAGE_VERSION ImageOS IMAGE_TARGET_PLATFORM \
+      POWERSHELL_DISTRIBUTION_CHANNEL IMAGEDATA_NAME NVM_DIR \
+ && rm /tmp/persist-env.sh \
  && echo 'LANG=C.UTF-8' > /etc/default/locale
 
 # systemd as init and the Docker Engine (the slim image ships only the Docker CLI and plugins).

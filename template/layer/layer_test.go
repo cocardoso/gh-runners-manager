@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"io"
 	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -34,7 +37,7 @@ func TestTarHoldsTheLayerAndTheAgent(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "ghrm-agent"} {
+	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "persist-env.sh", "ghrm-agent"} {
 		if got[name] == nil {
 			t.Fatalf("missing %s in %v", name, got)
 		}
@@ -51,15 +54,15 @@ func TestDockerfileFollowsTheLayerRules(t *testing.T) {
 	}
 	df := string(b)
 	for _, want := range []string{
-		"sha256sum -c",          // the runner download is verified
-		"docker-ce",             // Docker Engine (the slim image has only the CLI)
-		"systemd-sysv",          // systemd as init
-		"NOPASSWD",              // passwordless sudo for the runner user
-		"LANG=C.UTF-8",          // locale (spike finding)
-		"machine-id",            // unique per clone
-		"ssh_host_",             // unique per clone
-		"/run/.containerenv",    // the slim build marks itself as a container
-		"/etc/environment",      // image ENV survives docker export
+		"sha256sum -c",       // the runner download is verified
+		"docker-ce",          // Docker Engine (the slim image has only the CLI)
+		"systemd-sysv",       // systemd as init
+		"NOPASSWD",           // passwordless sudo for the runner user
+		"LANG=C.UTF-8",       // locale (spike finding)
+		"machine-id",         // unique per clone
+		"ssh_host_",          // unique per clone
+		"/run/.containerenv", // the slim build marks itself as a container
+		"/etc/environment",   // image ENV survives docker export
 		"installdependencies.sh",
 	} {
 		if !strings.Contains(df, want) {
@@ -77,5 +80,40 @@ func TestDockerfileFollowsTheLayerRules(t *testing.T) {
 	unit, _ := fs.ReadFile(Files(), "ghrm-agent.service")
 	if !strings.Contains(string(unit), "ExecStart=/usr/local/bin/ghrm-agent") {
 		t.Fatalf("unit = %s", unit)
+	}
+}
+
+// The slim image's own scripts write ImageOS= (empty) and ImageVersion=1.0.0 into
+// /etc/environment; jobs on hosted runners see the container's ENV instead, so the
+// image's ENV must win.
+func TestPersistEnvLetsTheImageEnvWin(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not found")
+	}
+	script, err := fs.ReadFile(Files(), "persist-env.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	scriptPath, envPath := filepath.Join(dir, "persist-env.sh"), filepath.Join(dir, "environment")
+	_ = os.WriteFile(scriptPath, script, 0o755)
+	_ = os.WriteFile(envPath, []byte("PATH=/usr/bin:/bin\nImageVersion=1.0.0\nImageOS=\nLANG=en_US.UTF-8\nNVM_DIR=$HOME/.nvm\n"), 0o644)
+	cmd := exec.Command(bash, scriptPath, envPath, "ImageVersion", "ImageOS", "IMAGE_OWNER", "UNSET_VAR")
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "ImageVersion=20260925.9", "ImageOS=Linux", "IMAGE_OWNER=GitHub"}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	b, _ := os.ReadFile(envPath)
+	got := string(b)
+	for _, want := range []string{"PATH=/usr/bin:/bin\n", "NVM_DIR=$HOME/.nvm\n", "ImageVersion=20260925.9\n", "ImageOS=Linux\n", "IMAGE_OWNER=GitHub\n", "LANG=C.UTF-8\n"} {
+		if strings.Count(got, want) != 1 {
+			t.Errorf("want exactly one %q in:\n%s", want, got)
+		}
+	}
+	for _, gone := range []string{"ImageVersion=1.0.0", "ImageOS=\n", "en_US", "UNSET_VAR"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("%q must be gone:\n%s", gone, got)
+		}
 	}
 }
