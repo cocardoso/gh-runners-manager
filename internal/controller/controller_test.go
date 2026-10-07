@@ -531,3 +531,41 @@ func TestJobTimesUseTheControllerClock(t *testing.T) {
 		t.Fatalf("job finished %v, event %v; want the controller clock %v", j.FinishedAt, evs, h.now)
 	}
 }
+
+// GitHub sends the queue time only with the "available" message; the started and
+// completed messages carry a zero queue time and must not erase it.
+func TestAvailableJobRecordsTheQueueTime(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	sc := h.c.Scaler("lab").(interface {
+		HandleJobAvailable(context.Context, *scaleset.JobAvailable) error
+	})
+	queued := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	base := scaleset.JobMessageBase{JobID: "j1", RepositoryName: "r", OwnerName: "o", JobDisplayName: "build", WorkflowRunID: 99, QueueTime: queued}
+	if err := sc.HandleJobAvailable(ctx, &scaleset.JobAvailable{JobMessageBase: base}); err != nil {
+		t.Fatal(err)
+	}
+	j, err := h.db.GetJob(ctx, "j1")
+	if err != nil || j.Status != "assigned" || !j.QueuedAt.Equal(queued) || j.Repository != "o/r" {
+		t.Fatalf("job = %+v, %v; want assigned, queued at %v", j, err, queued)
+	}
+	started := base
+	started.QueueTime = time.Time{}
+	_ = h.c.Scaler("lab").HandleJobStarted(ctx, &scaleset.JobStarted{RunnerName: "x", JobMessageBase: started})
+	// A repeated "available" message must not move a started job back to assigned.
+	_ = sc.HandleJobAvailable(ctx, &scaleset.JobAvailable{JobMessageBase: base})
+	if j, _ = h.db.GetJob(ctx, "j1"); j.Status != "running" || !j.QueuedAt.Equal(queued) {
+		t.Fatalf("job = %+v; want running, still queued at %v", j, queued)
+	}
+
+	// Without a queue time, the scale set assignment time, then the controller clock, stand in.
+	assigned := queued.Add(time.Second)
+	_ = sc.HandleJobAvailable(ctx, &scaleset.JobAvailable{JobMessageBase: scaleset.JobMessageBase{JobID: "j2", ScaleSetAssignTime: assigned}})
+	_ = sc.HandleJobAvailable(ctx, &scaleset.JobAvailable{JobMessageBase: scaleset.JobMessageBase{JobID: "j3"}})
+	if j, _ = h.db.GetJob(ctx, "j2"); !j.QueuedAt.Equal(assigned) {
+		t.Fatalf("j2 queued at %v, want %v", j.QueuedAt, assigned)
+	}
+	if j, _ = h.db.GetJob(ctx, "j3"); !j.QueuedAt.Equal(h.now.Truncate(time.Millisecond)) {
+		t.Fatalf("j3 queued at %v, want the controller clock %v", j.QueuedAt, h.now)
+	}
+}

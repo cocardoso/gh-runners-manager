@@ -25,7 +25,7 @@ const (
 	// destroySettle lets a guest that powered itself off finish unmounting its root disk;
 	// deleting it at once can fail with "filesystem in use" after Proxmox already dropped
 	// it from the pool, leaving a guest the token can no longer see.
-	destroySettle = 5 * time.Second
+	destroySettle  = 5 * time.Second
 	destroyRetries = 3
 )
 
