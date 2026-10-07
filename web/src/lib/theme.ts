@@ -44,3 +44,15 @@ export function useTheme() {
   }, []);
   return [pref, set] as const;
 }
+
+/** Whether Kumo is currently rendering in dark mode (follows data-mode on the root element). */
+export function useIsDark(): boolean {
+  const [dark, setDark] = useState(() => document.documentElement.getAttribute("data-mode") === "dark");
+  useEffect(() => {
+    const el = document.documentElement;
+    const obs = new MutationObserver(() => setDark(el.getAttribute("data-mode") === "dark"));
+    obs.observe(el, { attributes: true, attributeFilter: ["data-mode"] });
+    return () => obs.disconnect();
+  }, []);
+  return dark;
+}

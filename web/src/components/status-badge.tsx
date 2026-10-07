@@ -27,7 +27,8 @@ export function toneFor(kind: keyof typeof tones, value: string | undefined): To
 
 function ToneBadge({ tone, children }: { tone: Tone; children: string }) {
   return (
-    <Badge variant={tone === "neutral" ? "neutral" : tone} appearance="dot" className="whitespace-nowrap">
+    // Kumo draws a status dot for success, warning, error and neutral; info is a filled badge.
+    <Badge variant={tone} appearance={tone === "info" ? "filled" : "dot"} className="whitespace-nowrap">
       {children}
     </Badge>
   );

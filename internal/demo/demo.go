@@ -145,11 +145,13 @@ func (d *Demo) Run(ctx context.Context) {
 	}
 }
 
+// maxQueuedPerScaleSet bounds the simulated backlog so waiting demand stays realistic.
+const maxQueuedPerScaleSet = 4
+
 func (d *Demo) step(ctx context.Context) {
 	now := time.Now()
 	d.mu.Lock()
-	if !d.stopNew && d.rng.Float64() < 0.25 {
-		ss := d.Config.ScaleSets[d.rng.Intn(len(d.Config.ScaleSets))].Name
+	if ss := d.Config.ScaleSets[d.rng.Intn(len(d.Config.ScaleSets))].Name; !d.stopNew && d.rng.Float64() < 0.25 && len(d.queued[ss]) < maxQueuedPerScaleSet {
 		d.runCount++
 		min, max := d.opts.JobSeconds[0], d.opts.JobSeconds[1]
 		d.queued[ss] = append(d.queued[ss], simJob{

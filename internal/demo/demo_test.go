@@ -52,15 +52,37 @@ func TestDemoRunsJobsThroughTheWholeLifecycle(t *testing.T) {
 			t.Errorf("no %s event", k)
 		}
 	}
-	envs, _ := d.Store.ListEnvironments(ctx, store.EnvironmentFilter{Limit: 1})
-	streams, _ := d.Store.ListLogStreams(ctx, envs[0].ID)
+	// The newest environment may have expired idle without a job: check one that ran a job.
+	ranJob := jobs[0].EnvironmentID
+	streams, _ := d.Store.ListLogStreams(ctx, ranJob)
 	names := map[string]bool{}
 	for _, s := range streams {
 		names[s.Stream] = true
 	}
 	for _, s := range []string{"control-plane", "runtime", "agent", "runner", "job", "metrics"} {
 		if !names[s] {
-			t.Errorf("environment %s has no %s log", envs[0].ID, s)
+			t.Errorf("environment %s has no %s log", ranJob, s)
+		}
+	}
+}
+
+func TestDemoKeepsTheQueueBounded(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Jobs that never finish: without a bound the simulated queue would grow forever.
+	d, err := New(ctx, Options{DataDir: filepath.Join(t.TempDir(), "demo"), Seed: 3, Tick: time.Millisecond, JobSeconds: [2]float64{3600, 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	for i := 0; i < 400; i++ {
+		d.step(ctx)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for ss, q := range d.queued {
+		if len(q) > maxQueuedPerScaleSet {
+			t.Fatalf("%s has %d queued jobs, want at most %d", ss, len(q), maxQueuedPerScaleSet)
 		}
 	}
 }

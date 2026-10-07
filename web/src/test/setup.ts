@@ -24,3 +24,10 @@ if (!globalThis.ResizeObserver) {
 if (!Element.prototype.scrollTo) Element.prototype.scrollTo = () => {};
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
 if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => [];
+
+// Kumo reports misuse (unknown variants, missing labels) through console.warn: fail on it.
+const warn = console.warn.bind(console);
+console.warn = (...args: unknown[]) => {
+  if (typeof args[0] === "string" && args[0].includes("[kumo]")) throw new Error(`Kumo warning: ${args.join(" ")}`);
+  warn(...args);
+};
