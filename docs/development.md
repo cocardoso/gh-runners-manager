@@ -11,7 +11,7 @@
 
 ## Installing on a Proxmox host
 
-`deploy/proxmox/install.sh` does everything below in one run (as root on the host): the pool, roles, user and token, the template storage, the job network and its security group, the control-plane container with ghrm, and a bootstrap template. It checks every step first, so running it again resumes or upgrades; `--dry-run` shows what would change and `--help` lists the options (VMIDs, bridges, subnet, storages, release). It ends with the web UI address and the one-time setup token for the admin account. Its tests (`bash deploy/proxmox/test/run.sh`) run it against fake Proxmox tools.
+`deploy/proxmox/install.sh` does everything below in one run (as root on the host): the pool, roles, user and token, the template storage, the job network and its security group, the control-plane container with ghrm, and a bootstrap template. It checks every step first, so running it again resumes or upgrades; `--dry-run` shows what would change and `--help` lists the options (VMIDs, bridges, subnet, storages, release). It ends with the web UI address and the one-time setup token for the admin account. Its tests (`bash deploy/proxmox/test/run.sh`) run it against fake Proxmox tools. Release binaries carry signed build provenance: `gh attestation verify ghrm-linux-amd64 --repo cocardoso/gh-runners-manager`.
 
 The sections below describe the same setup by hand.
 
