@@ -68,3 +68,15 @@ Useful API calls:
     curl http://<ghrm>:8080/api/v1/environments
     curl -N 'http://<ghrm>:8080/api/v1/events/stream'
     curl -N 'http://<ghrm>:8080/api/v1/environments/<id>/logs/job?follow=true'
+
+## Web UI
+
+The UI lives in `web/` (Vite, React, TypeScript, Tailwind CSS v4 and Kumo). `make web` builds it into `web/dist`, which `web/embed.go` embeds into the `ghrm` binary; the API serves it for every non-API path, with an SPA fallback and long cache headers for hashed assets.
+
+- `make web-api` regenerates `web/src/api/schema.d.ts` from `ghrm openapi` after an API change.
+- `go run ./cmd/ghrm demo` serves the real API backed by a simulated fleet (fake runtime and GitHub). Flags: `--listen`, `--seed`, `--tick`, `--job-seconds min-max`, `--data-dir`. The admin token is `demo`.
+- `cd web && pnpm dev` serves the UI with hot reload and proxies `/api` to `GHRM_API` (default `http://127.0.0.1:8080`).
+- `pnpm lint`, `pnpm typecheck` and `pnpm test` run ESLint, TypeScript and Vitest. Component tests fail on any Kumo console warning.
+- `pnpm e2e` builds `ghrm` with the current `web/dist` and runs the Playwright browser tests against `ghrm demo`, including a control-plane restart and a phone viewport.
+- `pnpm screenshots` refreshes the README screenshots in `docs/images`.
+

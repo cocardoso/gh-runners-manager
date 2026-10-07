@@ -102,3 +102,14 @@ func TestOpenAPIPrintsTheDocument(t *testing.T) {
 		t.Fatalf("stdout = %.200s", stdout.String())
 	}
 }
+
+func TestParseSecondsRange(t *testing.T) {
+	if r, err := parseSecondsRange("3-6.5"); err != nil || r != [2]float64{3, 6.5} {
+		t.Fatalf("3-6.5 = %v, %v", r, err)
+	}
+	for _, bad := range []string{"", "5", "6-3", "a-b", "-1-2"} {
+		if _, err := parseSecondsRange(bad); err == nil {
+			t.Errorf("%q: want an error", bad)
+		}
+	}
+}

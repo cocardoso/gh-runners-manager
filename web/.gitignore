@@ -3,3 +3,5 @@ dist/*
 !dist/.keep
 openapi.json
 tsconfig.tsbuildinfo
+test-results/
+playwright-report/

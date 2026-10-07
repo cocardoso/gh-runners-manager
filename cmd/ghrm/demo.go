@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/api"
@@ -24,7 +26,13 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	seed := fs.Int64("seed", time.Now().UnixNano(), "random seed")
 	tick := fs.Duration("tick", 500*time.Millisecond, "simulation step")
 	dataDir := fs.String("data-dir", "", "state directory (default: a temporary directory)")
+	jobSeconds := fs.String("job-seconds", "8-40", "simulated job duration range in seconds, min-max")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	jobRange, err := parseSecondsRange(*jobSeconds)
+	if err != nil {
+		fmt.Fprintln(stderr, "--job-seconds:", err)
 		return 2
 	}
 	dir := *dataDir
@@ -39,7 +47,7 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	d, err := demo.New(ctx, demo.Options{DataDir: dir, Seed: *seed, Tick: *tick})
+	d, err := demo.New(ctx, demo.Options{DataDir: dir, Seed: *seed, Tick: *tick, JobSeconds: jobRange})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -69,4 +77,18 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer scancel()
 	_ = srv.Shutdown(sctx)
 	return 0
+}
+
+// parseSecondsRange parses "min-max" (seconds, min <= max, both positive).
+func parseSecondsRange(s string) ([2]float64, error) {
+	lo, hi, ok := strings.Cut(s, "-")
+	if !ok {
+		return [2]float64{}, fmt.Errorf("want min-max, got %q", s)
+	}
+	a, err1 := strconv.ParseFloat(lo, 64)
+	b, err2 := strconv.ParseFloat(hi, 64)
+	if err1 != nil || err2 != nil || a <= 0 || b < a {
+		return [2]float64{}, fmt.Errorf("want positive min-max with min <= max, got %q", s)
+	}
+	return [2]float64{a, b}, nil
 }
