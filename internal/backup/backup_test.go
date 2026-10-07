@@ -60,3 +60,21 @@ func TestNextRunIsTheNextOccurrenceOfTheHour(t *testing.T) {
 		t.Fatalf("after the hour: %v", got)
 	}
 }
+
+func TestBackupDirectoryIsPrivate(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := store.Open(ctx, filepath.Join(dir, "ghrm.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	out := filepath.Join(dir, "backups")
+	_ = os.MkdirAll(out, 0o755) // an existing, readable directory
+	if _, err := (&Backup{Store: db, Dir: out, Keep: 1}).Once(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(out); st.Mode().Perm() != 0o700 {
+		t.Fatalf("backup dir mode = %v, want 0700 (copies are written before they are chmod'ed)", st.Mode().Perm())
+	}
+}

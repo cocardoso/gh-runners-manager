@@ -124,3 +124,22 @@ func TestOpenWithAWrongKeyFailsLoudly(t *testing.T) {
 		t.Fatalf("err = %v, want a refusal naming the key file", err)
 	}
 }
+
+// A missing key file for a database with sealed secrets is reported without writing a
+// new key where the operator must restore the old one.
+func TestAMissingKeyIsNotReplacedByANewOne(t *testing.T) {
+	ctx := context.Background()
+	db := openStore(t)
+	dir := t.TempDir()
+	if _, err := secrets.OpenVault(ctx, db, filepath.Join(dir, "a.key")); err != nil {
+		t.Fatal(err)
+	}
+	lost := filepath.Join(dir, "lost.key")
+	_, err := secrets.OpenVault(ctx, db, lost)
+	if err == nil || !strings.Contains(err.Error(), "lost.key") {
+		t.Fatalf("err = %v, want a refusal naming the missing key file", err)
+	}
+	if _, err := os.Stat(lost); !os.IsNotExist(err) {
+		t.Fatal("no key file may be created for a database that already has secrets")
+	}
+}

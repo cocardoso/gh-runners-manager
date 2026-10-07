@@ -333,3 +333,30 @@ func TestDatabaseFilesArePrivate(t *testing.T) {
 		}
 	}
 }
+
+// A credential and its sealed token are written together or not at all.
+func TestCredentialAndSecretAreWrittenTogether(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	if err := s.PutCredentialWithSecret(ctx, "home", "github-pat", "github/home", []byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	if recs, _ := s.ListCredentialRecords(ctx); len(recs) != 1 {
+		t.Fatalf("records = %v", recs)
+	}
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE secrets`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutCredentialWithSecret(ctx, "work", "github-pat", "github/work", []byte{2}); err == nil {
+		t.Fatal("want an error when the secret cannot be stored")
+	}
+	if recs, _ := s.ListCredentialRecords(ctx); len(recs) != 1 {
+		t.Fatalf("records = %v; the failed credential must not be recorded", recs)
+	}
+	if err := s.DeleteCredentialWithSecret(ctx, "home", "github/home"); err == nil {
+		t.Fatal("want an error when the secret cannot be deleted")
+	}
+	if recs, _ := s.ListCredentialRecords(ctx); len(recs) != 1 {
+		t.Fatal("the record must stay when its secret could not be deleted")
+	}
+}

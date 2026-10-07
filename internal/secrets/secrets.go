@@ -112,15 +112,24 @@ const (
 // sealed this database's secrets; a different key is refused rather than leaving every
 // secret unreadable.
 func OpenVault(ctx context.Context, s *store.Store, keyPath string) (*Vault, error) {
-	key, err := LoadOrCreateKey(keyPath)
-	if err != nil {
-		return nil, err
-	}
-	box, err := New(key)
-	if err != nil {
-		return nil, err
-	}
 	check, err := s.GetMeta(ctx, checkMeta)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	if err == nil {
+		// Secrets exist: never create a key in the place of a lost one.
+		if _, statErr := os.Stat(keyPath); errors.Is(statErr, fs.ErrNotExist) {
+			return nil, fmt.Errorf("secrets: %s is missing, but this database has secrets sealed with it (restore that key file)", keyPath)
+		}
+	}
+	key, kerr := LoadOrCreateKey(keyPath)
+	if kerr != nil {
+		return nil, kerr
+	}
+	box, kerr := New(key)
+	if kerr != nil {
+		return nil, kerr
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		sealed, err := box.Seal(checkName, []byte(checkValue))
@@ -163,6 +172,9 @@ func (v *Vault) Get(ctx context.Context, name string) (string, bool, error) {
 	}
 	return string(plain), true, nil
 }
+
+// Seal seals a value for name, to be stored with other changes in one transaction.
+func (v *Vault) Seal(name, value string) ([]byte, error) { return v.box.Seal(name, []byte(value)) }
 
 // Set seals and stores a secret.
 func (v *Vault) Set(ctx context.Context, name, value string) error {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -87,4 +88,41 @@ func (s *Store) ListScaleSetConfigs(ctx context.Context) ([]ScaleSetConfigRecord
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// PutCredentialWithSecret records a UI credential and its sealed token in one transaction.
+func (s *Store) PutCredentialWithSecret(ctx context.Context, name, kind, secretName string, sealed []byte) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		now := time.Now().UnixMilli()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO secrets (name, sealed, updated_at) VALUES (?,?,?)
+			ON CONFLICT(name) DO UPDATE SET sealed = excluded.sealed, updated_at = excluded.updated_at`, secretName, sealed, now); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO credentials (name, kind, created_at, updated_at) VALUES (?,?,?,?)
+			ON CONFLICT(name) DO UPDATE SET kind = excluded.kind, updated_at = excluded.updated_at`, name, kind, now, now)
+		return err
+	})
+}
+
+// DeleteCredentialWithSecret removes a UI credential and its token in one transaction.
+func (s *Store) DeleteCredentialWithSecret(ctx context.Context, name, secretName string) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE name = ?`, secretName); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM credentials WHERE name = ?`, name)
+		return err
+	})
+}
+
+func (s *Store) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }

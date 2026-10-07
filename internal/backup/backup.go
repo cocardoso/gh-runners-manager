@@ -26,7 +26,11 @@ type Backup struct {
 
 // Once writes one copy named after now and prunes the old ones.
 func (b *Backup) Once(ctx context.Context, now time.Time) (string, error) {
-	if err := os.MkdirAll(b.Dir, 0o750); err != nil {
+	// Owner only: VACUUM INTO creates the copy with the default umask before its chmod.
+	if err := os.MkdirAll(b.Dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(b.Dir, 0o700); err != nil {
 		return "", err
 	}
 	path := filepath.Join(b.Dir, "ghrm-"+now.Format("20060102-1504")+".db")

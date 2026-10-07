@@ -151,11 +151,12 @@ func (r *Registry) PutCredential(ctx context.Context, name, token string) error 
 	if _, ok := r.fileCredential(name); ok {
 		return ErrReadOnly
 	}
-	r.mu.Lock()
-	err := r.vault.Set(ctx, config.VaultGitHubPrefix+name, token)
-	if err == nil {
-		err = r.store.PutCredentialRecord(ctx, name, "github-pat")
+	sealed, err := r.vault.Seal(config.VaultGitHubPrefix+name, token)
+	if err != nil {
+		return err
 	}
+	r.mu.Lock()
+	err = r.store.PutCredentialWithSecret(ctx, name, "github-pat", config.VaultGitHubPrefix+name, sealed)
 	if err == nil {
 		r.uiCreds[name] = Credential{Name: name, Source: SourceUI, Token: token}
 	}
@@ -181,10 +182,7 @@ func (r *Registry) DeleteCredential(ctx context.Context, name string) error {
 		r.mu.Unlock()
 		return store.ErrNotFound
 	}
-	err := r.store.DeleteCredentialRecord(ctx, name)
-	if err == nil {
-		err = r.vault.Delete(ctx, config.VaultGitHubPrefix+name)
-	}
+	err := r.store.DeleteCredentialWithSecret(ctx, name, config.VaultGitHubPrefix+name)
 	if err == nil {
 		delete(r.uiCreds, name)
 	}

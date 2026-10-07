@@ -57,7 +57,6 @@ type Deps struct {
 	TestCredential func(ctx context.Context, token string) (string, error)
 }
 
-
 // Environment is the API view of an environment.
 type Environment struct {
 	ID             string            `json:"id"`

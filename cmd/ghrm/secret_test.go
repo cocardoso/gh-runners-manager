@@ -85,6 +85,9 @@ scale_sets:
 	tctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_ = run(tctx, []string{"serve", "--config", cfg}, &out, &errOut)
+	if !strings.Contains(out.String(), `"msg":"starting"`) {
+		t.Fatalf("serve did not start: %q %q", out.String(), errOut.String())
+	}
 	if strings.Contains(out.String()+errOut.String(), "secret missing") || strings.Contains(out.String()+errOut.String(), "has no token") {
 		t.Fatalf("output %q %q", out.String(), errOut.String())
 	}
