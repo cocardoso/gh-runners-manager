@@ -86,7 +86,8 @@ func (c *Client) maybeTask(ctx context.Context, node, method, path string, param
 }
 
 // CreateLXCOptions describes a container created from a template archive with the
-// job settings of spec §8.3: unprivileged, nesting and keyctl, a firewalled NIC on the job network.
+// job settings of spec §8.3: unprivileged, nesting, a firewalled NIC on the job network. (keyctl
+// can only be set by root@pam; the verification decides whether Docker works without it.)
 type CreateLXCOptions struct {
 	VMID       int
 	OSTemplate string // volid of the archive
@@ -111,9 +112,10 @@ func (c *Client) CreateLXC(ctx context.Context, node string, o CreateLXCOptions)
 		"memory":       {strconv.Itoa(o.MemoryMB)},
 		"swap":         {"0"},
 		"unprivileged": {"1"},
-		"features":     {"nesting=1,keyctl=1"},
-		"ostype":       {"ubuntu"},
-		"net0":         {"name=eth0,bridge=" + o.Bridge + ",ip=dhcp,firewall=1"},
+		// Only root@pam may set keyctl; nesting is enough for Docker when the self-test passes.
+		"features": {"nesting=1"},
+		"ostype":   {"ubuntu"},
+		"net0":     {"name=eth0,bridge=" + o.Bridge + ",ip=dhcp,firewall=1"},
 	}
 	for k, v := range map[string]string{"hostname": o.Hostname, "pool": o.Pool, "nameserver": o.Nameserver, "tags": strings.Join(o.Tags, ";")} {
 		if v != "" {

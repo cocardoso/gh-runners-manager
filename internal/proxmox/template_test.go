@@ -61,7 +61,7 @@ func TestCreateConvertFirewallResize(t *testing.T) {
 		t.Fatal("guest not created")
 	}
 	want := map[string]string{
-		"ostemplate": "local:vztmpl/ghrm-abc.tar.zst", "unprivileged": "1", "features": "nesting=1,keyctl=1", "ostype": "ubuntu",
+		"ostemplate": "local:vztmpl/ghrm-abc.tar.zst", "unprivileged": "1", "features": "nesting=1", "ostype": "ubuntu",
 		"nameserver": "1.1.1.1", "net0": "name=eth0,bridge=jobnet,ip=dhcp,firewall=1", "rootfs": "local-lvm:16", "pool": "ghrm",
 		"cores": "2", "memory": "2048", "swap": "0", "hostname": "ghrm-template", "tags": "ghrm-template;ghrmtpl-abc",
 	}
