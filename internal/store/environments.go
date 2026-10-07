@@ -14,19 +14,23 @@ import (
 
 // Environment is one job environment.
 type Environment struct {
-	ID             string
-	ScaleSet       string
-	State          string
-	RuntimeRef     string
-	RunnerName     string
-	RunnerID       int64
-	IP             string
-	TokenHash      string
-	FailureStage   string
-	FailureReason  string
-	JobID          string
-	ExitCode       *int
-	MemoryMB       int
+	ID            string
+	ScaleSet      string
+	State         string
+	RuntimeRef    string
+	RunnerName    string
+	RunnerID      int64
+	IP            string
+	TokenHash     string
+	FailureStage  string
+	FailureReason string
+	JobID         string
+	ExitCode      *int
+	MemoryMB      int
+	// Kind is KindJob, KindBuild or KindVerify (empty means KindJob).
+	Kind string
+	// TemplateVMID is the template the environment was cloned from (retention).
+	TemplateVMID   int
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	StateChangedAt time.Time
@@ -36,11 +40,12 @@ type Environment struct {
 type EnvironmentFilter struct {
 	States   []string
 	ScaleSet string
+	Kinds    []string
 	Limit    int
 }
 
 const envColumns = `id, scale_set, state, runtime_ref, runner_name, runner_id, ip, token_hash,
-	failure_stage, failure_reason, job_id, exit_code, memory_mb, created_at, updated_at, state_changed_at`
+	failure_stage, failure_reason, job_id, exit_code, memory_mb, kind, template_vmid, created_at, updated_at, state_changed_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -49,7 +54,7 @@ func scanEnvironment(row scanner) (Environment, error) {
 	var exit sql.NullInt64
 	var created, updated, changed int64
 	err := row.Scan(&e.ID, &e.ScaleSet, &e.State, &e.RuntimeRef, &e.RunnerName, &e.RunnerID, &e.IP, &e.TokenHash,
-		&e.FailureStage, &e.FailureReason, &e.JobID, &exit, &e.MemoryMB, &created, &updated, &changed)
+		&e.FailureStage, &e.FailureReason, &e.JobID, &exit, &e.MemoryMB, &e.Kind, &e.TemplateVMID, &created, &updated, &changed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Environment{}, ErrNotFound
 	}
@@ -83,9 +88,12 @@ func (s *Store) CreateEnvironment(ctx context.Context, e Environment) error {
 	if e.StateChangedAt.IsZero() {
 		e.StateChangedAt = e.CreatedAt
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO environments (`+envColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	if e.Kind == "" {
+		e.Kind = KindJob
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO environments (`+envColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		e.ID, e.ScaleSet, e.State, e.RuntimeRef, e.RunnerName, e.RunnerID, e.IP, e.TokenHash,
-		e.FailureStage, e.FailureReason, e.JobID, exitArg(e), e.MemoryMB, ms(e.CreatedAt), ms(e.UpdatedAt), ms(e.StateChangedAt))
+		e.FailureStage, e.FailureReason, e.JobID, exitArg(e), e.MemoryMB, e.Kind, e.TemplateVMID, ms(e.CreatedAt), ms(e.UpdatedAt), ms(e.StateChangedAt))
 	if err != nil {
 		return fmt.Errorf("store: create environment %s: %w", e.ID, err)
 	}
@@ -114,6 +122,13 @@ func (s *Store) FindEnvironmentByRunner(ctx context.Context, runnerName string) 
 		`SELECT `+envColumns+` FROM environments WHERE runner_name = ? ORDER BY created_at DESC LIMIT 1`, runnerName))
 }
 
+// FindEnvironmentByVMID returns the environment on a Proxmox VMID: a live one first,
+// else the newest (runtime references are "<vmid>/<environment id>").
+func (s *Store) FindEnvironmentByVMID(ctx context.Context, vmid int) (Environment, error) {
+	return scanEnvironment(s.db.QueryRowContext(ctx, `SELECT `+envColumns+` FROM environments WHERE runtime_ref LIKE ?
+		ORDER BY state = 'destroyed', created_at DESC LIMIT 1`, fmt.Sprintf("%d/%%", vmid)))
+}
+
 // ListEnvironments returns environments, newest first.
 func (s *Store) ListEnvironments(ctx context.Context, f EnvironmentFilter) ([]Environment, error) {
 	var where []string
@@ -127,6 +142,12 @@ func (s *Store) ListEnvironments(ctx context.Context, f EnvironmentFilter) ([]En
 	if f.ScaleSet != "" {
 		where = append(where, "scale_set = ?")
 		args = append(args, f.ScaleSet)
+	}
+	if len(f.Kinds) > 0 {
+		where = append(where, "kind IN (?"+strings.Repeat(",?", len(f.Kinds)-1)+")")
+		for _, k := range f.Kinds {
+			args = append(args, k)
+		}
 	}
 	q := `SELECT ` + envColumns + ` FROM environments`
 	if len(where) > 0 {
@@ -197,9 +218,9 @@ func (s *Store) updateEnvironment(ctx context.Context, id string, apply func(*En
 	}
 	e.UpdatedAt = time.Now()
 	_, err = tx.ExecContext(ctx, `UPDATE environments SET scale_set=?, state=?, runtime_ref=?, runner_name=?, runner_id=?, ip=?, token_hash=?,
-		failure_stage=?, failure_reason=?, job_id=?, exit_code=?, memory_mb=?, updated_at=?, state_changed_at=? WHERE id=?`,
+		failure_stage=?, failure_reason=?, job_id=?, exit_code=?, memory_mb=?, kind=?, template_vmid=?, updated_at=?, state_changed_at=? WHERE id=?`,
 		e.ScaleSet, e.State, e.RuntimeRef, e.RunnerName, e.RunnerID, e.IP, e.TokenHash,
-		e.FailureStage, e.FailureReason, e.JobID, exitArg(e), e.MemoryMB, ms(e.UpdatedAt), ms(e.StateChangedAt), id)
+		e.FailureStage, e.FailureReason, e.JobID, exitArg(e), e.MemoryMB, e.Kind, e.TemplateVMID, ms(e.UpdatedAt), ms(e.StateChangedAt), id)
 	if err != nil {
 		return Environment{}, err
 	}

@@ -60,7 +60,7 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 		ReadHeaderTimeout: 10 * time.Second,
 		Handler: api.New(api.Deps{Store: d.Store, Recorder: d.Recorder, Logs: d.Logs, Controller: d.Controller,
-			Config: d.Config, Capacity: d.Runtime.Capacity, AdminToken: "demo", UI: uiHandler()}),
+			Config: d.Config, Capacity: d.Runtime.Capacity, AdminToken: "demo", UI: uiHandler(), Templates: d.Templates}),
 	}
 	fmt.Fprintf(stdout, "ghrm demo: serving a simulated fleet on http://%s (admin token: demo)\n", *listen)
 	errc := make(chan error, 1)

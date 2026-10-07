@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -225,5 +226,21 @@ func TestTLSFingerprintPinning(t *testing.T) {
 	}
 	if _, err := proxmox.New(proxmox.Config{URL: srv.URL, TLSFingerprint: "not-hex"}); err == nil {
 		t.Fatal("want error for a malformed fingerprint")
+	}
+}
+
+// A destroy that ends with warnings (e.g. a disk still in use) succeeds but can leave
+// residue on the host, such as the disk or a DHCP reservation; it must not go unnoticed.
+func TestTaskWarningsAreReported(t *testing.T) {
+	srv, c := setup(t)
+	srv.AddGuest(proxmoxtest.Guest{VMID: 903, Type: "lxc"})
+	srv.DeleteWarning = "WARN: failed to delete mountpoint volume local-lvm:vm-903-disk-0: Logical volume pve/vm-903-disk-0 contains a filesystem in use."
+	var got []string
+	c.OnTaskWarnings = func(w proxmox.TaskWarnings) { got = append(got, w.Type, strconv.Itoa(w.VMID), w.Log) }
+	if err := c.DeleteLXC(context.Background(), node, 903); err != nil {
+		t.Fatalf("delete = %v, want success with warnings", err)
+	}
+	if len(got) != 3 || got[0] != "vzdestroy" || got[1] != "903" || !strings.Contains(got[2], "filesystem in use") {
+		t.Fatalf("reported %q, want the vzdestroy warning for 903 with its log", got)
 	}
 }

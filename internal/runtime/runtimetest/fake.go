@@ -4,7 +4,9 @@ package runtimetest
 import (
 	"context"
 	"fmt"
+	"io"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +35,13 @@ type Fake struct {
 	DestroyDelay time.Duration
 	// DestroyCalls counts Destroy calls for existing environments.
 	DestroyCalls int
+	// CreateTemplateErr, when non-nil, is returned by CreateTemplate.
+	CreateTemplateErr error
+	// TemplateDelay makes CreateTemplate slow, like a real upload.
+	TemplateDelay time.Duration
+
+	templates map[string]int64 // template ID -> archive size
+	tplVMID   int              // last template "VMID" handed out (refs look like Proxmox ones)
 }
 
 type fakeEnv struct {
@@ -147,4 +156,80 @@ func (f *Fake) Spec(ref runtime.Ref) (runtime.EnvironmentSpec, bool) {
 		return runtime.EnvironmentSpec{}, false
 	}
 	return e.spec, true
+}
+
+// CreateTemplate implements runtime.Templates: it reads the archive and remembers the template.
+func (f *Fake) CreateTemplate(ctx context.Context, spec runtime.TemplateSpec) (runtime.TemplateRef, error) {
+	n, err := io.Copy(io.Discard, spec.Archive)
+	if err != nil {
+		return runtime.TemplateRef{}, err
+	}
+	if f.TemplateDelay > 0 {
+		select {
+		case <-ctx.Done():
+			return runtime.TemplateRef{}, ctx.Err()
+		case <-time.After(f.TemplateDelay):
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.CreateTemplateErr != nil {
+		return runtime.TemplateRef{}, f.CreateTemplateErr
+	}
+	if f.templates == nil {
+		f.templates = map[string]int64{}
+	}
+	f.templates[spec.ID] = n
+	if f.tplVMID == 0 {
+		f.tplVMID = 949
+	}
+	f.tplVMID++
+	return runtime.TemplateRef{ID: fmt.Sprintf("%d/%s", f.tplVMID, spec.ID)}, nil
+}
+
+// TemplateEnvironmentRef implements runtime.Templates.
+func (f *Fake) TemplateEnvironmentRef(ref runtime.TemplateRef) string { return ref.ID }
+
+// TemplateInUse implements runtime.Templates.
+func (f *Fake) TemplateInUse(_ context.Context, ref runtime.TemplateRef) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, e := range f.envs {
+		if e.spec.Template == ref.ID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// DeleteTemplate implements runtime.Templates.
+func (f *Fake) DeleteTemplate(ctx context.Context, ref runtime.TemplateRef) error {
+	if used, _ := f.TemplateInUse(ctx, ref); used {
+		return fmt.Errorf("%w: %s", runtime.ErrTemplateInUse, ref)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, id, _ := strings.Cut(ref.ID, "/")
+	delete(f.templates, id)
+	return nil
+}
+
+// CleanupTemplate implements runtime.Templates.
+func (f *Fake) CleanupTemplate(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.templates, id)
+	return nil
+}
+
+// TemplateIDs lists the templates the fake holds.
+func (f *Fake) TemplateIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, 0, len(f.templates))
+	for id := range f.templates {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }

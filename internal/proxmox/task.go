@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -53,7 +54,13 @@ func (c *Client) WaitTask(ctx context.Context, node, upid string) error {
 		}
 		failures = 0
 		if st.Status == "stopped" {
-			if st.ExitStatus == "OK" || strings.HasPrefix(st.ExitStatus, "WARNINGS") {
+			if st.ExitStatus == "OK" {
+				return nil
+			}
+			if strings.HasPrefix(st.ExitStatus, "WARNINGS") {
+				if c.OnTaskWarnings != nil {
+					c.OnTaskWarnings(newTaskWarnings(upid, strings.TrimPrefix(c.taskLogTail(ctx, path), "\n")))
+				}
 				return nil
 			}
 			return fmt.Errorf("proxmox task %s failed: %s%s", upid, st.ExitStatus, c.taskLogTail(ctx, path))
@@ -81,6 +88,25 @@ func (c *Client) taskLogTail(ctx context.Context, path string) string {
 		parts[i] = l.T
 	}
 	return "\n" + strings.Join(parts, "\n")
+}
+
+// TaskWarnings describes a task that succeeded with warnings, which can mean it
+// left something behind on the host (a disk still in use, a DHCP reservation).
+type TaskWarnings struct {
+	UPID string
+	Type string // e.g. vzdestroy
+	VMID int    // 0 when the task is not about a guest
+	Log  string // the tail of the task log
+}
+
+// newTaskWarnings parses UPID:node:pid:pstart:starttime:type:id:user:.
+func newTaskWarnings(upid, log string) TaskWarnings {
+	w := TaskWarnings{UPID: upid, Log: log}
+	if parts := strings.Split(upid, ":"); len(parts) >= 7 {
+		w.Type = parts[5]
+		w.VMID, _ = strconv.Atoi(parts[6])
+	}
+	return w
 }
 
 // TaskError means the server accepted the request and started a task, but waiting

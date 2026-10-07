@@ -1,43 +1,12 @@
 import { useState } from "react";
-import { Button, Dialog, DialogRoot, DialogTitle, SensitiveInput, Tooltip, useKumoToastManager } from "@cloudflare/kumo";
+import { Button, Tooltip, useKumoToastManager } from "@cloudflare/kumo";
+import { TokenDialog } from "./admin-action";
 import { TrashIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, unwrap } from "@/api/client";
 import { useSettings } from "@/api/queries";
 import { DeleteResource } from "@/blocks/delete-resource/delete-resource";
 import { getAdminToken, setAdminToken } from "@/lib/admin-token";
-
-function TokenDialog({ open, error, onCancel, onToken }: { open: boolean; error?: string; onCancel: () => void; onToken: (t: string) => void }) {
-  const [value, setValue] = useState("");
-  return (
-    <DialogRoot open={open} onOpenChange={(o) => !o && onCancel()}>
-      <Dialog size="sm" className="flex flex-col gap-4 p-6">
-        <DialogTitle className="text-lg font-semibold">Admin token required</DialogTitle>
-        <p className="text-sm text-kumo-subtle">
-          Destroying an environment needs the control plane's admin token. It is kept for this browser tab only.
-        </p>
-        {error && <p className="text-sm text-kumo-danger">{error}</p>}
-        <form
-          className="flex flex-col gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (value.trim()) onToken(value.trim());
-          }}
-        >
-          <SensitiveInput label="Admin token" value={value} onValueChange={setValue} autoFocus />
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" type="button" onClick={onCancel}>
-              Cancel
-            </Button>
-            <Button variant="primary" type="submit" disabled={!value.trim()}>
-              Continue
-            </Button>
-          </div>
-        </form>
-      </Dialog>
-    </DialogRoot>
-  );
-}
 
 /** The destroy action: admin token (once per tab), then type-the-name confirmation. */
 export function DestroyEnvironment({ id, disabled }: { id: string; disabled?: boolean }) {

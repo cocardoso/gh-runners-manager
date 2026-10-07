@@ -222,17 +222,17 @@ A short Dockerfile that starts `FROM` the slim image adds only what an LXC job e
 
 ### 8.3 Build pipeline
 
-1. **Builder environment.** A temporary LXC on the job network, created from the stock Proxmox Ubuntu template, with Docker installed.
+1. **Builder environment.** A temporary LXC on the job network, cloned from the **active template** (it already has Docker, systemd and `ghrm-agent`; the Proxmox API cannot run commands inside a fresh stock container). The very first template is a bootstrap template (`deploy/proxmox/dev-template.sh`, later the installer). A builder whose agent differs from the control plane's first replaces it with the control plane's (checksum verified) and restarts, so changes to the build itself apply at once. *(Revised in M4.)*
 2. `git clone actions/runner-images` at the pinned tag, then `docker build` the official `ubuntu-slim` Dockerfile, then `docker build` the ghrm layer.
 3. `docker export` produces a root filesystem tarball (`.tar.zst`).
 4. The builder uploads the tarball to the control plane over the ingest channel. The control plane uploads it to Proxmox template storage through the API.
 5. The control plane creates the template LXC with the following settings, then converts it to a template:
-   - `unprivileged=1`, `features: nesting=1,keyctl=1`;
+   - `unprivileged=1`, `features: nesting=1` (`keyctl` can only be set by `root@pam`, and Docker works without it);
    - `ostype=ubuntu`;
    - `nameserver` set explicitly;
    - NIC on the job VNet with `firewall=1`;
    - security group attached;
-   - `ghrm-template` tag.
+   - `ghrm-template` tags, set right after creation (Proxmox checks tag permissions on the VMID before the new container joins the pool). *(Revised in M4.)*
 6. The builder is destroyed. Build logs stream live to the UI like any other log stream.
 
 ### 8.4 Verification
@@ -242,7 +242,7 @@ A clone of the new template boots with the agent in **self-test mode**:
 - Docker works: `hello-world`, a buildx build with the `docker-container` driver and a compose stack with a bind mount.
 - DNS resolves, outbound HTTPS works, and LAN and hypervisor addresses are unreachable.
 - The runner binary starts, and the agent reaches the ingest.
-- **Fidelity report.** The official `generate-software-report.sh` shipped with the slim recipe is run, and its output is compared with the report GitHub publishes for the same release. Expected differences are only the items added by the ghrm layer. Any other difference is shown in the UI.
+- **Fidelity report.** The official software report generator shipped with the slim recipe is run, and its output is compared with the report GitHub publishes as an asset of the same release (`internal.ubuntu-slim.json`; the recipe's own report file is not refreshed for every release and is only a fallback when the asset is missing). Every difference is shown in the UI with its reason. Explained differences are the items the ghrm layer adds, GitHub's build suffix on the image version, and newer versions (the recipe installs the latest releases, so a build made after GitHub's picks them up). A missing item, an older version than GitHub's, a pre-release, a new major version of a language runtime, a cached version that disappeared, or an extra item the layer does not add hold the version for manual activation. *(Revised in M4 from real builds.)*
 
 Only a template that passes verification becomes `active`. A canary workflow (Section 13) can optionally be run against it before activation.
 

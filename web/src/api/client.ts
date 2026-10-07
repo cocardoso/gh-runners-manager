@@ -13,6 +13,7 @@ export type LogStreamInfo = Schemas["LogStream"];
 export type Overview = Schemas["Overview"];
 export type ScaleSet = Schemas["ScaleSet"];
 export type Settings = Schemas["Settings"];
+export type TemplateVersion = Schemas["Template"];
 export type ApiEvent = Omit<Schemas["Event"], "$schema" | "data"> & { data?: Record<string, unknown>; [extra: string]: unknown };
 
 // fetch is looked up per call so tests can stub it.

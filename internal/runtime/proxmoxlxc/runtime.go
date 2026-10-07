@@ -22,6 +22,10 @@ const (
 	TagEnvironment = "ghrm-env"
 	idTagPrefix    = "ghrmid-"
 	cleanupTimeout = 2 * time.Minute
+	// destroySettle lets a guest that powered itself off finish unmounting its root disk;
+	// deleting it at once can fail with "filesystem in use" after Proxmox already dropped
+	// it from the pool, leaving a guest the token can no longer see.
+	destroySettle  = 5 * time.Second
 	destroyRetries = 3
 )
 
@@ -42,6 +46,18 @@ type Config struct {
 	ThinPool       string // LV name of the thin pool, e.g. "data"
 	Storage        string // Proxmox storage ID of the thin pool, e.g. "local-lvm"
 	FirewallSettle time.Duration
+	Templates      TemplateConfig
+}
+
+// TemplateConfig configures template builds (spec §8.3 step 5).
+type TemplateConfig struct {
+	VMIDStart     int
+	VMIDEnd       int
+	Storage       string // storage for the archives ("vztmpl" content), e.g. local
+	RootFSGB      int
+	Nameserver    string
+	Bridge        string // job VNet
+	FirewallGroup string // security group, e.g. gh-runner
 }
 
 // Runtime implements runtime.Runtime on Proxmox LXC.
@@ -211,10 +227,17 @@ func (r *Runtime) cloneNew(ctx context.Context, spec runtime.EnvironmentSpec, kn
 		Description: "Managed by gh-runners-manager. Environment " + spec.ID + ".",
 		Pool:        r.cfg.Pool,
 	}
-	err = r.client.CloneLXC(ctx, r.cfg.Node, r.cfg.TemplateVMID, vmid, opts)
+	source := r.cfg.TemplateVMID
+	if spec.Template != "" {
+		if source, err = strconv.Atoi(spec.Template); err != nil || source <= 0 {
+			r.allocMu.Unlock()
+			return 0, fmt.Errorf("%w: template %q is not a VMID", runtime.ErrInvalidSpec, spec.Template)
+		}
+	}
+	err = r.client.CloneLXC(ctx, r.cfg.Node, source, vmid, opts)
 	r.allocMu.Unlock()
 	if err != nil {
-		err = fmt.Errorf("clone template %d to %d: %w", r.cfg.TemplateVMID, vmid, err)
+		err = fmt.Errorf("clone template %d to %d: %w", source, vmid, err)
 		var taskErr *proxmox.TaskError
 		if errors.As(err, &taskErr) {
 			// The clone task started: wait for it to end, then remove whatever it produced.
@@ -226,6 +249,11 @@ func (r *Runtime) cloneNew(ctx context.Context, spec runtime.EnvironmentSpec, kn
 	if err := r.client.SetLXCConfig(ctx, r.cfg.Node, vmid, tags); err != nil {
 		return 0, r.abandon(ctx, vmid, fmt.Errorf("tag %d: %w", vmid, err))
 	}
+	if spec.DiskGB > 0 {
+		if err := r.client.ResizeLXCDisk(ctx, r.cfg.Node, vmid, "rootfs", spec.DiskGB); err != nil {
+			return 0, r.abandon(ctx, vmid, fmt.Errorf("resize %d: %w", vmid, err))
+		}
+	}
 	return vmid, nil
 }
 
@@ -233,7 +261,11 @@ func (r *Runtime) cloneNew(ctx context.Context, spec runtime.EnvironmentSpec, kn
 // LXC list are skipped without asking; the rest are checked against the whole
 // cluster, including guests the token cannot see.
 func (r *Runtime) allocateVMID(ctx context.Context, known map[int]bool) (int, error) {
-	for vmid := r.cfg.VMIDStart; vmid <= r.cfg.VMIDEnd; vmid++ {
+	return r.allocateIn(ctx, known, r.cfg.VMIDStart, r.cfg.VMIDEnd)
+}
+
+func (r *Runtime) allocateIn(ctx context.Context, known map[int]bool, start, end int) (int, error) {
+	for vmid := start; vmid <= end; vmid++ {
 		if known[vmid] {
 			continue
 		}
@@ -245,7 +277,7 @@ func (r *Runtime) allocateVMID(ctx context.Context, known map[int]bool) (int, er
 			return vmid, nil
 		}
 	}
-	return 0, fmt.Errorf("%w %d-%d", ErrNoFreeVMID, r.cfg.VMIDStart, r.cfg.VMIDEnd)
+	return 0, fmt.Errorf("%w %d-%d", ErrNoFreeVMID, start, end)
 }
 
 // abandon destroys a guest this Create made, even if ctx was cancelled, and
@@ -337,6 +369,11 @@ func (r *Runtime) destroyVMID(ctx context.Context, vmid int, envID string) error
 			if err := r.client.StopLXC(ctx, r.cfg.Node, vmid); err != nil {
 				lastErr = fmt.Errorf("stop %d: %w", vmid, err)
 				continue
+			}
+		} else {
+			_ = r.sleep(ctx, destroySettle) // best effort: an interrupted settle still deletes
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 		}
 		if err := r.client.DeleteLXC(ctx, r.cfg.Node, vmid); err != nil {

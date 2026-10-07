@@ -33,6 +33,7 @@ type Options struct {
 
 // Client queues frames and delivers them in order to the ingest.
 type Client struct {
+	base  string // ingest base URL
 	url   string
 	token string
 	http  *http.Client
@@ -45,6 +46,7 @@ type Client struct {
 	nextID   uint64
 	inflight uint64 // highest frame id in the request being sent
 	seq      map[string]int64
+	seqBase  int64 // the client's start time in µs: a restarted agent continues above its predecessor
 	dropped  int
 	notify   chan struct{}
 }
@@ -92,12 +94,14 @@ func NewClient(b Bootstrap, opts Options) (*Client, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = tlsCfg
 	return &Client{
-		url:    strings.TrimRight(b.URL, "/") + ingest.FramesPath,
-		token:  b.Token,
-		http:   &http.Client{Transport: tr, Timeout: 30 * time.Second},
-		opts:   opts,
-		seq:    map[string]int64{},
-		notify: make(chan struct{}, 1),
+		base:    strings.TrimRight(b.URL, "/"),
+		url:     strings.TrimRight(b.URL, "/") + ingest.FramesPath,
+		token:   b.Token,
+		http:    &http.Client{Transport: tr, Timeout: 30 * time.Second},
+		opts:    opts,
+		seq:     map[string]int64{},
+		seqBase: time.Now().UnixMicro(),
+		notify:  make(chan struct{}, 1),
 	}, nil
 }
 
@@ -117,7 +121,7 @@ func (c *Client) enqueue(seqStream string, f ingest.Frame) {
 	}
 	f.Text = truncate(f.Text)
 	c.seq[seqStream]++
-	f.Seq = c.seq[seqStream]
+	f.Seq = c.seqBase + c.seq[seqStream]
 	if len(c.queue) >= c.opts.MaxQueue {
 		// Drop the oldest log or metric that is not part of the request in flight.
 		for i, q := range c.queue {
@@ -314,4 +318,63 @@ func (c *Client) Flush(ctx context.Context) error {
 			backoff = min(backoff*2, c.opts.MaxBackoff)
 		}
 	}
+}
+
+// request sends an authenticated request to an ingest endpoint. Large transfers are bounded
+// by ctx, not by the client timeout.
+func (c *Client) request(ctx context.Context, method, path string, body io.Reader, size int64, hdr map[string]string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
+	if err != nil {
+		return nil, err
+	}
+	if size >= 0 && body != nil {
+		req.ContentLength = size
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	hc := *c.http
+	hc.Timeout = 0
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("agent: %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(msg)))
+	}
+	return resp, nil
+}
+
+// GetJSON decodes an ingest endpoint's JSON answer.
+func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
+	resp, err := c.request(ctx, http.MethodGet, path, nil, -1, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// Download copies an ingest endpoint's body to w.
+func (c *Client) Download(ctx context.Context, path string, w io.Writer) error {
+	resp, err := c.request(ctx, http.MethodGet, path, nil, -1, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, err = io.Copy(w, resp.Body)
+	return err
+}
+
+// Send uploads a body to an ingest endpoint.
+func (c *Client) Send(ctx context.Context, method, path string, body io.Reader, size int64, hdr map[string]string) error {
+	resp, err := c.request(ctx, method, path, body, size, hdr)
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.Body.Close()
 }

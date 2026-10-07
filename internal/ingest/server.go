@@ -30,13 +30,24 @@ type server struct {
 	sink     EventSink
 	logs     *logs.Store
 	recorder *events.Recorder
+	builds   BuildService
 }
 
 // NewServer returns the ingest HTTP handler.
-func NewServer(resolver TokenResolver, sink EventSink, logStore *logs.Store, recorder *events.Recorder) http.Handler {
+func NewServer(resolver TokenResolver, sink EventSink, logStore *logs.Store, recorder *events.Recorder, opts ...Option) http.Handler {
 	s := &server{resolver: resolver, sink: sink, logs: logStore, recorder: recorder}
+	for _, o := range opts {
+		o(s)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+FramesPath, s.frames)
+	if s.builds != nil {
+		mux.HandleFunc("GET "+BuildSpecPath, s.buildSpec)
+		mux.HandleFunc("GET "+BuildLayerPath, s.buildLayer)
+		mux.HandleFunc("GET "+BuildAgentPath, s.buildAgent)
+		mux.HandleFunc("PUT "+BuildRootFSPath, s.buildRootFS)
+		mux.HandleFunc("POST "+SelfTestPath, s.selfTest)
+	}
 	return mux
 }
 

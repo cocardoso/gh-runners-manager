@@ -48,3 +48,23 @@ scale_sets:
     cores: 2
     memory_mb: 4096
     keep_on_failure_minutes: 0
+
+# Template builds (spec §8). ghrm builds templates from GitHub's ubuntu-slim recipe plus the
+# ghrm layer, verifies them and keeps the previous one for roll-back. Disabled until vmid_range is set;
+# until the first build is active, environments clone proxmox.template_vmid.
+templates:
+  vmid_range: {start: 950, end: 958}   # inside the token's pool, outside proxmox.vmid_range
+  storage: ghrm-tpl                    # dedicated "vztmpl" storage for the archives (see docs/development.md)
+  rootfs_gb: 16
+  builder_disk_gb: 48
+  builder_cores: 4
+  builder_memory_mb: 8192
+  keep: 2                              # the active version and one to roll back to
+  check_interval: 24h                  # new ubuntu-slim / runner releases; 0 disables
+  auto_activate: true                  # only when every check passes and the report has no unexpected differences
+  nameserver: 1.1.1.1
+  bridge: jobnet
+  firewall_group: gh-runner
+  # Addresses a job must not reach; the self-test fails if any answers.
+  selftest_blocked: ["192.168.1.1:443", "192.168.1.10:8006"]
+  # agent_path: /usr/local/bin/ghrm-agent   # served to builders; default: next to the ghrm binary

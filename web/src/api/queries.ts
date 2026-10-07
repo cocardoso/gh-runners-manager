@@ -74,3 +74,11 @@ export function useJobEvents(jobId: string | undefined, environmentId: string | 
     enabled: !!(jobId || environmentId),
   });
 }
+
+export function useTemplates() {
+  return useQuery({ queryKey: ["templates"], queryFn: async () => unwrap(await api.GET("/api/v1/templates")) });
+}
+
+export function useTemplate(id: string) {
+  return useQuery({ queryKey: ["templates", id], queryFn: async () => unwrap(await api.GET("/api/v1/templates/{id}", { params: { path: { id } } })) });
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/actions/scaleset"
 	"github.com/actions/scaleset/listener"
@@ -52,8 +53,39 @@ func (s *scaler) job(base scaleset.JobMessageBase, runner string) store.Job {
 	if base.OwnerName != "" {
 		repo = base.OwnerName + "/" + base.RepositoryName
 	}
+	// GitHub leaves queueTime empty in practice; the scale set assignment time is the
+	// moment the job reached this scale set. The store keeps the first queue time recorded.
+	queued := base.QueueTime
+	if queued.IsZero() {
+		queued = base.ScaleSetAssignTime
+	}
 	return store.Job{ID: base.JobID, ScaleSet: s.name, Repository: repo, Owner: base.OwnerName, WorkflowRef: base.JobWorkflowRef,
-		DisplayName: base.JobDisplayName, EventName: base.EventName, RunID: base.WorkflowRunID, RunnerName: runner, QueuedAt: base.QueueTime}
+		DisplayName: base.JobDisplayName, EventName: base.EventName, RunID: base.WorkflowRunID, RunnerName: runner, QueuedAt: queued}
+}
+
+// HandleJobAvailable records a job assigned to the scale set with its queue time,
+// which GitHub sends only in this message. It never moves a known job back.
+func (s *scaler) HandleJobAvailable(ctx context.Context, info *scaleset.JobAvailable) error {
+	c := s.c
+	j := s.job(info.JobMessageBase, "")
+	for _, t := range []time.Time{info.QueueTime, info.ScaleSetAssignTime, c.now()} {
+		if !t.IsZero() {
+			j.QueuedAt = t
+			break
+		}
+	}
+	existing, err := c.d.Store.GetJob(ctx, j.ID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		j.Status = "assigned"
+	case err != nil:
+		return err
+	case !existing.QueuedAt.IsZero():
+		return nil
+	default:
+		j = store.Job{ID: j.ID, QueuedAt: j.QueuedAt}
+	}
+	return c.d.Store.UpsertJob(ctx, j)
 }
 
 // HandleJobStarted links the job to its environment and marks it running.

@@ -153,7 +153,11 @@ func (c *Client) Listen(ctx context.Context, scaleSet string, scaleSetID, maxRun
 		return fmt.Errorf("github: message session for %s: %w", scaleSet, err)
 	}
 	defer func() { _ = session.Close(context.WithoutCancel(ctx)) }()
-	l, err := listener.New(session, listener.Config{ScaleSetID: scaleSetID, MaxRunners: maxRunners, Logger: c.logger.With("scale_set", scaleSet)})
+	var lc listener.Client = session
+	if h, ok := s.(AvailableJobHandler); ok {
+		lc = withAvailableJobs(session, h, c.logger.With("scale_set", scaleSet))
+	}
+	l, err := listener.New(lc, listener.Config{ScaleSetID: scaleSetID, MaxRunners: maxRunners, Logger: c.logger.With("scale_set", scaleSet)})
 	if err != nil {
 		return err
 	}

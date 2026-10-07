@@ -17,6 +17,16 @@ const tones: Record<string, Record<string, Tone>> = {
   },
   job: { assigned: "warning", running: "info", completed: "neutral" },
   result: { succeeded: "success", failed: "error", canceled: "neutral", cancelled: "neutral" },
+  template: {
+    building: "warning",
+    creating: "warning",
+    verifying: "warning",
+    ready: "info",
+    active: "success",
+    failed: "error",
+    retired: "neutral",
+    deleted: "neutral",
+  },
   level: { debug: "neutral", info: "info", warn: "warning", warning: "warning", error: "error" },
 };
 
@@ -45,4 +55,8 @@ export function JobStatusBadge({ status, result }: { status: string; result?: st
 
 export function LevelBadge({ level }: { level: string }) {
   return <ToneBadge tone={toneFor("level", level)}>{level || "info"}</ToneBadge>;
+}
+
+export function TemplateStateBadge({ state }: { state: string }) {
+  return <ToneBadge tone={toneFor("template", state)}>{state || "unknown"}</ToneBadge>;
 }

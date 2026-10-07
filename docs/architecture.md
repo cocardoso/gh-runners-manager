@@ -25,7 +25,8 @@ Legend used in the diagrams: **green** = implemented, **grey dashed** = planned 
 | `ghrm version`, `smoke`, `serve`, `openapi`, `demo` | `cmd/ghrm` | Implemented (M1–M3) |
 | Simulated fleet for UI work and browser tests | `internal/demo` | Implemented (M3) |
 | Web UI (React, Kumo), embedded in the binary | `web/` | Implemented (M3); template pages in M4, sign-in and editable settings in M5 |
-| Template builder (`ubuntu-slim`) | `internal/template`, `template/layer` | Planned (M4); M2 uses `deploy/proxmox/dev-template.sh` |
+| Template builder (`ubuntu-slim`): build, verify, activate, retain, release checks | `internal/template`, `template/layer` | Implemented (M4); `deploy/proxmox/dev-template.sh` creates the bootstrap template |
+| Agent build and self-test modes | `internal/agent` (`build.go`, `selftest.go`) | Implemented (M4) |
 | UI auth, secrets, installer | `internal/auth`, `internal/secrets`, `deploy/` | Planned (M5) |
 
 ## 1. System overview
@@ -42,6 +43,7 @@ flowchart LR
         scheduler["Scheduler"]
         runtime["Runtime: proxmox-lxc"]
         reaper["Reaper"]
+        templates["Template service"]
         store["Store: SQLite + log files"]
         ingest["Ingest"]
         api["REST API + SSE"]
@@ -50,10 +52,12 @@ flowchart LR
 
     subgraph pve["Proxmox VE host"]
         pveapi["Proxmox API"]
-        tmpl["Template LXC"]
+        tmpl["Active template LXC"]
+        tmplstore["Template storage (vztmpl archives)"]
         subgraph jobnet["Isolated job network"]
             env1["Job LXC + ghrm-agent"]
             env2["Job LXC + ghrm-agent"]
+            builder["Builder / verify LXC + ghrm-agent (build, self-test mode)"]
         end
     end
 
@@ -71,6 +75,12 @@ flowchart LR
     env1 -- "runner protocol (outbound)" --> github
     reaper --> runtime
     reaper --> rest
+    templates -- "release checks" --> rest
+    templates -- "upload archive, create, convert" --> pveapi
+    pveapi -.-> tmplstore
+    tmpl -. "clone of" .-> builder
+    builder -- "build log, root filesystem, self-test report" --> ingest
+    ingest --> templates
     ingest --> store
     scheduler --> store
     api --> store
@@ -79,7 +89,7 @@ flowchart LR
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef planned fill:#f1f3f5,stroke:#868e96,stroke-dasharray:5 5,color:#000
-    class runtime,scheduler,listener,reaper,store,ingest,api,ui done
+    class runtime,scheduler,listener,reaper,store,ingest,api,ui,templates done
 ```
 
 ## 1a. Web UI data flow
@@ -170,6 +180,8 @@ sequenceDiagram
     participant I as Ingest
     participant UI as API / SSE clients
 
+    GH-->>L: JobAvailable (the only message with the queue time)
+    L->>C: job assigned, queued at
     GH-->>L: statistics: assigned jobs = N
     L->>C: desired count
     C->>C: scheduler: capacity check (memory, disk, limits)
@@ -189,7 +201,7 @@ sequenceDiagram
     I-->>UI: every step is an event and a log line, streamed live
 ```
 
-Agent → ingest frames are NDJSON batches every 250 ms. Each log stream has its own sequence numbers, so a retried batch is stored once. Events share the `agent` stream's sequence and reach the controller exactly once.
+Agent → ingest frames are NDJSON batches every 250 ms. Each log stream has its own sequence numbers, so a retried batch is stored once; an agent numbers from its start time in microseconds, so an agent that restarts (a builder updating itself) continues above its predecessor. Events share the `agent` stream's sequence and reach the controller exactly once.
 
 ## 3a. Where each log stream comes from
 
@@ -280,11 +292,14 @@ flowchart TD
     mine -- no --> gone(["nil: already gone or VMID reused"])
     mine -- yes --> running{"running?"}
     running -- yes --> stop["stop"]
-    running -- no --> del["delete (purge)"]
+    running -- no --> settle2["wait a few seconds: a guest that powered itself off<br/>may still be unmounting its disk"]
+    settle2 --> del["delete (purge)"]
     stop --> del
     stop -- "error: re-read and retry" --> look
     del -- "error: re-read and retry" --> look
     del --> done(["nil"])
+    del -- "task ends with WARNINGS (e.g. disk in use)" --> warn["log + proxmox.task_warnings event<br/>(leftovers on the host need a look)"]
+    warn --> done
 ```
 
 ## 6. Code map
@@ -298,6 +313,9 @@ flowchart LR
     ghrm --> github["internal/github"]
     ghrm --> proxmoxlxc["internal/runtime/proxmoxlxc"]
     ghrm --> demo["internal/demo"]
+    ghrm --> template["internal/template"]
+    template --> controller
+    template --> layer["template/layer"]
     ghrm --> webui["web (embedded UI)"]
     demo --> controller
     demo --> runtimetest
@@ -323,30 +341,64 @@ flowchart LR
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef testonly fill:#fff3bf,stroke:#e67700,color:#000
     classDef ext fill:#e7f5ff,stroke:#1971c2,color:#000
-    class ghrm,config,api,controller,ingest,github,proxmoxlxc,scheduler,environment,runtime,store,events,logs,proxmox,agentcmd,agent,ingestproto,demo,webui done
+    class ghrm,config,api,controller,ingest,github,proxmoxlxc,scheduler,environment,runtime,store,events,logs,proxmox,agentcmd,agent,ingestproto,demo,webui,template,layer done
     class runtimetest,proxmoxtest testonly
     class scaleset ext
 ```
 
 Yellow packages are test doubles; `internal/demo` uses the fake runtime to serve a simulated fleet (`ghrm demo`). `cmd/ghrm-agent` shares only the wire protocol with the control plane.
 
-## 7. Template pipeline (planned, M4)
+## 7. Template pipeline
+
+A build clones the **active template** into a builder environment (it already has Docker, systemd and `ghrm-agent`), because the Proxmox API cannot run commands inside a fresh stock container. The very first template comes from `deploy/proxmox/dev-template.sh` (the bootstrap template, `proxmox.template_vmid`). Since the builder runs the active template's agent, which can be older than the control plane, it first replaces itself with the control plane's agent, so fixes to the build take effect in the next build.
+
+The fidelity report compares the template's software report with the one GitHub publishes as an asset of the same `ubuntu-slim` release (the recipe's `ubuntu-slim-Report.json` is not refreshed for every release, so it is only a fallback). The recipe installs the latest releases at build time, so a build made after GitHub's shows newer versions: those differences are listed with their reason but do not hold the version back. A missing tool, an older version than GitHub's, a new major version of a language runtime, or an extra tool the layer does not install does.
 
 ```mermaid
 flowchart LR
     rel["actions/runner-images release ubuntu-slim/*"] --> b1
-    runner["actions/runner release"] --> b1
-    layer["ghrm layer version"] --> b1
-    subgraph builder["Builder LXC (temporary, job network)"]
-        b1["docker build: official ubuntu-slim Dockerfile"] --> b2["docker build: ghrm layer (systemd, Docker, runner, agent)"]
-        b2 --> b3["docker export: rootfs.tar.zst"]
+    runner["actions/runner release + SHA-256"] --> b2
+    layer["ghrm layer (template/layer, embedded in ghrm)"] --> b2
+    subgraph builder["Builder LXC (clone of the active template, job network)"]
+        b0["agent update: a builder whose ghrm-agent differs from the control plane's<br/>downloads it (GET /ingest/v1/build/agent), checks the SHA-256, re-executes"] --> b1
+        b1["docker build: official ubuntu-slim Dockerfile, unmodified"] --> b2["docker build: ghrm layer (systemd, Docker Engine, runner, agent)"]
+        b2 --> b3["docker export, drop container markers, zstd, SHA-256"]
     end
-    b3 --> up["control plane uploads to Proxmox template storage"]
-    up --> create["create template LXC (unprivileged, nesting, DNS, firewall group)"]
-    create --> verify["verify: self-test + software report vs GitHub's report"]
-    verify -- pass --> active["active template"]
-    verify -- fail --> keep["keep the current active template"]
+    b3 -- "PUT /ingest/v1/build/rootfs (streamed, size-capped)" --> cp["control plane: verify SHA-256"]
+    cp --> up["upload to template storage (Proxmox verifies the SHA-256)"]
+    up --> create["create LXC: unprivileged, nesting (keyctl is reserved to root@pam), DNS, firewalled NIC, gh-runner group; convert to template"]
+    create --> verify["verify LXC (clone): self-test + software report"]
+    verify --> compare["compare with the report published with the release<br/>(asset internal.ubuntu-slim.json)"]
+    compare -- "all checks pass, no unexpected differences, nothing pinned" --> active["active template"]
+    compare -- "unexpected differences or pinned" --> ready["ready (manual activation)"]
+    verify -- "a check fails, timeout" --> failed["failed: guests, template and archive removed"]
+    b1 -- "builder stops, timeout, restart" --> failed
+    b3 -- "bad SHA-256, too large" --> failed
+    create -- "Proxmox error, restart" --> failed
 
-    classDef planned fill:#f1f3f5,stroke:#868e96,stroke-dasharray:5 5,color:#000
-    class rel,runner,layer,b1,b2,b3,up,create,verify,active,keep planned
+    classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
+    class rel,runner,layer,b0,b1,b2,b3,cp,up,create,verify,compare,active,ready,failed done
 ```
+
+### 7a. Template version states
+
+```mermaid
+stateDiagram-v2
+    [*] --> building: Build (manual or release check)
+    building --> creating: archive received
+    creating --> verifying: template created
+    verifying --> ready: checks pass
+    ready --> active: auto (no unexpected differences, nothing pinned) or manual
+    active --> ready: another version activated (kept for roll-back)
+    ready --> retired: not kept (see retention)
+    retired --> deleted: no environment uses it
+    building --> failed
+    creating --> failed
+    verifying --> failed: check failed, timeout, restart
+    failed --> [*]
+    deleted --> [*]
+```
+
+A failed build never changes the active template. Only one build runs at a time. The bootstrap template is never deleted.
+
+Retention keeps the active version, the newest `keep - 1` versions that were active before (roll-back targets), the newest version that was never activated (awaiting review), and every pinned version. Other built versions are retired, and deleted once no environment uses them: neither a live environment recorded as cloned from the template nor a linked clone the hypervisor reports.

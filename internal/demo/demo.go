@@ -4,11 +4,15 @@
 package demo
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +29,7 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/runtime"
 	"github.com/cocardoso/gh-runners-manager/internal/runtime/runtimetest"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
+	"github.com/cocardoso/gh-runners-manager/internal/template"
 )
 
 // Options tune the simulation.
@@ -45,6 +50,7 @@ type Demo struct {
 	Runtime    *runtimetest.Fake
 	Controller *controller.Controller
 	Config     *config.Config
+	Templates  *template.Service
 
 	opts Options
 	rng  *rand.Rand
@@ -54,6 +60,7 @@ type Demo struct {
 	queued   map[string][]simJob
 	running  map[string]*simJob // by environment ID
 	booted   map[string]time.Time
+	special  map[string]int // build/verify environments: simulation steps taken
 	stopNew  bool
 	runCount int64
 }
@@ -97,6 +104,12 @@ func New(ctx context.Context, opts Options) (*Demo, error) {
 			{Name: "homelab-docker", URL: "https://github.com/octo/infra", Credential: "demo", RunnerGroup: "default", MaxConcurrent: 2, Cores: 4, MemoryMB: 8192},
 		},
 		Ingest: config.Ingest{Listen: "127.0.0.1:0", AdvertiseURL: "https://127.0.0.1:8443"},
+		Proxmox: config.Proxmox{URL: "https://pve.demo.invalid:8006", Node: "pve", TokenID: "ghrm@pve!ghrm", TemplateVMID: 949, Pool: "ghrm",
+			VMIDRange: config.VMIDRange{Start: 900, End: 948}},
+		Templates: config.Templates{VMIDRange: config.VMIDRange{Start: 950, End: 958}, Storage: "local", RootFSGB: 16, BuilderDiskGB: 48,
+			BuilderCores: 4, BuilderMemoryMB: 8192, Keep: 2, AutoActivate: true, BuildTimeout: config.Duration(30 * time.Minute),
+			VerifyTimeout: config.Duration(10 * time.Minute), MaxArchiveBytes: 64 << 20, Nameserver: "1.1.1.1", Bridge: "jobnet",
+			FirewallGroup: "gh-runner", SelfTestBlocked: []string{"192.168.1.1:443", "192.168.1.10:8006"}},
 	}
 	rt := runtimetest.NewFake()
 	rt.Cap = runtime.Capacity{HostMemoryTotalMB: 40960, HostMemoryAvailableMB: 30000, ThinPoolPercent: 42}
@@ -104,11 +117,18 @@ func New(ctx context.Context, opts Options) (*Demo, error) {
 		Store: db, Recorder: events.NewRecorder(db, events.NewBus(), nil), Logs: logs.New(filepath.Join(opts.DataDir, "logs"), db),
 		Runtime: rt, Config: cfg, opts: opts, rng: rand.New(rand.NewSource(opts.Seed)),
 		scalers: map[string]listener.Scaler{}, queued: map[string][]simJob{}, running: map[string]*simJob{}, booted: map[string]time.Time{},
+		special: map[string]int{},
 	}
 	timeouts := environment.DefaultTimeouts()
 	timeouts[environment.Idle] = opts.IdleTimeout
 	d.Controller = controller.New(controller.Deps{Store: db, Recorder: d.Recorder, Runtime: rt, GitHub: (*simGitHub)(d), Logs: d.Logs,
 		Config: cfg, IngestURL: cfg.Ingest.AdvertiseURL, IngestFingerprint: "DE:MO", Timeouts: timeouts})
+	d.Templates = template.NewService(template.Deps{Store: db, Recorder: d.Recorder, Logs: d.Logs, Runtime: rt, Environments: d.Controller,
+		Releases: demoReleases{}, Config: cfg.Templates, BootstrapVMID: cfg.Proxmox.TemplateVMID, DataDir: opts.DataDir})
+	if err := d.Templates.EnsureBootstrap(ctx); err != nil {
+		return nil, err
+	}
+	d.Controller.SetTemplates(d.Templates, d.Templates)
 	for i, ss := range cfg.ScaleSets {
 		d.Controller.SetScaleSetID(ss.Name, i+1)
 		d.Controller.SetListening(ss.Name, true, nil)
@@ -130,6 +150,7 @@ func (d *Demo) StopNewJobs() {
 // Run drives the simulation and the controller until ctx ends.
 func (d *Demo) Run(ctx context.Context) {
 	go d.Controller.Run(ctx)
+	go d.Templates.Run(ctx)
 	t := time.NewTicker(d.opts.Tick)
 	defer t.Stop()
 	for n := 0; ; n++ {
@@ -193,6 +214,10 @@ func (d *Demo) advance(ctx context.Context, e store.Environment, now time.Time) 
 	d.mu.Unlock()
 	age := now.Sub(first)
 
+	if e.Kind == store.KindBuild || e.Kind == store.KindVerify {
+		d.advanceSpecial(ctx, e, now, age)
+		return
+	}
 	switch e.State {
 	case "booting":
 		if age > 2*d.opts.Tick {
@@ -324,4 +349,113 @@ func (s *simGitHub) RemoveRunner(context.Context, string, int64) error { return 
 func (s *simGitHub) Listen(ctx context.Context, _ string, _, _ int, _ listener.Scaler) error {
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+// demoReleases are fixed release inputs for the simulated template builds.
+type demoReleases struct{}
+
+func (demoReleases) LatestSlim(context.Context) (template.Release, error) {
+	return template.Release{Tag: "ubuntu-slim/20261005.17", Version: "20261005.17"}, nil
+}
+
+func (demoReleases) LatestRunner(context.Context) (template.RunnerRelease, error) {
+	return template.RunnerRelease{Version: "2.338.0", SHA256: strings.Repeat("ab", 32)}, nil
+}
+
+func (demoReleases) PublishedReport(context.Context, template.Release) ([]byte, error) {
+	return demoReport, nil
+}
+
+var demoReport = []byte(`{"NodeType":"HeaderNode","Title":"Ubuntu-Slim","Children":[
+ {"NodeType":"ToolVersionNode","ToolName":"OS Version:","Version":"24.04.3 LTS"},
+ {"NodeType":"HeaderNode","Title":"Installed Software","Children":[
+  {"NodeType":"HeaderNode","Title":"Language and Runtime","Children":[
+   {"NodeType":"ToolVersionNode","ToolName":"Node.js","Version":"24.13.0"},
+   {"NodeType":"ToolVersionNode","ToolName":"Python","Version":"3.12.3"}]},
+  {"NodeType":"HeaderNode","Title":"Tools","Children":[
+   {"NodeType":"ToolVersionNode","ToolName":"Git","Version":"2.51.0"},
+   {"NodeType":"ToolVersionNode","ToolName":"Docker Compose v2","Version":"2.39.4"}]}]}]}`)
+
+// demoBuiltReport is what a simulated template reports: Git moved on since GitHub's
+// build, and the ghrm layer adds the Docker Engine, as on a real build.
+var demoBuiltReport = []byte(`{"NodeType":"HeaderNode","Title":"Ubuntu-Slim","Children":[
+ {"NodeType":"ToolVersionNode","ToolName":"OS Version:","Version":"24.04.3 LTS"},
+ {"NodeType":"HeaderNode","Title":"Installed Software","Children":[
+  {"NodeType":"HeaderNode","Title":"Language and Runtime","Children":[
+   {"NodeType":"ToolVersionNode","ToolName":"Node.js","Version":"24.13.0"},
+   {"NodeType":"ToolVersionNode","ToolName":"Python","Version":"3.12.3"}]},
+  {"NodeType":"HeaderNode","Title":"Tools","Children":[
+   {"NodeType":"ToolVersionNode","ToolName":"Git","Version":"2.51.2"},
+   {"NodeType":"ToolVersionNode","ToolName":"Docker Compose v2","Version":"2.39.4"},
+   {"NodeType":"ToolVersionNode","ToolName":"Docker Server","Version":"28.5.1"}]}]}]}`)
+
+var buildScript = []struct{ step, line string }{
+	{"spec", "template %s: ubuntu-slim/20261005.17, runner 2.338.0, layer 1"},
+	{"clone", "Cloning into '/var/lib/ghrm-build/runner-images'..."},
+	{"slim", "#5 [base 2/9] RUN apt-get update && apt-get upgrade -y"},
+	{"", "#12 [base 9/9] RUN /tmp/scripts/build/install-docker-cli.sh"},
+	{"layer", "#7 [3/7] RUN apt-get install -y docker-ce containerd.io"},
+	{"", "actions-runner-linux-x64-2.338.0.tar.gz: OK"},
+	{"export", "exporting the root filesystem"},
+	{"upload", "archive: 1873225728 bytes"},
+}
+
+var selftestScript = []string{"==> docker hello-world", "Hello from Docker!", "==> buildx docker-container build", "==> compose with a bind mount",
+	"==> dns", "==> outbound https", "==> blocked 192.168.1.1:443", "==> runner binary", "2.338.0", "==> software report"}
+
+// advanceSpecial plays a build or self-test agent.
+func (d *Demo) advanceSpecial(ctx context.Context, e store.Environment, now time.Time, age time.Duration) {
+	if e.State == "booting" {
+		if age > 2*d.opts.Tick {
+			d.agentLine(ctx, e.ID, "ghrm-agent demo started in "+e.Kind+" mode")
+			d.Controller.AgentEvent(ctx, e.ID, ingest.EventHello, now, map[string]any{"ip": fmt.Sprintf("10.50.0.%d", 100+d.rng.Intn(100)), "mode": e.Kind})
+		}
+		return
+	}
+	if e.State != "connected" {
+		return
+	}
+	d.mu.Lock()
+	n := d.special[e.ID]
+	d.special[e.ID] = n + 1
+	d.mu.Unlock()
+	if e.Kind == store.KindBuild {
+		if n < len(buildScript) {
+			st := buildScript[n]
+			if st.step != "" {
+				d.Controller.AgentEvent(ctx, e.ID, ingest.EventBuildStep, now, map[string]any{"step": st.step})
+			}
+			line := st.line
+			if strings.Contains(line, "%s") {
+				spec, _ := d.Templates.BuildSpec(ctx, e.ID)
+				line = fmt.Sprintf(line, spec.TemplateID)
+			}
+			_ = d.Logs.Write(ctx, e.ID, "build", line, now)
+			return
+		}
+		if n == len(buildScript) {
+			archive := make([]byte, 64<<10)
+			d.rng.Read(archive)
+			sum := sha256.Sum256(archive)
+			_ = d.Logs.Write(ctx, e.ID, "build", "build finished", now)
+			d.Controller.AgentEvent(ctx, e.ID, ingest.EventBuildFinished, now, nil)
+			_ = d.Templates.ReceiveRootFS(ctx, e.ID, bytes.NewReader(archive), hex.EncodeToString(sum[:]))
+			_ = d.Runtime.Stop(ctx, runtime.Ref{ID: e.RuntimeRef})
+		}
+		return
+	}
+	if n < len(selftestScript) {
+		_ = d.Logs.Write(ctx, e.ID, "selftest", selftestScript[n], now)
+		return
+	}
+	if n == len(selftestScript) {
+		checks := []ingest.Check{}
+		for _, name := range []string{"docker hello-world", "buildx docker-container build", "compose with a bind mount", "dns", "outbound https",
+			"blocked 192.168.1.1:443", "blocked 192.168.1.10:8006", "runner binary", "software report"} {
+			checks = append(checks, ingest.Check{Name: name, OK: true, Seconds: 0.5 + d.rng.Float64()*3})
+		}
+		_ = d.Templates.ReceiveSelfTest(ctx, e.ID, ingest.SelfTestReport{Checks: checks, Software: demoBuiltReport})
+		d.Controller.AgentEvent(ctx, e.ID, ingest.EventSelfTestFinished, now, nil)
+		_ = d.Runtime.Stop(ctx, runtime.Ref{ID: e.RuntimeRef})
+	}
 }

@@ -19,6 +19,10 @@ type Bootstrap struct {
 	URL           string
 	Token         string
 	Fingerprint   string
+	// Mode is ingest.ModeBuild or ingest.ModeSelfTest; empty for a job.
+	Mode string
+	// Blocked lists host:port addresses the self-test must find unreachable.
+	Blocked []string
 }
 
 // ParseEnviron splits a NUL-separated environment block.
@@ -46,12 +50,53 @@ func LoadBootstrap(path string) (Bootstrap, bool, error) {
 		URL:           env[ingest.EnvURL],
 		Token:         env[ingest.EnvToken],
 		Fingerprint:   env[ingest.EnvFingerprint],
+		Mode:          env[ingest.EnvMode],
 	}
-	if b.JITConfig == "" {
+	for _, a := range strings.Split(env[ingest.EnvSelfTestBlocked], ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			b.Blocked = append(b.Blocked, a)
+		}
+	}
+	if b.JITConfig == "" && b.Mode == "" {
 		return b, false, nil
 	}
 	if b.URL == "" || b.Token == "" || b.Fingerprint == "" {
 		return b, false, fmt.Errorf("agent: incomplete bootstrap: ingest URL, token and fingerprint are required")
 	}
 	return b, true, nil
+}
+
+// MergeEnvironmentFile adds the variables of an /etc/environment style file to env.
+// The file wins over env, except LANG, which stays C.UTF-8 like the hosted images.
+func MergeEnvironmentFile(env []string, path string) []string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return env
+	}
+	vars := map[string]string{}
+	var order []string
+	set := func(k, v string) {
+		if _, ok := vars[k]; !ok {
+			order = append(order, k)
+		}
+		vars[k] = v
+	}
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			set(k, v)
+		}
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || line == "" || strings.HasPrefix(line, "#") || strings.ContainsAny(k, " \t") || k == "LANG" {
+			continue
+		}
+		set(k, strings.Trim(v, `"'`))
+	}
+	out := make([]string, 0, len(order))
+	for _, k := range order {
+		out = append(out, k+"="+vars[k])
+	}
+	return out
 }
