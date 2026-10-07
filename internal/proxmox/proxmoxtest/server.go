@@ -46,12 +46,15 @@ type Server struct {
 	auth     string
 	guests   map[int]*Guest
 	tasks    map[string]string // upid -> exit status
+	taskLogs map[string]string // upid -> extra log line
 	requests []string
 
 	// FailConfigPutOn makes PUT config fail when the form contains this key.
 	FailConfigPutOn string
 	FailStart       bool
 	FailDelete      bool
+	// DeleteWarning makes guest deletion succeed with "WARNINGS: 1" and this log line.
+	DeleteWarning string
 	// PoolScoped emulates a token whose permissions come only from a resource pool:
 	// only guests with a "pool" config entry are listed, and per-guest calls for
 	// guests that do not exist answer 403, as real Proxmox does.
@@ -261,7 +264,8 @@ func (s *Server) guestOr404(w http.ResponseWriter, r *http.Request) (*Guest, boo
 }
 
 func (s *Server) task(kind string, vmid int, exit string) string {
-	upid := fmt.Sprintf("UPID:%s:%08d:%s:%d:root@pam:", s.node, len(s.tasks)+1, kind, vmid)
+	// The real format: UPID:node:pid:pstart:starttime:type:id:user:
+	upid := fmt.Sprintf("UPID:%s:%08X:%08X:%08X:%s:%d:root@pam:", s.node, len(s.tasks)+1, 0, 0, kind, vmid)
 	s.tasks[upid] = exit
 	return upid
 }
@@ -445,6 +449,15 @@ func (s *Server) deleteLXC(w http.ResponseWriter, r *http.Request) {
 		}
 		s.purged[g.VMID] = true
 	}
+	if s.DeleteWarning != "" {
+		upid := s.task("vzdestroy", g.VMID, "WARNINGS: 1")
+		if s.taskLogs == nil {
+			s.taskLogs = map[string]string{}
+		}
+		s.taskLogs[upid] = s.DeleteWarning
+		data(w, upid)
+		return
+	}
 	data(w, s.task("vzdestroy", g.VMID, "OK"))
 }
 
@@ -471,8 +484,12 @@ func (s *Server) taskStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) taskLog(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	exit := s.tasks[r.PathValue("upid")]
-	data(w, []map[string]any{{"n": 1, "t": "starting task"}, {"n": 2, "t": exit}})
+	upid := r.PathValue("upid")
+	lines := []map[string]any{{"n": 1, "t": "starting task"}}
+	if l, ok := s.taskLogs[upid]; ok {
+		lines = append(lines, map[string]any{"n": len(lines) + 1, "t": l})
+	}
+	data(w, append(lines, map[string]any{"n": len(lines) + 1, "t": s.tasks[upid]}))
 }
 
 func (s *Server) nodeStatus(w http.ResponseWriter, _ *http.Request) {

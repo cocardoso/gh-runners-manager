@@ -40,6 +40,8 @@ type Client struct {
 
 	// PollInterval is the delay between task status polls.
 	PollInterval time.Duration
+	// OnTaskWarnings, when set, receives every task that succeeded with warnings.
+	OnTaskWarnings func(TaskWarnings)
 }
 
 // APIError is a non-2xx API response.

@@ -98,6 +98,14 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 
 	bus := events.NewBus()
 	rec := events.NewRecorder(db, bus, nil)
+	// A task that succeeds with warnings (e.g. a destroy whose disk was still in use)
+	// can leave residue on the host that later breaks new guests; surface it.
+	pc.OnTaskWarnings = func(w proxmox.TaskWarnings) {
+		logger.Warn("proxmox task finished with warnings", "upid", w.UPID, "type", w.Type, "vmid", w.VMID, "log", w.Log)
+		_, _ = rec.Warn(context.WithoutCancel(ctx), "proxmox.task_warnings",
+			fmt.Sprintf("Proxmox %s of %d finished with warnings; check the host for leftovers", w.Type, w.VMID),
+			events.Refs{}, map[string]any{"upid": w.UPID, "log": w.Log})
+	}
 	logStore := logs.New(filepath.Join(cfg.DataDir, "logs"), db)
 	gh := github.New(cfg, logger)
 	ctl := controller.New(controller.Deps{Store: db, Recorder: rec, Runtime: rt, GitHub: gh, Logs: logStore, Config: cfg,
