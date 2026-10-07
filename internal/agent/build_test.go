@@ -42,6 +42,12 @@ func (f *fakeCommander) Run(_ context.Context, _ string, name string, args []str
 	f.mu.Lock()
 	f.calls = append(f.calls, l)
 	f.mu.Unlock()
+	if f.check != nil {
+		if err := f.check(l); err != nil {
+			out(err.Error())
+			return err
+		}
+	}
 	for prefix, o := range f.outputs {
 		if strings.HasPrefix(l, prefix) {
 			out(o)
@@ -52,12 +58,6 @@ func (f *fakeCommander) Run(_ context.Context, _ string, name string, args []str
 			p, content, _ := strings.Cut(spec, "|")
 			_ = os.MkdirAll(filepath.Dir(p), 0o755)
 			_ = os.WriteFile(p, []byte(content), 0o644)
-		}
-	}
-	if f.check != nil {
-		if err := f.check(l); err != nil {
-			out(err.Error())
-			return err
 		}
 	}
 	if f.failOn != "" && strings.Contains(l, f.failOn) {
