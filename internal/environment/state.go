@@ -57,6 +57,7 @@ type Timeouts map[State]time.Duration
 // DefaultTimeouts returns the timeouts from spec §5.
 func DefaultTimeouts() Timeouts {
 	return Timeouts{
+		Pending:      2 * time.Minute,
 		Provisioning: 2 * time.Minute,
 		Booting:      2 * time.Minute,
 		Connected:    2 * time.Minute,

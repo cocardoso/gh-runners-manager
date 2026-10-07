@@ -17,3 +17,34 @@ proxmox:
   thin_pool: data                               # LV name; read when the token has Sys.Audit on "/"
   storage: local-lvm                            # storage ID; used for disk usage otherwise
   firewall_settle: 12s
+
+# --- ghrm serve ---
+data_dir: /var/lib/ghrm
+# REST API, SSE and the web UI. Bind to the LAN address only: 0.0.0.0 would also
+# expose it on the job network, where jobs run.
+listen: 192.0.2.10:8080
+admin_token_file: /etc/ghrm/admin-token   # enables mutating API calls (Bearer token)
+
+ingest:
+  listen: 10.50.0.2:8443             # control-plane address on the job network
+  advertise_url: https://10.50.0.2:8443
+
+github:
+  credentials:
+    - name: personal
+      token_file: /etc/ghrm/github-personal   # or GHRM_GITHUB_TOKEN_PERSONAL
+
+capacity:
+  max_environments: 4
+  memory_budget_mb: 16384
+  memory_margin_mb: 4096
+  max_disk_percent: 85
+
+scale_sets:
+  - name: homelab                    # also the runs-on label
+    url: https://github.com/octo/repo
+    credential: personal
+    max_concurrent: 2
+    cores: 2
+    memory_mb: 4096
+    keep_on_failure_minutes: 0

@@ -1,0 +1,14 @@
+[Unit]
+Description=gh-runners-manager agent (runs one GitHub Actions job, then powers off)
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+ConditionPathExists=/home/runner/actions-runner/run.sh
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ghrm-agent
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

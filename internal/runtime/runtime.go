@@ -18,8 +18,8 @@ var (
 
 // EnvironmentSpec describes one environment to create.
 type EnvironmentSpec struct {
-	ID       string            // ghrm environment ID: lowercase ULID
-	Hostname string            // DNS label
+	ID       string // ghrm environment ID: lowercase ULID
+	Hostname string // DNS label
 	Cores    int
 	MemoryMB int
 	Env      map[string]string // variables visible to the guest's init process

@@ -73,11 +73,11 @@ func TestTimeoutsExpired(t *testing.T) {
 	if !tt.Expired(Provisioning, since, since.Add(2*time.Minute+time.Nanosecond)) {
 		t.Error("past the timeout must be expired")
 	}
-	if tt.Expired(Pending, since, since.Add(1000*time.Hour)) {
+	if tt.Expired(Destroyed, since, since.Add(1000*time.Hour)) {
 		t.Error("states without a timeout never expire")
 	}
 	want := map[State]time.Duration{
-		Provisioning: 2 * time.Minute, Booting: 2 * time.Minute, Connected: 2 * time.Minute,
+		Pending: 2 * time.Minute, Provisioning: 2 * time.Minute, Booting: 2 * time.Minute, Connected: 2 * time.Minute,
 		Idle: 10 * time.Minute, Running: 6 * time.Hour, Completing: 5 * time.Minute,
 	}
 	for s, d := range want {

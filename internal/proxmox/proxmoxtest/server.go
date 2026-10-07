@@ -60,6 +60,9 @@ type Server struct {
 	RejectEnvOption bool
 	// TransientTaskErrors makes the next n task status polls answer 596, as during a pveproxy reload.
 	TransientTaskErrors int
+	// StaleListStatus makes the LXC list report every guest as stopped, like the
+	// pvestatd cache right after a start; status/current stays accurate.
+	StaleListStatus bool
 	// DenyLVMThin answers 403 on /disks/lvmthin, as for a token without Sys.Audit on "/".
 	DenyLVMThin bool
 	// StorageTotal and StorageUsed are reported by /nodes/{node}/storage/{storage}/status.
@@ -67,9 +70,9 @@ type Server struct {
 	StorageUsed  int64
 	// PowerOffOnNextStop simulates a guest that powers itself off just before a stop request.
 	PowerOffOnNextStop bool
-	MemoryTotal     int64
-	MemoryAvailable int64
-	ThinPools       []ThinPool
+	MemoryTotal        int64
+	MemoryAvailable    int64
+	ThinPools          []ThinPool
 }
 
 // NewServer starts a fake server that accepts the given API token. It is closed when the test ends.
@@ -218,7 +221,11 @@ func (s *Server) listLXC(w http.ResponseWriter, _ *http.Request) {
 		if g.Type != "lxc" || (s.PoolScoped && g.Config["pool"] == "") {
 			continue
 		}
-		e := map[string]any{"vmid": g.VMID, "name": g.Name, "status": g.Status, "tags": g.Tags}
+		status := g.Status
+		if s.StaleListStatus {
+			status = "stopped"
+		}
+		e := map[string]any{"vmid": g.VMID, "name": g.Name, "status": status, "tags": g.Tags}
 		if g.Template {
 			e["template"] = 1
 		}
