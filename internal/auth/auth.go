@@ -48,6 +48,8 @@ type Session struct {
 	UserID    string
 	CSRF      string
 	ExpiresAt time.Time
+	// Refreshed means this use extended the session, so its cookie should be renewed.
+	Refreshed bool
 }
 
 // Service implements setup, sign-in and sessions.
@@ -129,7 +131,7 @@ func (s *Service) Setup(ctx context.Context, setupToken, username, password stri
 	}
 	now := s.now()
 	u := store.User{ID: ids.NewEnvironmentID(), Username: username, PasswordHash: hash, CreatedAt: now, PasswordChangedAt: now}
-	if err := s.Store.CreateUser(ctx, u); err != nil {
+	if err := s.Store.CreateFirstUser(ctx, u); err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return User{}, ErrSetupDone
 		}
@@ -158,9 +160,10 @@ func hashCookie(cookie string) string {
 // cookie value (only its hash is stored).
 func (s *Service) Login(ctx context.Context, username, password, remoteAddr, userAgent string) (Session, string, error) {
 	now := s.now()
-	if s.throttle.locked(remoteAddr, now) {
+	if !s.throttle.begin(remoteAddr, now) {
 		return Session{}, "", ErrThrottled
 	}
+	defer s.throttle.end(remoteAddr)
 	u, err := s.Store.GetUserByName(ctx, username)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -229,12 +232,16 @@ func (s *Service) Authenticate(ctx context.Context, cookie string) (Session, Use
 	if err != nil {
 		return Session{}, User{}, err
 	}
+	refreshed := false
 	if now.Sub(x.LastSeenAt) >= time.Minute {
 		x.ExpiresAt = now.Add(s.ttl())
-		_ = s.Store.TouchSession(ctx, x.IDHash, now, x.ExpiresAt)
+		refreshed = s.Store.TouchSession(ctx, x.IDHash, now, x.ExpiresAt) == nil
 	}
-	return Session{ID: x.IDHash, UserID: x.UserID, CSRF: x.CSRF, ExpiresAt: x.ExpiresAt}, User{ID: u.ID, Username: u.Username}, nil
+	return Session{ID: x.IDHash, UserID: x.UserID, CSRF: x.CSRF, ExpiresAt: x.ExpiresAt, Refreshed: refreshed}, User{ID: u.ID, Username: u.Username}, nil
 }
+
+// TimeLeft is how long a session lasts from now (for the cookie's Max-Age).
+func (s *Service) TimeLeft(sess Session) time.Duration { return sess.ExpiresAt.Sub(s.now()) }
 
 // Logout ends the session of a cookie.
 func (s *Service) Logout(ctx context.Context, cookie string) error {

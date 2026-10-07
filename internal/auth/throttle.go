@@ -20,16 +20,45 @@ type throttle struct {
 }
 
 type attempts struct {
+	pending     int // attempts being checked: they count toward the limit
 	failures    []time.Time
 	lockedUntil time.Time
 	lockout     time.Duration
 }
 
-func (t *throttle) locked(addr string, now time.Time) bool {
+// begin reserves an attempt; it fails while the address is locked out or as many
+// attempts as the limit allows are failed or still being checked.
+func (t *throttle) begin(addr string, now time.Time) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.addrs == nil {
+		t.addrs = map[string]*attempts{}
+	}
 	a := t.addrs[addr]
-	return a != nil && now.Before(a.lockedUntil)
+	if a == nil {
+		a = &attempts{}
+		t.addrs[addr] = a
+	}
+	recent := 0
+	for _, f := range a.failures {
+		if now.Sub(f) < failureSpan {
+			recent++
+		}
+	}
+	if now.Before(a.lockedUntil) || recent+a.pending >= maxFailures {
+		return false
+	}
+	a.pending++
+	return true
+}
+
+// end releases an attempt begun with begin.
+func (t *throttle) end(addr string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if a := t.addrs[addr]; a != nil && a.pending > 0 {
+		a.pending--
+	}
 }
 
 func (t *throttle) fail(addr string, now time.Time) {
@@ -61,7 +90,7 @@ func (t *throttle) fail(addr string, now time.Time) {
 	}
 	// Forget addresses that have been quiet for a while, so the map stays small.
 	for k, v := range t.addrs {
-		if len(v.failures) == 0 && now.Sub(v.lockedUntil) > maxLockout {
+		if len(v.failures) == 0 && v.pending == 0 && now.Sub(v.lockedUntil) > maxLockout {
 			delete(t.addrs, k)
 		}
 	}
@@ -70,5 +99,7 @@ func (t *throttle) fail(addr string, now time.Time) {
 func (t *throttle) succeed(addr string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.addrs, addr)
+	if a := t.addrs[addr]; a != nil {
+		a.failures, a.lockout, a.lockedUntil = nil, 0, time.Time{}
+	}
 }

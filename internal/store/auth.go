@@ -53,6 +53,21 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	return u, err
 }
 
+// CreateFirstUser adds an account only when none exists (first-run setup); otherwise
+// it is ErrConflict, even when two setups race.
+func (s *Store) CreateFirstUser(ctx context.Context, u User) error {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO users (id, username, password_hash, created_at, password_changed_at)
+		SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM users)`,
+		u.ID, u.Username, u.PasswordHash, ms(u.CreatedAt), ms(u.PasswordChangedAt))
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return fmt.Errorf("%w: an account exists", ErrConflict)
+	}
+	return nil
+}
+
 // GetUser returns an account by ID or ErrNotFound.
 func (s *Store) GetUser(ctx context.Context, id string) (User, error) {
 	return scanUser(s.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id))

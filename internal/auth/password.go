@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -32,13 +33,35 @@ const (
 
 var b64 = base64.RawStdEncoding
 
+// maxConcurrentHashes bounds the argon2id computations running at once: each takes
+// MemoryKiB of memory, so a burst of sign-ins could otherwise exhaust it.
+const maxConcurrentHashes = 2
+
+var (
+	hashSlots             = make(chan struct{}, maxConcurrentHashes)
+	hashesNow, hashesPeak atomic.Int32
+)
+
+func idKey(password string, salt []byte, p Params, n uint32) []byte {
+	hashSlots <- struct{}{}
+	defer func() { <-hashSlots }()
+	if now := hashesNow.Add(1); now > hashesPeak.Load() {
+		hashesPeak.Store(now)
+	}
+	defer hashesNow.Add(-1)
+	return argon2.IDKey([]byte(password), salt, p.Time, p.MemoryKiB, p.Threads, n)
+}
+
+// hashPeak reports the most argon2id computations seen at once (tests).
+func hashPeak() int { return int(hashesPeak.Load()) }
+
 // HashPassword returns the PHC string of an argon2id hash with a random salt.
 func HashPassword(password string, p Params) (string, error) {
 	salt := make([]byte, saltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key := argon2.IDKey([]byte(password), salt, p.Time, p.MemoryKiB, p.Threads, keyLen)
+	key := idKey(password, salt, p, keyLen)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, p.MemoryKiB, p.Time, p.Threads,
 		b64.EncodeToString(salt), b64.EncodeToString(key)), nil
 }
@@ -65,6 +88,6 @@ func VerifyPassword(encoded, password string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	got := argon2.IDKey([]byte(password), salt, p.Time, p.MemoryKiB, p.Threads, uint32(len(want)))
+	got := idKey(password, salt, p, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }

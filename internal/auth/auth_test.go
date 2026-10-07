@@ -3,9 +3,11 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -204,5 +206,65 @@ func TestChangePasswordEndsOtherSessions(t *testing.T) {
 	}
 	if _, _, err := h.s.Login(ctx, "admin", "a new long password", "c", ""); err != nil {
 		t.Fatalf("new password: %v", err)
+	}
+}
+
+// Each sign-in hashes with 64 MiB: concurrent attempts must not all hash at once (a
+// burst would exhaust memory), and attempts in flight count toward the lockout.
+func TestConcurrentSignInsAreBounded(t *testing.T) {
+	h := newHarness(t)
+	h.setup(t)
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	results := map[error]int{}
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, err := h.s.Login(ctx, "admin", "wrong password!", "10.0.0.66", "")
+			mu.Lock()
+			results[err]++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if results[ErrBadCredentials] > maxFailures || results[ErrThrottled] < 20-maxFailures {
+		t.Fatalf("results = %v; want at most %d checked, the rest throttled", results, maxFailures)
+	}
+	if peak := hashPeak(); peak > maxConcurrentHashes {
+		t.Fatalf("peak concurrent hashes = %d, want at most %d", peak, maxConcurrentHashes)
+	}
+}
+
+func TestConcurrentSetupsCreateOneAccount(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = h.s.Setup(ctx, "setup-123", fmt.Sprintf("admin%d", i), "correct horse battery")
+		}()
+	}
+	wg.Wait()
+	if n, _ := h.db.CountUsers(ctx); n != 1 {
+		t.Fatalf("users = %d, want exactly one admin", n)
+	}
+}
+
+func TestSlidingSessionsReportTheirNewExpiry(t *testing.T) {
+	h := newHarness(t)
+	h.setup(t)
+	ctx := context.Background()
+	_, cookie, _ := h.s.Login(ctx, "admin", "correct horse battery", "a", "")
+	if s, _, _ := h.s.Authenticate(ctx, cookie); s.Refreshed {
+		t.Fatal("a session used right away is not extended")
+	}
+	h.now = h.now.Add(2 * time.Minute)
+	s, _, err := h.s.Authenticate(ctx, cookie)
+	if err != nil || !s.Refreshed || !s.ExpiresAt.Equal(h.now.Add(DefaultSessionTTL)) {
+		t.Fatalf("session = %+v, %v; want it extended and flagged, so the cookie is renewed", s, err)
 	}
 }

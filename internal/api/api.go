@@ -55,16 +55,8 @@ type Deps struct {
 	Metrics http.Handler
 	// TestCredential checks a GitHub token and returns its login.
 	TestCredential func(ctx context.Context, token string) (string, error)
-	// Now is the clock (tests); time.Now when nil.
-	Now func() time.Time
 }
 
-func (d Deps) now() time.Time {
-	if d.Now != nil {
-		return d.Now()
-	}
-	return time.Now()
-}
 
 // Environment is the API view of an environment.
 type Environment struct {

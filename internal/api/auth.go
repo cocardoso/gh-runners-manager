@@ -101,6 +101,10 @@ func authenticate(d Deps, next http.Handler) http.Handler {
 		if info.cookie != "" && d.Auth != nil {
 			if sess, user, err := d.Auth.Authenticate(ctx, info.cookie); err == nil {
 				ctx = context.WithValue(context.WithValue(ctx, actorKey, user.Username), sessionKey, sess)
+				if sess.Refreshed { // the expiry slid: the browser's cookie follows
+					c := sessionCookie(ctx, info.cookie, int(d.Auth.TimeLeft(sess).Seconds()))
+					http.SetCookie(w, &c)
+				}
 				if !public(r) && !safeMethod(r.Method) &&
 					subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(sess.CSRF)) != 1 {
 					problem(w, http.StatusForbidden, "missing or wrong X-CSRF-Token header")
@@ -224,7 +228,7 @@ func registerAuth(a huma.API, d Deps) {
 			}
 			audit(context.WithValue(ctx, actorKey, in.Body.Username), d, "login", in.Body.Username+" signed in from "+req.remoteAddr, events.Refs{},
 				map[string]any{"remote_addr": req.remoteAddr})
-			return &cookieOut{SetCookie: sessionCookie(ctx, cookie, int(sess.ExpiresAt.Sub(d.now()).Seconds())),
+			return &cookieOut{SetCookie: sessionCookie(ctx, cookie, int(d.Auth.TimeLeft(sess).Seconds())),
 				Body: SessionState{State: "signed_in", Username: in.Body.Username, CSRF: sess.CSRF}}, nil
 		})
 

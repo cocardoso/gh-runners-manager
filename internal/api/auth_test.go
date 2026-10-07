@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
@@ -194,5 +195,24 @@ func TestMetricsEndpointIsPublic(t *testing.T) {
 	resp, b := h.call(t, "GET", "/metrics", nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(b), "ghrm_build_info") {
 		t.Fatalf("metrics = %d %s", resp.StatusCode, b)
+	}
+}
+
+// The server slides a session's expiry on use; the cookie must follow, or an active
+// user is signed out a week after signing in.
+func TestSlidingSessionRenewsTheCookie(t *testing.T) {
+	h := newHarness(t, "")
+	now := time.Now()
+	h.auth.Now = func() time.Time { return now }
+	s := h.signIn(t)
+	resp, _ := h.call(t, "GET", "/api/v1/environments", nil, map[string]string{"Cookie": s.cookie})
+	if len(resp.Cookies()) != 0 {
+		t.Fatal("a session used right away needs no new cookie")
+	}
+	now = now.Add(2 * time.Minute)
+	resp, _ = h.call(t, "GET", "/api/v1/environments", nil, map[string]string{"Cookie": s.cookie})
+	cs := resp.Cookies()
+	if len(cs) != 1 || cs[0].Name != SessionCookie || cs[0].MaxAge < int((7*24*time.Hour-time.Minute).Seconds()) || !cs[0].HttpOnly {
+		t.Fatalf("cookies = %+v; want the session cookie renewed for the full lifetime", cs)
 	}
 }
