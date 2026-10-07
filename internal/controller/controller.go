@@ -39,6 +39,21 @@ type Deps struct {
 	IngestFingerprint string
 	Now               func() time.Time
 	Timeouts          environment.Timeouts
+	// Templates chooses the template job environments clone (nil: the configured bootstrap template).
+	Templates TemplateSource
+	// TemplateEvents receives agent events of build and verify environments.
+	TemplateEvents TemplateEvents
+}
+
+// TemplateSource reports the active template: the runtime reference environments clone
+// ("" for the configured one) and its VMID (recorded for retention).
+type TemplateSource interface {
+	Active(ctx context.Context) (ref string, vmid int)
+}
+
+// TemplateEvents receives agent events of build and verify environments.
+type TemplateEvents interface {
+	AgentEvent(ctx context.Context, envID, name string, at time.Time, data map[string]any)
 }
 
 // ScaleSetStatus is the controller's live view of one scale set.

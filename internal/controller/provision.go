@@ -143,7 +143,8 @@ func (c *Controller) startProvisioning(ctx context.Context, scaleSet string) err
 	if err != nil {
 		return err
 	}
-	e := store.Environment{ID: id, ScaleSet: scaleSet, State: string(environment.Pending),
+	tplRef, tplVMID := c.activeTemplate(ctx)
+	e := store.Environment{ID: id, ScaleSet: scaleSet, State: string(environment.Pending), Kind: store.KindJob, TemplateVMID: tplVMID,
 		RunnerName: "ghrm-" + id[len(id)-12:], TokenHash: ingest.HashToken(token), MemoryMB: cfg.MemoryMB}
 	if err := c.d.Store.CreateEnvironment(ctx, e); err != nil {
 		return err
@@ -157,12 +158,19 @@ func (c *Controller) startProvisioning(ctx context.Context, scaleSet string) err
 		defer c.inflight.Done()
 		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), provisionTimeout)
 		defer cancel()
-		c.provision(pctx, e, token, ghID)
+		c.provision(pctx, e, token, ghID, tplRef)
 	}()
 	return nil
 }
 
-func (c *Controller) provision(ctx context.Context, e store.Environment, token string, scaleSetID int) {
+func (c *Controller) activeTemplate(ctx context.Context) (string, int) {
+	if c.d.Templates == nil {
+		return "", c.d.Config.Proxmox.TemplateVMID
+	}
+	return c.d.Templates.Active(ctx)
+}
+
+func (c *Controller) provision(ctx context.Context, e store.Environment, token string, scaleSetID int, template string) {
 	cfg := c.scaleSetConfig(e.ScaleSet)
 	if _, err := c.transition(ctx, e.ID, []string{"pending"}, environment.Provisioning, nil); err != nil {
 		return
@@ -186,7 +194,7 @@ func (c *Controller) provision(ctx context.Context, e store.Environment, token s
 		}
 		return
 	}
-	spec := runtime.EnvironmentSpec{ID: e.ID, Hostname: e.RunnerName, Cores: cfg.Cores, MemoryMB: cfg.MemoryMB,
+	spec := runtime.EnvironmentSpec{ID: e.ID, Hostname: e.RunnerName, Cores: cfg.Cores, MemoryMB: cfg.MemoryMB, Template: template,
 		Env: map[string]string{
 			ingest.EnvJITConfig:   jit,
 			ingest.EnvEnvironment: e.ID,
@@ -194,7 +202,13 @@ func (c *Controller) provision(ctx context.Context, e store.Environment, token s
 			ingest.EnvToken:       token,
 			ingest.EnvFingerprint: c.d.IngestFingerprint,
 		}}
-	c.log(ctx, e.ID, "runtime", "creating environment (%d cores, %d MB)", cfg.Cores, cfg.MemoryMB)
+	c.createAndStart(ctx, e.ID, spec)
+}
+
+// createAndStart creates the runtime environment and starts it (provisioning → booting).
+func (c *Controller) createAndStart(ctx context.Context, id string, spec runtime.EnvironmentSpec) {
+	e := store.Environment{ID: id}
+	c.log(ctx, e.ID, "runtime", "creating environment (%d cores, %d MB)", spec.Cores, spec.MemoryMB)
 	start := c.now()
 	ref, err := c.d.Runtime.Create(ctx, spec)
 	if err != nil {
@@ -360,4 +374,55 @@ func (c *Controller) RequestDestroy(ctx context.Context, id string) error {
 	}
 	c.destroy(context.WithoutCancel(ctx), id)
 	return nil
+}
+
+// SpecialSpec describes a build or verify environment (spec §8.3, §8.4).
+type SpecialSpec struct {
+	Kind         string // store.KindBuild or store.KindVerify
+	Template     string // runtime template reference to clone
+	TemplateVMID int
+	Cores        int
+	MemoryMB     int
+	DiskGB       int
+	Env          map[string]string // mode variables; the ingest variables are added here
+}
+
+// StartSpecial provisions a build or verify environment and starts it. It has no scale set
+// and no runner; its agent runs in the mode given by Env and reports to the ingest.
+func (c *Controller) StartSpecial(ctx context.Context, s SpecialSpec) (string, error) {
+	id := ids.NewEnvironmentID()
+	token, err := ingest.NewToken()
+	if err != nil {
+		return "", err
+	}
+	e := store.Environment{ID: id, State: string(environment.Pending), Kind: s.Kind, TemplateVMID: s.TemplateVMID,
+		RunnerName: "ghrm-" + s.Kind + "-" + id[len(id)-8:], TokenHash: ingest.HashToken(token), MemoryMB: s.MemoryMB}
+	if err := c.d.Store.CreateEnvironment(ctx, e); err != nil {
+		return "", err
+	}
+	_, _ = c.d.Recorder.Info(ctx, "environment.created", "environment created for a template "+s.Kind,
+		events.Refs{EnvironmentID: id}, map[string]any{"kind": s.Kind})
+	c.log(ctx, id, "control-plane", "created for a template %s", s.Kind)
+	if _, err := c.transition(ctx, id, []string{"pending"}, environment.Provisioning, nil); err != nil {
+		return id, err
+	}
+	env := map[string]string{
+		ingest.EnvEnvironment: id,
+		ingest.EnvURL:         c.d.IngestURL,
+		ingest.EnvToken:       token,
+		ingest.EnvFingerprint: c.d.IngestFingerprint,
+	}
+	for k, v := range s.Env {
+		env[k] = v
+	}
+	c.createAndStart(ctx, id, runtime.EnvironmentSpec{ID: id, Hostname: e.RunnerName, Cores: s.Cores, MemoryMB: s.MemoryMB,
+		Template: s.Template, DiskGB: s.DiskGB, Env: env})
+	got, err := c.d.Store.GetEnvironment(ctx, id)
+	if err != nil {
+		return id, err
+	}
+	if got.State == string(environment.Failed) {
+		return id, fmt.Errorf("%s environment failed at %s: %s", s.Kind, got.FailureStage, got.FailureReason)
+	}
+	return id, nil
 }

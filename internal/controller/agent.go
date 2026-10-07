@@ -16,6 +16,24 @@ func (c *Controller) AgentEvent(ctx context.Context, envID, name string, at time
 		return
 	}
 	level := "info"
+	if e.Kind != "" && e.Kind != store.KindJob {
+		if name == ingest.EventHello {
+			c.advance(ctx, envID, environment.Connected, func(x *store.Environment) {
+				if ip, ok := data["ip"].(string); ok {
+					x.IP = ip
+				}
+			})
+		}
+		if c.d.TemplateEvents != nil {
+			c.d.TemplateEvents.AgentEvent(ctx, envID, name, at, data)
+		}
+		if name == ingest.EventBuildFailed {
+			level = "error"
+		}
+		_, _ = c.d.Recorder.Record(ctx, store.Event{Kind: "agent." + name, Level: level, Time: at,
+			Message: "agent: " + name, EnvironmentID: envID, Data: data})
+		return
+	}
 	switch name {
 	case ingest.EventHello:
 		c.advance(ctx, envID, environment.Connected, func(x *store.Environment) {

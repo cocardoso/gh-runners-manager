@@ -48,6 +48,8 @@ func (c *Controller) Reap(ctx context.Context) {
 		case exists && !g.Running && poweredOffSilently(st) && now.Sub(e.StateChangedAt) > silentPowerOffGrace && !c.liveRunning(ctx, g.Ref):
 			c.log(ctx, e.ID, "control-plane", "guest is no longer running; the agent did not report an exit")
 			c.advance(ctx, e.ID, environment.Completing, nil)
+		case e.Kind != "" && e.Kind != store.KindJob:
+			// Build and verify environments follow the template service's timeouts.
 		case st == environment.Idle && c.d.Timeouts.Expired(st, e.StateChangedAt, now):
 			// No job came: a normal scale-down, not a failure.
 			_, _ = c.d.Recorder.Info(ctx, "environment.idle_timeout", "no job arrived; releasing the environment",
