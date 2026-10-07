@@ -44,3 +44,30 @@ func TestJobDetails(t *testing.T) {
 		t.Fatalf("missing = %+v, %v", j, err)
 	}
 }
+
+func TestJobDetailsEmptyStepsAndRateLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/o/limited/actions/runs/7/jobs":
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"API rate limit exceeded"}`))
+		case "/repos/o/denied/actions/runs/7/jobs":
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	rest := &REST{BaseURL: srv.URL, HTTP: srv.Client()}
+	for _, repo := range []string{"o/denied", "o/gone"} {
+		j, err := rest.JobDetails(context.Background(), "tok", repo, 7, "x")
+		if err != nil || j.Steps == nil {
+			t.Fatalf("%s: steps = nil (%+v, %v); want an empty list so the API answers []", repo, j, err)
+		}
+	}
+	j, err := rest.JobDetails(context.Background(), "tok", "o/limited", 7, "x")
+	if err != nil || j.Available || !strings.Contains(j.Reason, "rate limit") || strings.Contains(j.Reason, "Actions: read") {
+		t.Fatalf("rate limited = %+v, %v; want a rate-limit reason, not a permission hint", j, err)
+	}
+}

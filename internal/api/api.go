@@ -312,12 +312,18 @@ func New(d Deps) http.Handler {
 			Body struct {
 				Entries []logs.Entry `json:"entries"`
 				Next    int64        `json:"next"`
+				// FirstLine is the line number of the first entry of a tail page read from the end (0 otherwise).
+				FirstLine int64 `json:"first_line,omitempty"`
 			}
 		}, error) {
 			var entries []logs.Entry
-			var next int64
+			var next, firstLine int64
 			var err error
-			if in.Tail {
+			if in.Tail && in.Before < 0 {
+				var t logs.Tail
+				t, err = d.Logs.ReadTail(ctx, in.ID, in.Stream, limit(in.Limit, 2000, 10000))
+				entries, next, firstLine = t.Entries, t.Next, t.FirstLine
+			} else if in.Tail {
 				entries, next, err = d.Logs.ReadBefore(ctx, in.ID, in.Stream, in.Before, limit(in.Limit, 2000, 10000))
 			} else {
 				entries, next, err = d.Logs.Read(ctx, in.ID, in.Stream, in.Offset, limit(in.Limit, 2000, 10000))
@@ -327,11 +333,12 @@ func New(d Deps) http.Handler {
 			}
 			out := &struct {
 				Body struct {
-					Entries []logs.Entry `json:"entries"`
-					Next    int64        `json:"next"`
+					Entries   []logs.Entry `json:"entries"`
+					Next      int64        `json:"next"`
+					FirstLine int64        `json:"first_line,omitempty"`
 				}
 			}{}
-			out.Body.Entries, out.Body.Next = entries, next
+			out.Body.Entries, out.Body.Next, out.Body.FirstLine = entries, next, firstLine
 			if out.Body.Entries == nil {
 				out.Body.Entries = []logs.Entry{}
 			}

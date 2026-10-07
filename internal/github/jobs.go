@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -63,9 +64,12 @@ func (r *REST) JobDetails(ctx context.Context, token, repo string, runID int64, 
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusForbidden, http.StatusUnauthorized:
-		return JobDetails{Reason: "the GitHub credential cannot read workflow runs; grant it the Actions: read permission"}, nil
+		if resp.Header.Get("X-RateLimit-Remaining") == "0" || bytes.Contains(bytes.ToLower(body), []byte("rate limit")) {
+			return JobDetails{Reason: "the GitHub API rate limit is exhausted; try again later", Steps: []Step{}}, nil
+		}
+		return JobDetails{Reason: "the GitHub credential cannot read workflow runs; grant it the Actions: read permission", Steps: []Step{}}, nil
 	case http.StatusNotFound:
-		return JobDetails{Reason: "the workflow run was not found (or the credential cannot see it)"}, nil
+		return JobDetails{Reason: "the workflow run was not found (or the credential cannot see it)", Steps: []Step{}}, nil
 	default:
 		return JobDetails{}, fmt.Errorf("github: list jobs of run %d: %s", runID, resp.Status)
 	}

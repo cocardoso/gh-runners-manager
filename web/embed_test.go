@@ -40,3 +40,12 @@ func TestHandlerExplainsWhenTheUIIsNotBuilt(t *testing.T) {
 		t.Fatalf("not built: %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+func TestMissingAssetIsNotFound(t *testing.T) {
+	h := newHandler(fstest.MapFS{"index.html": {Data: []byte("<html>app</html>")}})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/index-old.js", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing asset = %d, want 404 so a stale tab does not get HTML as JavaScript", rec.Code)
+	}
+}

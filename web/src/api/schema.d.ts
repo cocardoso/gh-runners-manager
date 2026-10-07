@@ -485,6 +485,8 @@ export interface components {
             readonly $schema?: string;
             entries: components["schemas"]["Entry"][] | null;
             /** Format: int64 */
+            first_line?: number;
+            /** Format: int64 */
             next: number;
         };
         ScaleSet: {

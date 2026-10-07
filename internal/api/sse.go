@@ -45,19 +45,22 @@ func writeEvent(w http.ResponseWriter, id string, v any) error {
 	return err
 }
 
-// events streams the global event timeline. It resumes after Last-Event-ID (or ?after=;
-// after=latest starts with the next event) and resyncs from the store whenever the
-// in-process subscription lagged.
+// events streams the global event timeline. It first sends a hello with the latest sequence,
+// then resumes after Last-Event-ID (or ?after=; after=latest starts with the next event) and
+// resyncs from the store whenever the in-process subscription lagged.
 func (s *sse) events(w http.ResponseWriter, r *http.Request) {
-	after, _ := strconv.ParseInt(r.Header.Get("Last-Event-ID"), 10, 64)
 	sub := s.d.Recorder.Bus().Subscribe(512) // subscribe before the backlog so nothing is missed
 	defer sub.Close()
-	if v := r.URL.Query().Get("after"); v == "latest" {
-		latest, err := s.d.Store.LatestEventSeq(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	latest, err := s.d.Store.LatestEventSeq(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Last-Event-ID (a native reconnect) wins over the query, which a reconnect repeats.
+	var after int64
+	if v := r.Header.Get("Last-Event-ID"); v != "" {
+		after, _ = strconv.ParseInt(v, 10, 64)
+	} else if v := r.URL.Query().Get("after"); v == "latest" {
 		after = latest
 	} else if v != "" {
 		after, _ = strconv.ParseInt(v, 10, 64)
@@ -66,6 +69,11 @@ func (s *sse) events(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// hello tells the client the newest sequence, so it can notice a store that went back in time.
+	if _, err := fmt.Fprintf(w, "event: hello\ndata: {\"latest\":%d}\n\n", latest); err != nil {
+		return
+	}
+	f.Flush()
 	ctx := r.Context()
 	last := after
 	backlog := func() bool {

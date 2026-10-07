@@ -130,7 +130,13 @@ func TestListAndGetEndpoints(t *testing.T) {
 
 type sseEvent struct{ id, event, data string }
 
+// readSSE reads n messages, skipping the hello every event stream starts with.
 func readSSE(t *testing.T, r *bufio.Reader, n int) []sseEvent {
+	t.Helper()
+	return readSSEMessages(t, r, n, true)
+}
+
+func readSSEMessages(t *testing.T, r *bufio.Reader, n int, skipHello bool) []sseEvent {
 	t.Helper()
 	var out []sseEvent
 	cur := sseEvent{}
@@ -151,7 +157,9 @@ func readSSE(t *testing.T, r *bufio.Reader, n int) []sseEvent {
 			case strings.HasPrefix(line, "data: "):
 				cur.data = strings.TrimPrefix(line, "data: ")
 			case line == "" && cur.data != "":
-				out = append(out, cur)
+				if !skipHello || cur.event != "hello" {
+					out = append(out, cur)
+				}
 				cur = sseEvent{}
 			}
 		}
@@ -449,5 +457,64 @@ func TestLogTailPage(t *testing.T) {
 	h.getJSON(t, fmt.Sprintf("/api/v1/environments/env1/logs/job?tail=true&before=%d&limit=10", page.Entries[0].Offset), &page)
 	if len(page.Entries) != 1 || page.Entries[0].Text != "a" {
 		t.Fatalf("before b = %+v", page)
+	}
+}
+
+func TestEventStreamSaysHelloWithTheLatestSeq(t *testing.T) {
+	h := newHarness(t, "")
+	ctx := context.Background()
+	for _, m := range []string{"one", "two"} {
+		_, _ = h.rec.Info(ctx, "k", m, events.Refs{}, nil)
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(cctx, http.MethodGet, h.srv.URL+"/api/v1/events/stream?after=latest", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	got := readSSEMessages(t, bufio.NewReader(resp.Body), 1, false)
+	if got[0].event != "hello" || !strings.Contains(got[0].data, `"latest":2`) {
+		t.Fatalf("first message = %+v, want a hello with the latest seq", got)
+	}
+}
+
+func TestEventStreamPrefersLastEventIDOverAfter(t *testing.T) {
+	h := newHarness(t, "")
+	ctx := context.Background()
+	for _, m := range []string{"one", "two", "three"} {
+		_, _ = h.rec.Info(ctx, "k", m, events.Refs{}, nil)
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// A native EventSource reconnect keeps the original URL and adds Last-Event-ID.
+	req, _ := http.NewRequestWithContext(cctx, http.MethodGet, h.srv.URL+"/api/v1/events/stream?after=latest", nil)
+	req.Header.Set("Last-Event-ID", "1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	got := readSSE(t, bufio.NewReader(resp.Body), 2)
+	if got[0].id != "2" || got[1].id != "3" {
+		t.Fatalf("resume = %+v, want events 2 and 3", got)
+	}
+}
+
+func TestLogTailReportsTheFirstLineNumber(t *testing.T) {
+	h := newHarness(t, "")
+	ctx := context.Background()
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "env1", ScaleSet: "lab", State: "running"})
+	for _, m := range []string{"a", "b", "c"} {
+		_ = h.logs.Write(ctx, "env1", "job", m, time.Now())
+	}
+	var page struct {
+		Entries   []logs.Entry
+		FirstLine int64 `json:"first_line"`
+	}
+	h.getJSON(t, "/api/v1/environments/env1/logs/job?tail=true&limit=2", &page)
+	if page.FirstLine != 2 {
+		t.Fatalf("first_line = %d, want 2", page.FirstLine)
 	}
 }

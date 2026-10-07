@@ -176,3 +176,34 @@ func TestReadBeforeReturnsTheLinesEndingBeforeAnOffset(t *testing.T) {
 		t.Fatalf("missing stream = %+v %d %v", none, n, err)
 	}
 }
+
+func TestReadBeforeEndOffsetsAndFirstLine(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Append(ctx, "env1", "job", lines(1, 5))
+	all, end, _ := s.Read(ctx, "env1", "job", 0, 10)
+	// A before inside a line returns the lines that end before it, and where they end.
+	mid := all[3].Offset + 3
+	got, next, err := s.ReadBefore(ctx, "env1", "job", mid, 10)
+	if err != nil || len(got) != 3 || next != all[3].Offset {
+		t.Fatalf("mid-line: %d entries, next %d, want 3 and %d", len(got), next, all[3].Offset)
+	}
+	// From the end, the first entry's absolute line number is known.
+	tail, err := s.ReadTail(ctx, "env1", "job", 2)
+	if err != nil || len(tail.Entries) != 2 || tail.FirstLine != 4 || tail.Next != end {
+		t.Fatalf("tail = %+v, %v; want lines 4-5 and next %d", tail, err, end)
+	}
+}
+
+func TestReadBeforeMissingFileReportsMetadataEnd(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Append(ctx, "env1", "job", lines(1, 2))
+	_, end, _ := s.Read(ctx, "env1", "job", 0, 10)
+	if err := os.RemoveAll(filepath.Dir(s.path("env1", "job"))); err != nil {
+		t.Fatal(err)
+	}
+	if got, next, err := s.ReadBefore(ctx, "env1", "job", -1, 10); err != nil || len(got) != 0 || next != end {
+		t.Fatalf("missing file: %d entries, next %d (%v); want 0 and %d", len(got), next, err, end)
+	}
+}

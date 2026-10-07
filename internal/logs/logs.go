@@ -239,21 +239,59 @@ func (s *Store) ReadBefore(ctx context.Context, envID, stream string, before int
 	if err := validate(envID, stream); err != nil {
 		return nil, 0, err
 	}
-	end := int64(0)
-	if meta, err := s.db.GetLogStream(ctx, envID, stream); err == nil {
-		end = meta.Bytes
-	} else if !errors.Is(err, store.ErrNotFound) {
+	meta, err := s.meta(ctx, envID, stream)
+	if err != nil {
 		return nil, 0, err
 	}
+	end := meta.Bytes
 	if before >= 0 && before < end {
 		end = before
 	}
-	if end == 0 || max <= 0 {
-		return nil, end, nil
+	return s.readBefore(envID, stream, end, max)
+}
+
+// Tail is the last page of a stream.
+type Tail struct {
+	Entries []Entry
+	// Next is the offset where the stream ended when it was read.
+	Next int64
+	// FirstLine is the 1-based line number of the first entry (0 when there is none).
+	FirstLine int64
+}
+
+// ReadTail returns the last max entries of a stream with the line number of the first one.
+func (s *Store) ReadTail(ctx context.Context, envID, stream string, max int) (Tail, error) {
+	if err := validate(envID, stream); err != nil {
+		return Tail{}, err
+	}
+	meta, err := s.meta(ctx, envID, stream)
+	if err != nil {
+		return Tail{}, err
+	}
+	entries, next, err := s.readBefore(envID, stream, meta.Bytes, max)
+	t := Tail{Entries: entries, Next: next}
+	if len(entries) > 0 && next == meta.Bytes {
+		t.FirstLine = meta.Lines - int64(len(entries)) + 1
+	}
+	return t, err
+}
+
+func (s *Store) meta(ctx context.Context, envID, stream string) (store.LogStream, error) {
+	meta, err := s.db.GetLogStream(ctx, envID, stream)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.LogStream{}, nil
+	}
+	return meta, err
+}
+
+// readBefore reads backwards from end (clamped to a line boundary at or before it).
+func (s *Store) readBefore(envID, stream string, end int64, max int) ([]Entry, int64, error) {
+	if end <= 0 || max <= 0 {
+		return nil, max64(end, 0), nil
 	}
 	f, err := os.Open(s.path(envID, stream))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, 0, nil
+		return nil, end, nil
 	}
 	if err != nil {
 		return nil, end, err
@@ -278,10 +316,11 @@ func (s *Store) ReadBefore(ctx context.Context, envID, stream string, before int
 		buf, start = buf[i+1:], pos+int64(i+1)
 	}
 	var out []Entry
-	for off := start; len(buf) > 0; {
+	off := start
+	for len(buf) > 0 {
 		i := bytes.IndexByte(buf, '\n')
 		if i < 0 {
-			break
+			break // end fell inside a line: it is not returned
 		}
 		ts, text, _ := strings.Cut(string(buf[:i]), "\t")
 		e := Entry{Offset: off, Text: text}
@@ -293,7 +332,14 @@ func (s *Store) ReadBefore(ctx context.Context, envID, stream string, before int
 	if len(out) > max {
 		out = out[len(out)-max:]
 	}
-	return out, end, nil
+	return out, off, nil
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // Follow emits entries from offset, then new entries as they are appended, until ctx ends.

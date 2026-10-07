@@ -54,6 +54,11 @@ func newHandler(fsys fs.FS) http.Handler {
 				return
 			}
 		}
+		// A missing hashed asset (a stale tab after a deploy) is a 404, not the HTML shell.
+		if strings.HasPrefix(p, "assets/") {
+			http.NotFound(w, r)
+			return
+		}
 		// Client-side routes get the app shell.
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
