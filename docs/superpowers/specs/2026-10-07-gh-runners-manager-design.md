@@ -456,11 +456,12 @@ gh-runners-manager/
 | # | Item | Mitigation / next step |
 |---|---|---|
 | 1 | The `actions/scaleset` client is in public preview, and its API may change. | Pin versions and wrap the client behind an internal interface. Confirm repository-level scale sets for personal accounts early. |
-| 2 | The LXC `env` option may need privileges beyond the scoped role. | Validate with the scoped token in the first milestone. Fallback: the agent pulls its bootstrap from the ingest using a one-time ID set as the hostname. |
+| 2 | ~~The LXC `env` option may need privileges beyond the scoped role.~~ | **Resolved in M1:** `ghrm smoke` with the scoped `GhrmRuntime` role on Proxmox VE 9.2 sets `env` successfully. Minimum version: Proxmox VE 9.1. |
 | 3 | No API confirms when `pve-firewall` has applied rules for a new guest. | Investigate a reliable signal. Until then, use a fixed delay longer than one compile cycle. |
 | 4 | Converting the `ubuntu-slim` image into an LXC root filesystem: the image has no init, and Proxmox's `ostype=ubuntu` network setup must work with it. | The ghrm layer installs systemd. Validate in the template milestone, including the software-report comparison. |
 | 5 | Every job starts with a cold Docker cache, which makes buildx-heavy jobs slower than on hosted runners. | Future: a pull-through registry mirror on the job network, and BuildKit cache exports (`type=gha` already works). |
 | 6 | Docker Engine inside an unprivileged LXC with `nesting=1` is a supported but less common setup. | Covered by the canary suite and by template verification on every build. |
+| 8 | The scoped role cannot read thin pool metadata usage (`/disks/lvmthin` needs `Sys.Audit` on `/`). | Found in M1. Disk usage falls back to the storage status (data only); operators can grant `Sys.Audit` on `/` to also check metadata. |
 | 7 | Some workflows may rely on tools that hosted `ubuntu-24.04` has and `ubuntu-slim` lacks. | Documented as a known difference. The fidelity report makes the tool set visible. A "full" profile can be added later if needed. |
 
 ## 15. Future work (out of scope)
