@@ -54,6 +54,12 @@ type Server struct {
 	PoolScoped bool
 	// HoldTasks keeps every task "running" until it is set back to false.
 	HoldTasks bool
+	// NumbersAsStrings makes the LXC list encode vmid and template as JSON strings.
+	NumbersAsStrings bool
+	// RejectEnvOption emulates a Proxmox VE version without the LXC "env" option.
+	RejectEnvOption bool
+	// TransientTaskErrors makes the next n task status polls answer 596, as during a pveproxy reload.
+	TransientTaskErrors int
 	// PowerOffOnNextStop simulates a guest that powers itself off just before a stop request.
 	PowerOffOnNextStop bool
 	MemoryTotal     int64
@@ -156,6 +162,13 @@ func fail(w http.ResponseWriter, code int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "message": msg})
 }
 
+// failParams answers like Proxmox's parameter validation: the reason is in the body only.
+func failParams(w http.ResponseWriter, errs map[string]string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "errors": errs, "message": "Parameter verification failed."})
+}
+
 func (s *Server) guestOr404(w http.ResponseWriter, r *http.Request) (*Guest, bool) {
 	vmid, _ := strconv.Atoi(r.PathValue("vmid"))
 	g, ok := s.guests[vmid]
@@ -179,7 +192,7 @@ func (s *Server) nextID(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	vmid, _ := strconv.Atoi(r.URL.Query().Get("vmid"))
 	if _, taken := s.guests[vmid]; taken {
-		fail(w, http.StatusBadRequest, fmt.Sprintf("VM %d already exists", vmid))
+		failParams(w, map[string]string{"vmid": fmt.Sprintf("VM %d already exists", vmid)})
 		return
 	}
 	data(w, strconv.Itoa(vmid))
@@ -202,6 +215,12 @@ func (s *Server) listLXC(w http.ResponseWriter, _ *http.Request) {
 		e := map[string]any{"vmid": g.VMID, "name": g.Name, "status": g.Status, "tags": g.Tags}
 		if g.Template {
 			e["template"] = 1
+		}
+		if s.NumbersAsStrings {
+			e["vmid"] = strconv.Itoa(g.VMID)
+			if g.Template {
+				e["template"] = "1"
+			}
 		}
 		out = append(out, e)
 	}
@@ -248,6 +267,10 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = r.ParseForm()
+	if s.RejectEnvOption && r.PostForm.Has("env") {
+		failParams(w, map[string]string{"env": "property is not defined in schema and the schema does not allow additional properties"})
+		return
+	}
 	if s.FailConfigPutOn != "" && r.PostForm.Has(s.FailConfigPutOn) {
 		fail(w, http.StatusInternalServerError, "config update failed")
 		return
@@ -339,6 +362,11 @@ func (s *Server) taskStatus(w http.ResponseWriter, r *http.Request) {
 	exit, ok := s.tasks[r.PathValue("upid")]
 	if !ok {
 		fail(w, http.StatusInternalServerError, "no such task")
+		return
+	}
+	if s.TransientTaskErrors > 0 {
+		s.TransientTaskErrors--
+		fail(w, 596, "Connection timed out")
 		return
 	}
 	if s.HoldTasks {

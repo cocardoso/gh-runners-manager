@@ -2,6 +2,8 @@ package proxmox
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,6 +17,43 @@ type LXC struct {
 	Status   string `json:"status"`
 	Tags     string `json:"tags"`
 	Template int    `json:"template"`
+}
+
+// UnmarshalJSON accepts vmid and template as numbers or numeric strings;
+// Proxmox VE versions differ in how they encode them for containers.
+func (l *LXC) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		VMID     json.RawMessage `json:"vmid"`
+		Name     string          `json:"name"`
+		Status   string          `json:"status"`
+		Tags     string          `json:"tags"`
+		Template json.RawMessage `json:"template"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	vmid, err := flexInt(raw.VMID)
+	if err != nil {
+		return fmt.Errorf("vmid: %w", err)
+	}
+	template, err := flexInt(raw.Template)
+	if err != nil {
+		return fmt.Errorf("template: %w", err)
+	}
+	*l = LXC{VMID: vmid, Name: raw.Name, Status: raw.Status, Tags: raw.Tags, Template: template}
+	return nil
+}
+
+func flexInt(b json.RawMessage) (int, error) {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		return 0, nil
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer %s", b)
+	}
+	return v, nil
 }
 
 // TagList splits the Proxmox tag string.

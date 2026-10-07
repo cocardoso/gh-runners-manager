@@ -285,8 +285,8 @@ func TestCreateLeavesTaggedGuestWhenCleanupFails(t *testing.T) {
 	h.srv.FailConfigPutOn = "memory"
 	h.srv.FailDelete = true
 	_, err := h.rt.Create(context.Background(), spec("aaa"))
-	if err == nil || !strings.Contains(err.Error(), "cleanup") {
-		t.Fatalf("err = %v, want it to report the cleanup failure", err)
+	if err == nil || !strings.Contains(err.Error(), "cleanup") || !strings.Contains(err.Error(), "900") {
+		t.Fatalf("err = %v, want it to report the cleanup failure and the VMID", err)
 	}
 	list, err := h.rt.List(context.Background())
 	if err != nil || len(list) != 1 || list[0].EnvironmentID != "aaa" {
@@ -363,4 +363,35 @@ func TestConcurrentCreatesSettleInParallel(t *testing.T) {
 	}
 	close(release)
 	wg.Wait()
+}
+
+func TestCreateExplainsMissingEnvSupport(t *testing.T) {
+	h := newHarness(t, 900, 909)
+	h.srv.RejectEnvOption = true
+	_, err := h.rt.Create(context.Background(), spec("aaa"))
+	if err == nil || !strings.Contains(err.Error(), "Proxmox VE 9.1") {
+		t.Fatalf("err = %v, want a hint about the minimum Proxmox VE version", err)
+	}
+	if _, exists := h.srv.Guest(900); exists {
+		t.Fatal("clone leaked")
+	}
+}
+
+func TestAllocationSkipsKnownGuestsWithoutProbing(t *testing.T) {
+	h := newHarness(t, 900, 909)
+	h.srv.AddGuest(proxmoxtest.Guest{VMID: 900, Type: "lxc", Tags: "ghrm-env;ghrmid-old1"})
+	h.srv.AddGuest(proxmoxtest.Guest{VMID: 901, Type: "lxc", Tags: "ghrm-env;ghrmid-old2"})
+	ref, err := h.rt.Create(context.Background(), spec("aaa"))
+	if err != nil || ref.ID != "902/aaa" {
+		t.Fatalf("Create = %v, %v", ref, err)
+	}
+	probes := 0
+	for _, r := range h.srv.Requests() {
+		if strings.HasSuffix(r, "/cluster/nextid") {
+			probes++
+		}
+	}
+	if probes != 1 {
+		t.Fatalf("nextid probes = %d, want 1 (900 and 901 are already known from the LXC list)", probes)
+	}
 }

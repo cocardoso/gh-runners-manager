@@ -33,7 +33,7 @@ func smoke(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	p := cfg.Proxmox
-	client, err := proxmox.New(proxmox.Config{URL: p.URL, TokenID: p.TokenID, TokenSecret: p.TokenSecret, InsecureSkipVerify: p.InsecureSkipVerify})
+	client, err := proxmox.New(proxmox.Config{URL: p.URL, TokenID: p.TokenID, TokenSecret: p.TokenSecret, InsecureSkipVerify: p.InsecureSkipVerify, TLSFingerprint: p.TLSFingerprint})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

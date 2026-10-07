@@ -3,8 +3,12 @@
 package proxmox
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,7 +27,8 @@ type Config struct {
 	URL                string // e.g. https://pve.example.test:8006
 	TokenID            string // user@realm!tokenname
 	TokenSecret        string
-	InsecureSkipVerify bool         // accept self-signed certificates (opt-in)
+	InsecureSkipVerify bool         // accept any certificate (opt-in; prefer TLSFingerprint)
+	TLSFingerprint     string       // SHA-256 of the server certificate, hex with optional colons
 	HTTPClient         *http.Client // optional; when set, InsecureSkipVerify is ignored
 }
 
@@ -50,10 +55,26 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("proxmox %s %s: %s %s", e.Method, e.Path, e.Status, strings.TrimSpace(e.Body))
 }
 
-// Is lets errors.Is(err, ErrNotFound) match missing objects.
+// Is lets errors.Is(err, ErrNotFound) match missing guests: a 404, or Proxmox's
+// "Configuration file '...' does not exist". Other "does not exist" reasons (a
+// storage, a bridge) are configuration errors, not a missing guest.
 func (e *APIError) Is(target error) bool {
-	return target == ErrNotFound &&
-		(e.StatusCode == http.StatusNotFound || strings.Contains(e.Status+" "+e.Body, "does not exist"))
+	if target != ErrNotFound {
+		return false
+	}
+	msg := e.Status + " " + e.Body
+	return e.StatusCode == http.StatusNotFound ||
+		(strings.Contains(msg, "Configuration file") && strings.Contains(msg, "does not exist"))
+}
+
+// ParseFingerprint decodes a SHA-256 certificate fingerprint written as hex,
+// with or without colons (as Proxmox shows it).
+func ParseFingerprint(s string) ([]byte, error) {
+	raw, err := hex.DecodeString(strings.ReplaceAll(strings.TrimSpace(s), ":", ""))
+	if err != nil || len(raw) != sha256.Size {
+		return nil, fmt.Errorf("proxmox: invalid SHA-256 fingerprint %q", s)
+	}
+	return raw, nil
 }
 
 // New returns a Client for cfg.
@@ -64,8 +85,27 @@ func New(cfg Config) (*Client, error) {
 	}
 	hc := cfg.HTTPClient
 	if hc == nil {
+		tlsCfg := &tls.Config{InsecureSkipVerify: cfg.InsecureSkipVerify} //nolint:gosec // opt-in for self-signed homelab certificates
+		if cfg.TLSFingerprint != "" {
+			want, err := ParseFingerprint(cfg.TLSFingerprint)
+			if err != nil {
+				return nil, err
+			}
+			// The chain is not verified; the leaf certificate must match the pinned fingerprint instead.
+			tlsCfg.InsecureSkipVerify = true //nolint:gosec // replaced by VerifyPeerCertificate below
+			tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+				if len(rawCerts) == 0 {
+					return errors.New("proxmox: server sent no certificate")
+				}
+				got := sha256.Sum256(rawCerts[0])
+				if !bytes.Equal(got[:], want) {
+					return fmt.Errorf("proxmox: certificate fingerprint mismatch: got %X", got)
+				}
+				return nil
+			}
+		}
 		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: cfg.InsecureSkipVerify} //nolint:gosec // opt-in for self-signed homelab certificates
+		tr.TLSClientConfig = tlsCfg
 		hc = &http.Client{Transport: tr, Timeout: 60 * time.Second}
 	}
 	return &Client{

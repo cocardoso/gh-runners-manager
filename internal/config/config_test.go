@@ -33,6 +33,7 @@ const validYAML = `proxmox:
   token_id: ghrm@pve!ghrm
   token_secret_file: %s
   template_vmid: 9000
+  pool: ghrm
 `
 
 func TestLoadAppliesDefaults(t *testing.T) {
@@ -97,6 +98,8 @@ func TestLoadErrors(t *testing.T) {
 		{"token id without bang", strings.Replace(validYAML, "ghrm@pve!ghrm", "ghrm@pve", 1), "token_id"},
 		{"bad duration", validYAML + "  firewall_settle: soon\n", "invalid duration"},
 		{"missing node", strings.Replace(validYAML, "  node: pve\n", "", 1), "proxmox.node"},
+		{"missing pool", strings.Replace(validYAML, "  pool: ghrm\n", "", 1), "proxmox.pool"},
+		{"bad fingerprint", validYAML + "  tls_fingerprint: nope\n", "tls_fingerprint"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,5 +128,16 @@ func TestLoadRejectsEmptySecretFile(t *testing.T) {
 	_, err := Load(writeFile(t, dir, "ghrm.yaml", fmt.Sprintf(validYAML, secret)))
 	if err == nil || !strings.Contains(err.Error(), "is empty") {
 		t.Fatalf("err = %v, want empty secret error", err)
+	}
+}
+
+func TestLoadAcceptsFingerprint(t *testing.T) {
+	fp := strings.Repeat("ab:", 31) + "ab"
+	cfg, err := load(t, validYAML+"  tls_fingerprint: "+fp+"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Proxmox.TLSFingerprint != fp {
+		t.Fatalf("TLSFingerprint = %q", cfg.Proxmox.TLSFingerprint)
 	}
 }

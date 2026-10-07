@@ -160,13 +160,15 @@ func (r *Runtime) Create(ctx context.Context, spec runtime.EnvironmentSpec) (run
 	if err != nil {
 		return runtime.Ref{}, err
 	}
+	known := make(map[int]bool, len(guests))
 	for _, g := range guests {
 		if g.HasTag(idTag(spec.ID)) {
 			return refFor(g.VMID, spec.ID), nil
 		}
+		known[g.VMID] = true
 	}
 
-	vmid, err := r.cloneNew(ctx, spec)
+	vmid, err := r.cloneNew(ctx, spec, known)
 	if err != nil {
 		return runtime.Ref{}, err
 	}
@@ -180,6 +182,9 @@ func (r *Runtime) Create(ctx context.Context, spec runtime.EnvironmentSpec) (run
 		values.Set("env", encodeEnv(spec.Env))
 	}
 	if err := r.client.SetLXCConfig(ctx, r.cfg.Node, vmid, values); err != nil {
+		if strings.Contains(err.Error(), `"env"`) && strings.Contains(err.Error(), "not defined in schema") {
+			err = fmt.Errorf("the LXC env option needs Proxmox VE 9.1 or later: %w", err)
+		}
 		return runtime.Ref{}, r.abandon(ctx, vmid, fmt.Errorf("configure %d: %w", vmid, err))
 	}
 	// The firewall rules of a new guest are applied on pve-firewall's next cycle (spec §10.3).
@@ -192,9 +197,9 @@ func (r *Runtime) Create(ctx context.Context, spec runtime.EnvironmentSpec) (run
 // cloneNew allocates a VMID, clones the template into it and tags the clone at once,
 // so that a half-created guest is always visible to List. The allocation lock is
 // released as soon as the clone exists: from then on its VMID is taken.
-func (r *Runtime) cloneNew(ctx context.Context, spec runtime.EnvironmentSpec) (int, error) {
+func (r *Runtime) cloneNew(ctx context.Context, spec runtime.EnvironmentSpec, known map[int]bool) (int, error) {
 	r.allocMu.Lock()
-	vmid, err := r.allocateVMID(ctx)
+	vmid, err := r.allocateVMID(ctx, known)
 	if err != nil {
 		r.allocMu.Unlock()
 		return 0, err
@@ -222,8 +227,14 @@ func (r *Runtime) cloneNew(ctx context.Context, spec runtime.EnvironmentSpec) (i
 	return vmid, nil
 }
 
-func (r *Runtime) allocateVMID(ctx context.Context) (int, error) {
+// allocateVMID returns the lowest free VMID in range. VMIDs already seen in the
+// LXC list are skipped without asking; the rest are checked against the whole
+// cluster, including guests the token cannot see.
+func (r *Runtime) allocateVMID(ctx context.Context, known map[int]bool) (int, error) {
 	for vmid := r.cfg.VMIDStart; vmid <= r.cfg.VMIDEnd; vmid++ {
+		if known[vmid] {
+			continue
+		}
 		free, err := r.client.VMIDAvailable(ctx, vmid)
 		if err != nil {
 			return 0, fmt.Errorf("check VMID %d: %w", vmid, err)

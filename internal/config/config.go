@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ type Proxmox struct {
 	TokenID            string    `yaml:"token_id"`
 	TokenSecretFile    string    `yaml:"token_secret_file"`
 	InsecureSkipVerify bool      `yaml:"insecure_skip_verify"`
+	TLSFingerprint     string    `yaml:"tls_fingerprint"`
 	TemplateVMID       int       `yaml:"template_vmid"`
 	Pool               string    `yaml:"pool"`
 	VMIDRange          VMIDRange `yaml:"vmid_range"`
@@ -119,6 +121,8 @@ func (c *Config) resolveSecrets() error {
 	return nil
 }
 
+var fingerprintPattern = regexp.MustCompile(`^[0-9A-Fa-f]{2}(:?[0-9A-Fa-f]{2}){31}$`)
+
 // Validate checks the configuration after defaults have been applied.
 func (c *Config) Validate() error {
 	var errs []error
@@ -131,6 +135,12 @@ func (c *Config) Validate() error {
 	}
 	if !strings.Contains(p.TokenID, "!") {
 		errs = append(errs, fmt.Errorf("proxmox.token_id must look like user@realm!token, got %q", p.TokenID))
+	}
+	if p.Pool == "" {
+		errs = append(errs, errors.New("proxmox.pool is required: the scoped API token only has permissions inside this resource pool"))
+	}
+	if p.TLSFingerprint != "" && !fingerprintPattern.MatchString(p.TLSFingerprint) {
+		errs = append(errs, fmt.Errorf("proxmox.tls_fingerprint must be a SHA-256 fingerprint (64 hex digits, colons optional), got %q", p.TLSFingerprint))
 	}
 	if p.TemplateVMID <= 0 {
 		errs = append(errs, errors.New("proxmox.template_vmid is required"))

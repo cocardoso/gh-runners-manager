@@ -2,7 +2,9 @@ package proxmox_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -156,5 +158,72 @@ func TestNodeStatusAndThinPools(t *testing.T) {
 func TestNewRejectsBadURL(t *testing.T) {
 	if _, err := proxmox.New(proxmox.Config{URL: "::not a url"}); err == nil {
 		t.Fatal("want error for invalid URL")
+	}
+}
+
+func TestListLXCAcceptsNumbersAsStrings(t *testing.T) {
+	srv, c := setup(t)
+	srv.NumbersAsStrings = true
+	list, err := c.ListLXC(context.Background(), node)
+	if err != nil || len(list) != 1 || list[0].VMID != 9000 || list[0].Template != 1 {
+		t.Fatalf("list = %+v, %v; want vmid 9000 template 1 decoded from strings", list, err)
+	}
+}
+
+func TestNotFoundMatchesOnlyMissingGuests(t *testing.T) {
+	missing := &proxmox.APIError{StatusCode: 500, Status: "500 Configuration file 'nodes/pve/lxc/900.conf' does not exist"}
+	if !errors.Is(missing, proxmox.ErrNotFound) {
+		t.Error("a missing guest config must match ErrNotFound")
+	}
+	if !errors.Is(&proxmox.APIError{StatusCode: 404, Status: "404 Not Found"}, proxmox.ErrNotFound) {
+		t.Error("404 must match ErrNotFound")
+	}
+	for _, msg := range []string{"500 storage 'fast' does not exist", "500 bridge 'vmbr9' does not exist"} {
+		if errors.Is(&proxmox.APIError{StatusCode: 500, Status: msg}, proxmox.ErrNotFound) {
+			t.Errorf("%q must not match ErrNotFound", msg)
+		}
+	}
+}
+
+func TestWaitTaskRetriesTransientErrors(t *testing.T) {
+	srv, c := setup(t)
+	srv.AddGuest(proxmoxtest.Guest{VMID: 903, Type: "lxc"})
+	srv.TransientTaskErrors = 2
+	if err := c.StartLXC(context.Background(), node, 903); err != nil {
+		t.Fatalf("StartLXC with 2 transient poll errors = %v, want nil", err)
+	}
+	srv.TransientTaskErrors = 100
+	if err := c.StopLXC(context.Background(), node, 903); err == nil {
+		t.Fatal("StopLXC with persistent poll errors must fail")
+	}
+}
+
+func fingerprint(srv *proxmoxtest.Server) string {
+	sum := sha256.Sum256(srv.Certificate().Raw)
+	parts := make([]string, len(sum))
+	for i, b := range sum {
+		parts[i] = fmt.Sprintf("%02X", b)
+	}
+	return strings.Join(parts, ":")
+}
+
+func TestTLSFingerprintPinning(t *testing.T) {
+	srv, _ := setup(t)
+	pinned, err := proxmox.New(proxmox.Config{URL: srv.URL, TokenID: tokenID, TokenSecret: secret, TLSFingerprint: fingerprint(srv)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pinned.ListLXC(context.Background(), node); err != nil {
+		t.Fatalf("pinned client = %v, want success", err)
+	}
+	wrong, err := proxmox.New(proxmox.Config{URL: srv.URL, TokenID: tokenID, TokenSecret: secret, TLSFingerprint: strings.Repeat("AB:", 31) + "AB"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wrong.ListLXC(context.Background(), node); err == nil || !strings.Contains(err.Error(), "fingerprint") {
+		t.Fatalf("wrong fingerprint = %v, want a fingerprint mismatch error", err)
+	}
+	if _, err := proxmox.New(proxmox.Config{URL: srv.URL, TLSFingerprint: "not-hex"}); err == nil {
+		t.Fatal("want error for a malformed fingerprint")
 	}
 }
