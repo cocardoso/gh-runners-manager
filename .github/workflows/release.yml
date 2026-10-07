@@ -1,0 +1,52 @@
+name: release
+
+# A tag vX.Y.Z publishes the binaries the installer downloads, the installer itself,
+# and the container image.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: |
+          (cd web && pnpm install --frozen-lockfile && pnpm build)
+          ldflags="-s -w -X github.com/cocardoso/gh-runners-manager/internal/version.Version=${GITHUB_REF_NAME} -X github.com/cocardoso/gh-runners-manager/internal/version.Commit=${GITHUB_SHA::7}"
+          mkdir -p out
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o out/ghrm-linux-amd64 ./cmd/ghrm
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o out/ghrm-agent-linux-amd64 ./cmd/ghrm-agent
+          cp deploy/proxmox/install.sh out/
+          (cd out && sha256sum ghrm-linux-amd64 ghrm-agent-linux-amd64 install.sh > SHA256SUMS)
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" out/* --title "$GITHUB_REF_NAME" --generate-notes
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish the image
+        run: |
+          image=ghcr.io/${GITHUB_REPOSITORY,,}
+          docker build --build-arg VERSION="$GITHUB_REF_NAME" --build-arg COMMIT="${GITHUB_SHA::7}" -t "$image:$GITHUB_REF_NAME" -t "$image:latest" .
+          docker push "$image:$GITHUB_REF_NAME"
+          docker push "$image:latest"
