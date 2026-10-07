@@ -222,7 +222,7 @@ A short Dockerfile that starts `FROM` the slim image adds only what an LXC job e
 
 ### 8.3 Build pipeline
 
-1. **Builder environment.** A temporary LXC on the job network, cloned from the **active template** (it already has Docker, systemd and `ghrm-agent`; the Proxmox API cannot run commands inside a fresh stock container). The very first template is a bootstrap template made by the installer. A builder whose agent differs from the control plane's first replaces it with the control plane's (checksum verified) and restarts, so changes to the build itself apply at once. *(Revised in M4.)*
+1. **Builder environment.** A temporary LXC on the job network, cloned from the **active template** (it already has Docker, systemd and `ghrm-agent`; the Proxmox API cannot run commands inside a fresh stock container). The very first template is a bootstrap template (`deploy/proxmox/dev-template.sh`, later the installer). A builder whose agent differs from the control plane's first replaces it with the control plane's (checksum verified) and restarts, so changes to the build itself apply at once. *(Revised in M4.)*
 2. `git clone actions/runner-images` at the pinned tag, then `docker build` the official `ubuntu-slim` Dockerfile, then `docker build` the ghrm layer.
 3. `docker export` produces a root filesystem tarball (`.tar.zst`).
 4. The builder uploads the tarball to the control plane over the ingest channel. The control plane uploads it to Proxmox template storage through the API.
