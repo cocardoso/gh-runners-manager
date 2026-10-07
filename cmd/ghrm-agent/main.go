@@ -177,7 +177,8 @@ func runTemplateMode(ctx context.Context, client *agent.Client, boot agent.Boots
 	switch boot.Mode {
 	case ingest.ModeBuild:
 		work := "/var/lib/ghrm-build"
-		if err := os.MkdirAll(work, 0o755); err == nil {
+		err := os.MkdirAll(work, 0o755)
+		if err == nil {
 			err = agent.RunBuild(ctx, client, cmd, work)
 		}
 		if err != nil {
