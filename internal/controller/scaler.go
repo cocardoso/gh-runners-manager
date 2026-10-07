@@ -54,7 +54,7 @@ func (s *scaler) job(base scaleset.JobMessageBase, runner string) store.Job {
 		repo = base.OwnerName + "/" + base.RepositoryName
 	}
 	// GitHub leaves queueTime empty in practice; the scale set assignment time is the
-	// moment the job reached this scale set. A known queue time is never overwritten.
+	// moment the job reached this scale set. The store keeps the first queue time recorded.
 	queued := base.QueueTime
 	if queued.IsZero() {
 		queued = base.ScaleSetAssignTime

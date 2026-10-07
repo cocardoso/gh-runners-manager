@@ -178,3 +178,24 @@ func TestVersionDriftIsExplainedButRuntimeMajorsAndDowngradesAreNot(t *testing.T
 		t.Fatalf("unexpected = %d, want 2 (the Node.js major change and the older AWS CLI)", rep.Unexpected)
 	}
 }
+
+func TestExplainEdgeCases(t *testing.T) {
+	for _, tc := range []struct {
+		name, item, expected, actual string
+		want                         bool
+	}{
+		{"a runtime version that disappeared from a list", "Installed Software / Language and Runtime / Python", "3.10.12, 3.12.3", "3.12.3", false},
+		{"every runtime in a list moved within its minor", "Installed Software / Language and Runtime / Python", "3.10.12, 3.12.3", "3.10.14, 3.12.8", true},
+		{"a list that gained a version", "Installed Software / Cached Tools / Go", "1.22.9", "1.22.9, 1.23.4", true},
+		{"an empty image version", "Image Version", "20261005.17.1", "", false},
+		{"an image version that is a shorter build", "Image Version", "20261005.17", "20261005.1", false},
+		{"the image version's build suffix", "Image Version", "20261005.17.1", "20261005.17", true},
+		{"a pre-release", "Installed Software / Tools / Bicep", "2.0.0", "2.0.0-rc1", false},
+		{"nothing to compare with", "Installed Software / Tools / Bicep", "", "2.0.0", false},
+		{"letters only differ (safe: not explained)", "Installed Software / Tools / OpenSSL", "1.1.1f", "1.1.1g", false},
+	} {
+		if got, _ := explain("version", tc.item, tc.expected, tc.actual); got != tc.want {
+			t.Errorf("%s: explained = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

@@ -4,6 +4,7 @@ package template
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -75,7 +76,7 @@ func (g *githubReleases) get(ctx context.Context, url string, out any) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("template: GET %s: %s", url, resp.Status)
+		return &httpStatusError{url: url, code: resp.StatusCode, status: resp.Status}
 	}
 	if b, ok := out.(*[]byte); ok {
 		*b = body
@@ -146,9 +147,18 @@ func (g *githubReleases) LatestRunner(ctx context.Context) (RunnerRelease, error
 // refreshed for every release, so it is only a fallback.
 func (g *githubReleases) PublishedReport(ctx context.Context, slim Release) ([]byte, error) {
 	var b []byte
-	if err := g.get(ctx, g.web+"/actions/runner-images/releases/download/"+slim.Tag+"/internal.ubuntu-slim.json", &b); err == nil {
-		return b, nil
+	err := g.get(ctx, g.web+"/actions/runner-images/releases/download/"+slim.Tag+"/internal.ubuntu-slim.json", &b)
+	var se *httpStatusError
+	if err == nil || !errors.As(err, &se) || se.code != http.StatusNotFound {
+		return b, err // an outage must not silently compare with the stale file
 	}
-	err := g.get(ctx, g.raw+"/actions/runner-images/"+slim.Tag+"/images/ubuntu-slim/ubuntu-slim-Report.json", &b)
+	err = g.get(ctx, g.raw+"/actions/runner-images/"+slim.Tag+"/images/ubuntu-slim/ubuntu-slim-Report.json", &b)
 	return b, err
 }
+
+type httpStatusError struct {
+	url, status string
+	code        int
+}
+
+func (e *httpStatusError) Error() string { return fmt.Sprintf("template: GET %s: %s", e.url, e.status) }

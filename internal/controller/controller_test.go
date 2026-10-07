@@ -582,3 +582,22 @@ func TestStartedJobWithoutAnEarlierMessageGetsTheAssignmentTime(t *testing.T) {
 		t.Fatalf("queued at %v, want the assignment time %v", j.QueuedAt, assigned)
 	}
 }
+
+// A queue time already recorded (from an available or assigned message) is kept: the
+// assignment time on later messages is only a stand-in for a missing one.
+func TestLaterMessagesDoNotMoveTheQueueTime(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	sc := h.c.Scaler("lab").(interface {
+		HandleJobAvailable(context.Context, *scaleset.JobAvailable) error
+	})
+	queued := time.Date(2026, 10, 7, 21, 0, 0, 0, time.UTC)
+	assigned := queued.Add(30 * time.Second)
+	_ = sc.HandleJobAvailable(ctx, &scaleset.JobAvailable{JobMessageBase: scaleset.JobMessageBase{JobID: "j8", QueueTime: queued}})
+	later := scaleset.JobMessageBase{JobID: "j8", ScaleSetAssignTime: assigned, RunnerAssignTime: assigned.Add(time.Minute)}
+	_ = h.c.Scaler("lab").HandleJobStarted(ctx, &scaleset.JobStarted{RunnerName: "x", JobMessageBase: later})
+	_ = h.c.Scaler("lab").HandleJobCompleted(ctx, &scaleset.JobCompleted{Result: "succeeded", RunnerName: "x", JobMessageBase: later})
+	if j, _ := h.db.GetJob(ctx, "j8"); !j.QueuedAt.Equal(queued) {
+		t.Fatalf("queued at %v, want the recorded %v", j.QueuedAt, queued)
+	}
+}

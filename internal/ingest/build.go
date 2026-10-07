@@ -145,8 +145,26 @@ func (s *server) buildAgent(w http.ResponseWriter, r *http.Request) {
 		buildError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	_ = s.builds.WriteAgent(r.Context(), envID, w)
+	// Headers go out with the first byte, so an error before it still sets the status.
+	lw := &lazyWriter{w: w, contentType: "application/octet-stream"}
+	if err := s.builds.WriteAgent(r.Context(), envID, lw); err != nil && !lw.wrote {
+		buildError(w, err)
+	}
+}
+
+// lazyWriter sets the content type when the first byte is written.
+type lazyWriter struct {
+	w           http.ResponseWriter
+	contentType string
+	wrote       bool
+}
+
+func (l *lazyWriter) Write(p []byte) (int, error) {
+	if !l.wrote {
+		l.w.Header().Set("Content-Type", l.contentType)
+		l.wrote = true
+	}
+	return l.w.Write(p)
 }
 
 func (s *server) buildRootFS(w http.ResponseWriter, r *http.Request) {

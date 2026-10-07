@@ -122,6 +122,13 @@ func (s *Store) FindEnvironmentByRunner(ctx context.Context, runnerName string) 
 		`SELECT `+envColumns+` FROM environments WHERE runner_name = ? ORDER BY created_at DESC LIMIT 1`, runnerName))
 }
 
+// FindEnvironmentByVMID returns the environment on a Proxmox VMID: a live one first,
+// else the newest (runtime references are "<vmid>/<environment id>").
+func (s *Store) FindEnvironmentByVMID(ctx context.Context, vmid int) (Environment, error) {
+	return scanEnvironment(s.db.QueryRowContext(ctx, `SELECT `+envColumns+` FROM environments WHERE runtime_ref LIKE ?
+		ORDER BY state = 'destroyed', created_at DESC LIMIT 1`, fmt.Sprintf("%d/%%", vmid)))
+}
+
 // ListEnvironments returns environments, newest first.
 func (s *Store) ListEnvironments(ctx context.Context, f EnvironmentFilter) ([]Environment, error) {
 	var where []string

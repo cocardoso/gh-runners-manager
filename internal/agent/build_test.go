@@ -323,3 +323,22 @@ func TestARestartedAgentContinuesTheSequences(t *testing.T) {
 		t.Fatalf("frames = %+v; want the second agent's sequence above the first's", fi.frames)
 	}
 }
+
+// When the updated agent cannot be started, the build goes on with the running one
+// instead of leaving the builder idle until its timeout.
+func TestUpdateAndRestartReportsAFailedRestart(t *testing.T) {
+	current := []byte("\x7fELF new agent")
+	fi := &fakeIngest{agent: current, agentSHA: sha(current)}
+	c := newBuildClient(t, fi)
+	exe := filepath.Join(t.TempDir(), "ghrm-agent")
+	_ = os.WriteFile(exe, []byte("old"), 0o755)
+	restarted := 0
+	err := UpdateAndRestart(context.Background(), c, exe, func() error { restarted++; return errors.New("exec format error") })
+	if restarted != 1 || err == nil || !strings.Contains(err.Error(), "exec format error") {
+		t.Fatalf("restarted %d, err %v; want one attempt and its error", restarted, err)
+	}
+	restarted = 0
+	if err := UpdateAndRestart(context.Background(), c, exe, func() error { restarted++; return nil }); err != nil || restarted != 0 {
+		t.Fatalf("up to date: restarted %d, err %v", restarted, err)
+	}
+}

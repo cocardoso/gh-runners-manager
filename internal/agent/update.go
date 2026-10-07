@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/ingest"
 )
@@ -60,4 +61,25 @@ func fileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// UpdateAndRestart replaces a stale agent (UpdateSelf) and calls restart, which
+// re-executes it and returns only on failure. It returns nil when the agent was already
+// current; any error means the caller keeps going with the running agent.
+func UpdateAndRestart(ctx context.Context, c *Client, exe string, restart func() error) error {
+	updated, err := UpdateSelf(ctx, c, exe)
+	if err != nil {
+		return fmt.Errorf("could not update to the control plane's agent: %w", err)
+	}
+	if !updated {
+		return nil
+	}
+	c.Log("agent", "updated to the control plane's agent; restarting it")
+	fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	_ = c.Flush(fctx)
+	cancel()
+	if err := restart(); err != nil {
+		return fmt.Errorf("could not restart the updated agent: %w", err)
+	}
+	return nil
 }

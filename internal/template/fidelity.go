@@ -59,14 +59,56 @@ func explain(kind, name, expected, actual string) (bool, string) {
 		return true, "installed by the ghrm layer"
 	case kind != "version":
 		return false, ""
-	case name == "Image Version" && strings.HasPrefix(expected, actual):
-		return true, "GitHub's image version adds a build suffix"
+	case name == "Image Version":
+		if actual != "" && strings.HasPrefix(expected, actual+".") {
+			return true, "GitHub's image version adds a build suffix"
+		}
+		return false, ""
+	case expected == "" || actual == "" || prerelease.MatchString(actual):
+		return false, ""
+	case strings.Contains(expected, ",") || strings.Contains(actual, ","):
+		if listDrift(expected, actual) {
+			return true, newerReason
+		}
+		return false, ""
 	case compareVersions(actual, expected) <= 0:
 		return false, ""
 	case strings.Contains(name, "Language and Runtime") && !sameMajor(expected, actual):
 		return false, ""
 	}
-	return true, "newer release: built after GitHub's image, the recipe installed the latest"
+	return true, newerReason
+}
+
+const newerReason = "newer release: built after GitHub's image, the recipe installed the latest"
+
+// prerelease matches release candidates and previews, which are not drift.
+var prerelease = regexp.MustCompile(`(?i)(^|[^a-z])(rc|alpha|beta|preview)[.\-]?\d*`)
+
+// listDrift says whether every version GitHub lists (cached tool versions, "3.10.12,
+// 3.12.3") is still there, at the same minor version or a newer patch.
+func listDrift(expected, actual string) bool {
+	have := strings.Split(actual, ",")
+	for _, e := range strings.Split(expected, ",") {
+		e = strings.TrimSpace(e)
+		found := false
+		for _, a := range have {
+			a = strings.TrimSpace(a)
+			if sameMinor(e, a) && compareVersions(a, e) >= 0 && !prerelease.MatchString(a) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// sameMinor compares the first two numbers of two versions.
+func sameMinor(a, b string) bool {
+	na, nb := numbers.FindAllString(a, 2), numbers.FindAllString(b, 2)
+	return len(na) == 2 && len(nb) == 2 && na[0] == nb[0] && na[1] == nb[1]
 }
 
 var (
