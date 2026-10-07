@@ -2,13 +2,17 @@
 package proxmoxtest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -73,6 +77,57 @@ type Server struct {
 	MemoryTotal        int64
 	MemoryAvailable    int64
 	ThinPools          []ThinPool
+	// FailCreate makes the next container creation task fail.
+	FailCreate bool
+	// FailUpload makes uploads answer 500 before reading the body.
+	FailUpload bool
+
+	volumes   map[string]Volume
+	firewalls map[int]*Firewall
+}
+
+// Volume is an uploaded storage volume.
+type Volume struct {
+	VolID   string
+	Content string
+	Size    int64
+	SHA256  string
+}
+
+// Firewall is a guest's firewall state.
+type Firewall struct {
+	Enabled bool
+	Groups  []string
+}
+
+// Volume returns an uploaded volume.
+func (s *Server) Volume(volid string) (Volume, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.volumes[volid]
+	return v, ok
+}
+
+// Volumes lists uploaded volumes.
+func (s *Server) Volumes() []Volume {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Volume, 0, len(s.volumes))
+	for _, v := range s.volumes {
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].VolID < out[j].VolID })
+	return out
+}
+
+// Firewall returns a guest's firewall state.
+func (s *Server) Firewall(vmid int) Firewall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if f, ok := s.firewalls[vmid]; ok {
+		return *f
+	}
+	return Firewall{}
 }
 
 // NewServer starts a fake server that accepts the given API token. It is closed when the test ends.
@@ -102,6 +157,14 @@ func NewServer(t testing.TB, node, tokenID, tokenSecret string) *Server {
 	mux.HandleFunc("GET "+p+"/nodes/{node}/status", s.nodeStatus)
 	mux.HandleFunc("GET "+p+"/nodes/{node}/disks/lvmthin", s.lvmthin)
 	mux.HandleFunc("GET "+p+"/nodes/{node}/storage/{storage}/status", s.storageStatus)
+	mux.HandleFunc("POST "+p+"/nodes/{node}/storage/{storage}/upload", s.upload)
+	mux.HandleFunc("GET "+p+"/nodes/{node}/storage/{storage}/content", s.content)
+	mux.HandleFunc("DELETE "+p+"/nodes/{node}/storage/{storage}/content/{volid}", s.deleteVolume)
+	mux.HandleFunc("POST "+p+"/nodes/{node}/lxc", s.createLXC)
+	mux.HandleFunc("POST "+p+"/nodes/{node}/lxc/{vmid}/template", s.toTemplate)
+	mux.HandleFunc("PUT "+p+"/nodes/{node}/lxc/{vmid}/firewall/options", s.firewallOptions)
+	mux.HandleFunc("POST "+p+"/nodes/{node}/lxc/{vmid}/firewall/rules", s.firewallRule)
+	mux.HandleFunc("PUT "+p+"/nodes/{node}/lxc/{vmid}/resize", s.resize)
 	s.Server = httptest.NewTLSServer(s.authenticate(mux))
 	t.Cleanup(s.Close)
 	return s
@@ -418,4 +481,150 @@ func (s *Server) storageStatus(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data(w, map[string]any{"total": s.StorageTotal, "used": s.StorageUsed, "active": 1})
+}
+
+// upload reads the multipart body as a stream, hashing the file part.
+func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
+	if s.FailUpload {
+		fail(w, http.StatusInternalServerError, "upload failed")
+		return
+	}
+	mr, err := r.MultipartReader()
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	fields := map[string]string{}
+	var name string
+	var size int64
+	h := sha256.New()
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if part.FileName() != "" {
+			name = part.FileName()
+			size, _ = io.Copy(h, part)
+			continue
+		}
+		b, _ := io.ReadAll(part)
+		fields[part.FormName()] = string(b)
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	volid := r.PathValue("storage") + ":" + fields["content"] + "/" + name
+	exit := "OK"
+	if c := fields["checksum"]; c != "" && c != sum {
+		exit = "checksum mismatch: got '" + sum + "' - expected '" + c + "'"
+	} else {
+		if s.volumes == nil {
+			s.volumes = map[string]Volume{}
+		}
+		s.volumes[volid] = Volume{VolID: volid, Content: fields["content"], Size: size, SHA256: sum}
+	}
+	data(w, s.task("imgcopy", 0, exit))
+}
+
+func (s *Server) content(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []map[string]any{}
+	for _, v := range s.volumes {
+		if strings.HasPrefix(v.VolID, r.PathValue("storage")+":") && (r.URL.Query().Get("content") == "" || v.Content == r.URL.Query().Get("content")) {
+			out = append(out, map[string]any{"volid": v.VolID, "size": v.Size, "content": v.Content})
+		}
+	}
+	data(w, out)
+}
+
+func (s *Server) deleteVolume(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	volid := r.PathValue("volid")
+	if _, ok := s.volumes[volid]; !ok {
+		fail(w, http.StatusInternalServerError, "volume '"+volid+"' does not exist")
+		return
+	}
+	delete(s.volumes, volid)
+	data(w, s.task("imgdel", 0, "OK"))
+}
+
+func (s *Server) createLXC(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = r.ParseForm()
+	vmid, _ := strconv.Atoi(r.PostForm.Get("vmid"))
+	if _, taken := s.guests[vmid]; taken {
+		fail(w, http.StatusInternalServerError, fmt.Sprintf("CT %d already exists", vmid))
+		return
+	}
+	if s.FailCreate {
+		s.FailCreate = false
+		data(w, s.task("vzcreate", vmid, "unable to create CT - extracting archive failed"))
+		return
+	}
+	cfg := map[string]string{}
+	for k, v := range r.PostForm {
+		cfg[k] = v[0]
+	}
+	s.guests[vmid] = &Guest{VMID: vmid, Type: "lxc", Status: "stopped", Name: cfg["hostname"], Tags: cfg["tags"], Config: cfg}
+	data(w, s.task("vzcreate", vmid, "OK"))
+}
+
+func (s *Server) toTemplate(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if g, ok := s.guestOr404(w, r); ok {
+		g.Template = true
+		data(w, nil)
+	}
+}
+
+func (s *Server) firewall(vmid int) *Firewall {
+	if s.firewalls == nil {
+		s.firewalls = map[int]*Firewall{}
+	}
+	if s.firewalls[vmid] == nil {
+		s.firewalls[vmid] = &Firewall{}
+	}
+	return s.firewalls[vmid]
+}
+
+func (s *Server) firewallOptions(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if g, ok := s.guestOr404(w, r); ok {
+		_ = r.ParseForm()
+		s.firewall(g.VMID).Enabled = r.PostForm.Get("enable") == "1"
+		data(w, nil)
+	}
+}
+
+func (s *Server) firewallRule(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if g, ok := s.guestOr404(w, r); ok {
+		_ = r.ParseForm()
+		if r.PostForm.Get("type") == "group" {
+			f := s.firewall(g.VMID)
+			f.Groups = append(f.Groups, r.PostForm.Get("action"))
+		}
+		data(w, nil)
+	}
+}
+
+func (s *Server) resize(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if g, ok := s.guestOr404(w, r); ok {
+		_ = r.ParseForm()
+		g.Config[r.PostForm.Get("disk")+"_size"] = r.PostForm.Get("size")
+		data(w, s.task("resize", g.VMID, "OK"))
+	}
 }

@@ -132,11 +132,16 @@ func (c *Client) do(ctx context.Context, method, path string, params url.Values,
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", c.auth)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
-	resp, err := c.http.Do(req)
+	return c.send(c.http, req, method, path, out)
+}
+
+// send authenticates req, sends it and decodes the "data" envelope into out.
+func (c *Client) send(hc *http.Client, req *http.Request, method, path string, out any) error {
+	req.Header.Set("Authorization", c.auth)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return fmt.Errorf("proxmox %s %s: %w", method, path, err)
 	}
