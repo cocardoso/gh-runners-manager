@@ -143,7 +143,7 @@ has_entry() {
 # field PATH KEY prints a key of the JSON object at PATH.
 field() { json "$1" | perl -MJSON::PP -0777 -e 'my $d = decode_json(<STDIN>); print $d->{$ARGV[0]} // ""' "$2"; }
 
-# tagged TAG prints the VMID of the first container carrying TAG.
+# tagged TAG prints the VMID of the first container carrying TAG (exactly).
 tagged() {
   json /cluster/resources | perl -MJSON::PP -0777 -e '
     my $t = $ARGV[0]; my $d = decode_json(<STDIN>);
@@ -190,12 +190,26 @@ access() {
 # secret is shown once, when the token is created, so a token whose secret the control
 # plane does not have is created again.
 token() {
-  local have_secret=0
+  local have_secret=0 list
   if [ -n "$CT_VMID" ] && pct status "$CT_VMID" >/dev/null 2>&1; then
-    # In the vault, or (installs made by hand) in the file the configuration names.
-    if pct exec "$CT_VMID" -- /usr/local/bin/ghrm secret list --config /etc/ghrm/ghrm.yaml 2>/dev/null | grep -qx 'proxmox/token-secret' ||
-      pct exec "$CT_VMID" -- sh -c 'f=$(sed -n "s/^ *token_secret_file: *\([^ #]*\).*/\1/p" /etc/ghrm/ghrm.yaml); [ -n "$f" ] && [ -s "$f" ]' 2>/dev/null; then
-      have_secret=1
+    if ! pct status "$CT_VMID" | grep -q running; then
+      if [ "$DRY_RUN" = 1 ]; then
+        note "container $CT_VMID is stopped: it would be started to check its secrets"
+        have_secret=1
+      else
+        pct start "$CT_VMID"
+        wait_for_container "$CT_VMID"
+        created "started container $CT_VMID"
+      fi
+    fi
+    if [ "$have_secret" = 0 ] && pct exec "$CT_VMID" -- test -x /usr/local/bin/ghrm; then
+      # ghrm is installed: its answer decides, and a failure to read it stops here.
+      list=$(pct exec "$CT_VMID" -- /usr/local/bin/ghrm secret list --config /etc/ghrm/ghrm.yaml) ||
+        die "could not read the secrets of container $CT_VMID; fix ghrm there and run this again"
+      if printf '%s\n' "$list" | grep -qx 'proxmox/token-secret' ||
+        pct exec "$CT_VMID" -- sh -c 'f=$(sed -n "s/^ *token_secret_file: *\([^ #]*\).*/\1/p" /etc/ghrm/ghrm.yaml); [ -n "$f" ] && [ -s "$f" ]' 2>/dev/null; then
+        have_secret=1
+      fi
     fi
   fi
   if has_entry "/access/users/$USER_ID/token" tokenid "$TOKEN_NAME"; then
@@ -294,12 +308,24 @@ os_image() {
 }
 
 # --- 6. control plane ------------------------------------------------------------------
+# next_free N prints the first VMID from N that no guest uses.
+next_free() {
+  local n=$1
+  while pct status "$n" >/dev/null 2>&1; do n=$((n + 1)); done
+  echo "$n"
+}
+
 pick_vmids() {
   if [ -z "$CT_VMID" ]; then CT_VMID=$(tagged ghrm-control-plane); fi
+  if [ -z "$CT_VMID" ]; then CT_VMID=$(next_free "$(pvesh get /cluster/nextid)"); fi
+  # The template the control plane is configured with wins: a run that failed half-way
+  # resumes with it.
+  if [ -z "$TEMPLATE_VMID" ] && pct status "$CT_VMID" 2>/dev/null | grep -q running; then
+    TEMPLATE_VMID=$(pct exec "$CT_VMID" -- sed -n 's/^ *template_vmid: *\([0-9]*\).*/\1/p' /etc/ghrm/ghrm.yaml 2>/dev/null || true)
+  fi
   if [ -z "$TEMPLATE_VMID" ]; then TEMPLATE_VMID=$(tagged ghrm-template); fi
-  if [ -z "$CT_VMID" ]; then CT_VMID=$(pvesh get /cluster/nextid); fi
-  if [ -z "$TEMPLATE_VMID" ]; then TEMPLATE_VMID=$(( $(pvesh get /cluster/nextid) + 1 )); fi
-  if [ "$TEMPLATE_VMID" = "$CT_VMID" ]; then TEMPLATE_VMID=$((CT_VMID + 1)); fi
+  if [ -z "$TEMPLATE_VMID" ]; then TEMPLATE_VMID=$(tagged ghrm-template-building); fi
+  if [ -z "$TEMPLATE_VMID" ]; then TEMPLATE_VMID=$(next_free $((CT_VMID + 1))); fi
 }
 
 host_ip() { ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1; }
@@ -338,8 +364,13 @@ binaries() {
   curl -fsSL -o "$dir/ghrm" "$base/ghrm-linux-amd64"
   curl -fsSL -o "$dir/ghrm-agent" "$base/ghrm-agent-linux-amd64"
   curl -fsSL -o "$dir/SHA256SUMS" "$base/SHA256SUMS"
-  (cd "$dir" && sed -e 's/ghrm-agent-linux-amd64/ghrm-agent/' -e 's/ghrm-linux-amd64/ghrm/' SHA256SUMS | sha256sum -c --quiet -) ||
-    die "the downloaded binaries do not match SHA256SUMS"
+  # SHA256SUMS also lists install.sh: check the two binaries, and that both are listed.
+  local sums
+  sums=$(grep -E '^[0-9a-f]{64}  (ghrm|ghrm-agent)-linux-amd64$' "$dir/SHA256SUMS" |
+    sed -e 's/ghrm-agent-linux-amd64$/ghrm-agent/' -e 's/ghrm-linux-amd64$/ghrm/' || true)
+  [ "$(printf '%s\n' "$sums" | grep -c .)" = 2 ] || die "SHA256SUMS does not list both binaries"
+  (cd "$dir" && printf '%s\n' "$sums" | sha256sum -c --quiet -) || die "the downloaded binaries do not match SHA256SUMS"
+  chmod +x "$dir/ghrm" "$dir/ghrm-agent"
 }
 
 config_file() {
@@ -413,33 +444,44 @@ install_ghrm() {
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' RETURN
   binaries "$tmp"
-  pct exec "$CT_VMID" -- sh -c 'command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null)'
-  pct exec "$CT_VMID" -- mkdir -p /etc/ghrm /var/lib/ghrm
-  pct exec "$CT_VMID" -- sh -c 'systemctl stop ghrm 2>/dev/null || true'
-  pct push "$CT_VMID" "$tmp/ghrm" /usr/local/bin/ghrm --perms 0755
-  pct push "$CT_VMID" "$tmp/ghrm-agent" /usr/local/bin/ghrm-agent --perms 0755
-  created "ghrm $(pct exec "$CT_VMID" -- /usr/local/bin/ghrm version | awk '{print $2}') and ghrm-agent"
+  local want have restart=0
+  want=$("$tmp/ghrm" version | awk '{print $2}')
+  have=$(pct exec "$CT_VMID" -- /usr/local/bin/ghrm version 2>/dev/null | awk '{print $2}' || true)
+  if [ -n "$want" ] && [ "$want" = "$have" ]; then
+    exists "ghrm $want (current)"
+  else
+    pct exec "$CT_VMID" -- sh -c 'command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null)'
+    pct exec "$CT_VMID" -- mkdir -p /etc/ghrm /var/lib/ghrm
+    pct exec "$CT_VMID" -- sh -c 'systemctl stop ghrm 2>/dev/null || true'
+    pct push "$CT_VMID" "$tmp/ghrm" /usr/local/bin/ghrm --perms 0755
+    pct push "$CT_VMID" "$tmp/ghrm-agent" /usr/local/bin/ghrm-agent --perms 0755
+    created "ghrm $want and ghrm-agent${have:+ (was $have)}"
+    restart=1
+  fi
   if pct exec "$CT_VMID" -- test -f /etc/ghrm/ghrm.yaml; then
     exists "/etc/ghrm/ghrm.yaml (kept)"
   else
     config_file "$(host_ip)" "$(fingerprint)" >"$tmp/ghrm.yaml"
     pct push "$CT_VMID" "$tmp/ghrm.yaml" /etc/ghrm/ghrm.yaml --perms 0640
     created "/etc/ghrm/ghrm.yaml"
+    restart=1
   fi
   if pct exec "$CT_VMID" -- test -s /etc/ghrm/admin-token; then exists "API admin token (kept)"; else
     openssl rand -hex 32 >"$tmp/admin-token"
     pct push "$CT_VMID" "$tmp/admin-token" /etc/ghrm/admin-token --perms 0600
     created "API admin token in /etc/ghrm/admin-token"
+    restart=1
   fi
   if [ -n "$TOKEN_SECRET" ]; then
     printf '%s\n' "$TOKEN_SECRET" | pct exec "$CT_VMID" -- /usr/local/bin/ghrm secret set --config /etc/ghrm/ghrm.yaml proxmox/token-secret
     created "Proxmox token secret sealed in the control plane's vault"
+    restart=1
   fi
   printf '%s\n' "$GHRM_SERVICE" >"$tmp/ghrm.service"
   pct push "$CT_VMID" "$tmp/ghrm.service" /etc/systemd/system/ghrm.service --perms 0644
   pct exec "$CT_VMID" -- systemctl daemon-reload
   pct exec "$CT_VMID" -- systemctl enable --now ghrm >/dev/null 2>&1
-  pct exec "$CT_VMID" -- systemctl restart ghrm
+  if [ "$restart" = 1 ]; then pct exec "$CT_VMID" -- systemctl restart ghrm; fi
   exists "service ghrm running"
 }
 
@@ -493,13 +535,24 @@ rm -f /var/lib/dbus/machine-id /etc/ssh/ssh_host_*'
 bootstrap_template() {
   step "Bootstrap template (container $TEMPLATE_VMID)"
   if pct status "$TEMPLATE_VMID" >/dev/null 2>&1; then
-    exists "template $TEMPLATE_VMID"
-    return
+    local conf
+    conf=$(pct config "$TEMPLATE_VMID")
+    if printf '%s\n' "$conf" | grep -qE '^tags:.*ghrm-template-building'; then
+      note "container $TEMPLATE_VMID is an unfinished bootstrap template from an earlier run: building it again"
+      run pct stop "$TEMPLATE_VMID" >/dev/null 2>&1 || true
+      run pct destroy "$TEMPLATE_VMID" --purge
+    elif printf '%s\n' "$conf" | grep -q '^template: 1'; then
+      exists "template $TEMPLATE_VMID"
+      return
+    else
+      die "VMID $TEMPLATE_VMID is not a ghrm template (a guest that is not one uses it); pick another with --template-vmid"
+    fi
   fi
   local image
   image=$(os_image 'ubuntu-24.04-standard')
   run pct create "$TEMPLATE_VMID" "$image" --hostname ghrm-template --unprivileged 1 --features nesting=1 --cores 2 --memory 2048 \
-    --rootfs "$ROOTFS_STORAGE:8" --net0 "name=eth0,bridge=$VNET,ip=dhcp,firewall=1" --nameserver "$DNS" --ostype ubuntu --pool "$POOL"
+    --rootfs "$ROOTFS_STORAGE:8" --net0 "name=eth0,bridge=$VNET,ip=dhcp,firewall=1" --nameserver "$DNS" --ostype ubuntu --pool "$POOL" \
+    --tags ghrm-template-building
   run pvesh set "/nodes/$NODE/lxc/$TEMPLATE_VMID/firewall/options" --enable 1
   run pvesh create "/nodes/$NODE/lxc/$TEMPLATE_VMID/firewall/rules" --type group --action "$SECURITY_GROUP" --enable 1
   if [ "$DRY_RUN" = 1 ]; then

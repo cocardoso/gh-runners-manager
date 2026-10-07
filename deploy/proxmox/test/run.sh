@@ -11,12 +11,21 @@ setup() {
   export FAKE_STATE=$tmp/state FAKE_LOG=$tmp/log GHRM_FIREWALL_SETTLE=0
   mkdir -p "$FAKE_STATE" "$tmp/bin"
   : >"$FAKE_LOG"
-  echo fake >"$tmp/bin/ghrm"
-  echo fake >"$tmp/bin/ghrm-agent"
+  binaries v1.0.0
+}
+
+binaries() { # binaries VERSION: the --binary-dir build
+  printf '#!/bin/sh\necho "ghrm %s (abc)"\n' "$1" >"$tmp/bin/ghrm"
+  printf '#!/bin/sh\necho "ghrm-agent %s (abc)"\n' "$1" >"$tmp/bin/ghrm-agent"
+  chmod +x "$tmp/bin/ghrm" "$tmp/bin/ghrm-agent"
 }
 
 install() { # install ARGS...: runs the installer, output in $tmp/out
   PATH="$here/fakebin:$PATH" bash "$installer" --binary-dir "$tmp/bin" "$@" >"$tmp/out" 2>&1
+}
+
+install_release() { # like install, downloading the release
+  PATH="$here/fakebin:$PATH" bash "$installer" >"$tmp/out" 2>&1
 }
 
 fail() { echo "  FAIL: $*"; failures=$((failures + 1)); }
@@ -54,7 +63,11 @@ test_install_is_idempotent() {
   : >"$FAKE_LOG"
   install || fail "second run: exit $?: $(tail -n 3 "$tmp/out")"
   expect_no_log "$CREATES"
-  expect_no_out '^  \+ (pool|role|user|API token|storage|SDN|VNet|subnet|security|container|template|/etc/ghrm)'
+  expect_no_out '^  \+ (pool|role|user|API token|storage|SDN|VNet|subnet|security|container|template|/etc/ghrm|ghrm)'
+  # The same ghrm is not reinstalled, and the service is not restarted.
+  expect_no_log 'pct push [0-9]+ \S+ /usr/local/bin/ghrm '
+  expect_no_log 'systemctl restart'
+  expect_out "✓ ghrm v1.0.0 (current)"
   for want in "✓ pool ghrm" "✓ API token ghrm@pve!ghrm" "✓ security group ghrm-job" "✓ container 100" "✓ template 101" "✓ /etc/ghrm/ghrm.yaml (kept)"; do
     expect_out "$want"
   done
@@ -72,9 +85,11 @@ seed_dev_host() { # an existing hand-made setup, like the development host
   printf 'gh-runner\n' >"$FAKE_STATE/groups"
   printf '10.50.0.2\n' >"$FAKE_STATE/group_gh-runner"
   printf '1\n' >"$FAKE_STATE/fw_enable"
-  printf '310  running\n951 ghrm-template stopped\n' >"$FAKE_STATE/guests"
+  printf '310  running\n951 ghrm-template template\n' >"$FAKE_STATE/guests"
   printf '310 proxmox/token-secret\n' >"$FAKE_STATE/ct_secrets"
-  printf '310 /etc/ghrm/ghrm.yaml\n310 /etc/ghrm/admin-token\n' >"$FAKE_STATE/ct_files"
+  printf '310 /etc/ghrm/ghrm.yaml\n310 /etc/ghrm/admin-token\n310 /usr/local/bin/ghrm\n' >"$FAKE_STATE/ct_files"
+  echo "ghrm v1.0.0 (abc)" >"$FAKE_STATE/ct_version_310"
+  echo "310 951" >"$FAKE_STATE/ct_tplvmid"
   touch "$FAKE_STATE/dnsmasq"
 }
 
@@ -111,6 +126,57 @@ test_token_in_a_secret_file_is_kept() {
   install --vmid 310 --security-group gh-runner || fail "exit $?"
   expect_no_log 'pveum user token (remove|add)'
   expect_out "✓ API token ghrm@pve!ghrm"
+}
+
+test_download_path_verifies_checksums() {
+  install_release || fail "release download: exit $?: $(tail -n 3 "$tmp/out")"
+  expect_out "+ ghrm v1.0.0"
+  setup
+  if FAKE_BAD_SUM=1 install_release; then fail "a checksum mismatch must stop the installer"; fi
+  expect_out "do not match SHA256SUMS"
+}
+
+test_stopped_control_plane_is_started_not_replaced() {
+  seed_dev_host
+  sed -i.bak 's/^310  running$/310  stopped/' "$FAKE_STATE/guests"
+  install --vmid 310 --security-group gh-runner || fail "exit $?: $(tail -n 3 "$tmp/out")"
+  expect_log '^pct start 310'
+  expect_no_log 'pveum user token (remove|add)'
+}
+
+test_vmids_skip_guests_in_use() {
+  printf '101  running\n' >"$FAKE_STATE/guests" # someone else's container
+  install || fail "exit $?: $(tail -n 3 "$tmp/out")"
+  expect_out "+ container 100"
+  expect_out "+ template 102"
+  expect_no_log 'pct (create|exec|push|destroy|set|start) 101'
+}
+
+test_unfinished_template_is_rebuilt() {
+  install || fail "first run: exit $?"
+  sed -i.bak 's/^101 ghrm-template template$/101 ghrm-template-building running/' "$FAKE_STATE/guests"
+  : >"$FAKE_LOG"
+  install || fail "second run: exit $?: $(tail -n 3 "$tmp/out")"
+  expect_log '^pct destroy 101'
+  expect_log '^pct create 101 '
+  expect_out "+ template 101"
+}
+
+test_refuses_a_guest_that_is_not_a_ghrm_template() {
+  printf '102  running\n' >"$FAKE_STATE/guests"
+  if install --template-vmid 102; then fail "a foreign guest must be refused"; fi
+  expect_out "102 is not a ghrm template"
+  expect_no_log 'pct (exec|push|destroy|set|start) 102'
+}
+
+test_a_new_release_is_installed() {
+  install || fail "first run: exit $?"
+  binaries v2.0.0
+  : >"$FAKE_LOG"
+  install || fail "upgrade: exit $?"
+  expect_out "+ ghrm v2.0.0"
+  expect_log 'pct push 100 \S+ /usr/local/bin/ghrm '
+  expect_log 'systemctl restart ghrm'
 }
 
 test_install_refuses_old_pve() {
