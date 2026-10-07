@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { Breadcrumbs, Empty, Loader, Tooltip, cn } from "@cloudflare/kumo";
 import { HouseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { PageHeader } from "@/blocks/page-header/page-header";
@@ -11,17 +11,17 @@ setInterval(() => {
   subscribers.forEach((fn) => fn());
 }, 15_000);
 
+function subscribeTick(fn: () => void) {
+  subscribers.add(fn);
+  return () => {
+    subscribers.delete(fn);
+  };
+}
+
 /** The current time, refreshed every 15 s, shared by all relative timestamps. */
 export function useNow(): Date {
-  const [, force] = useState(0);
-  useEffect(() => {
-    const fn = () => force((n) => n + 1);
-    subscribers.add(fn);
-    return () => {
-      subscribers.delete(fn);
-    };
-  }, []);
-  return new Date(Math.max(tick, Date.now()));
+  const t = useSyncExternalStore(subscribeTick, () => tick);
+  return new Date(t);
 }
 
 export function RelativeTime({ value, className }: { value: string | undefined; className?: string }) {
