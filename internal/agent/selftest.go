@@ -160,6 +160,9 @@ func RunSelfTest(ctx context.Context, c *Client, cmd Commander, o SelfTestOption
 			}
 		}
 		out := filepath.Join(o.Work, "report")
+		if err := os.MkdirAll(out, 0o755); err != nil {
+			return err
+		}
 		// The report reads the toolset definitions from INSTALLER_SCRIPT_FOLDER; the image build
 		// removes them, so point it at the recipe's copy.
 		toolsets := filepath.Join(recipe, "images", "ubuntu-slim", "toolsets")

@@ -30,6 +30,11 @@ func TestRunSelfTestReportsEveryCheck(t *testing.T) {
 				return errors.New("the scripts directory does not exist")
 			}
 		}
+		if strings.HasPrefix(line, "env INSTALLER_SCRIPT_FOLDER=") {
+			if _, err := os.Stat(filepath.Join(work, "report")); err != nil {
+				return errors.New("the report output directory does not exist")
+			}
+		}
 		return nil
 	}
 	opts := SelfTestOptions{
