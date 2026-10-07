@@ -19,7 +19,76 @@ const EnvProxmoxTokenSecret = "GHRM_PROXMOX_TOKEN_SECRET"
 
 // Config is the root of the ghrm configuration file.
 type Config struct {
-	Proxmox Proxmox `yaml:"proxmox"`
+	DataDir        string     `yaml:"data_dir"`
+	Listen         string     `yaml:"listen"`
+	AdminTokenFile string     `yaml:"admin_token_file"`
+	Proxmox        Proxmox    `yaml:"proxmox"`
+	Ingest         Ingest     `yaml:"ingest"`
+	GitHub         GitHub     `yaml:"github"`
+	Capacity       Capacity   `yaml:"capacity"`
+	ScaleSets      []ScaleSet `yaml:"scale_sets"`
+
+	// AdminToken is read from AdminTokenFile; empty disables mutating API calls.
+	AdminToken string `yaml:"-"`
+}
+
+// Ingest configures the HTTPS endpoint agents report to.
+type Ingest struct {
+	Listen       string `yaml:"listen"`        // bind address on the job network, e.g. 10.50.0.2:8443
+	AdvertiseURL string `yaml:"advertise_url"` // URL given to agents, e.g. https://10.50.0.2:8443
+}
+
+// GitHub holds the credentials used to talk to GitHub.
+type GitHub struct {
+	Credentials []Credential `yaml:"credentials"`
+}
+
+// Credential is a GitHub token. It is read from TokenFile, or from
+// GHRM_GITHUB_TOKEN_<NAME> (upper case, dashes as underscores) when set.
+type Credential struct {
+	Name      string `yaml:"name"`
+	TokenFile string `yaml:"token_file"`
+	Token     string `yaml:"-"`
+}
+
+// Capacity holds the global limits of spec §9.
+type Capacity struct {
+	MaxEnvironments int     `yaml:"max_environments"`
+	MemoryBudgetMB  int     `yaml:"memory_budget_mb"`
+	MemoryMarginMB  int     `yaml:"memory_margin_mb"`
+	MaxDiskPercent  float64 `yaml:"max_disk_percent"`
+}
+
+// ScaleSet is one GitHub runner scale set served by ghrm.
+type ScaleSet struct {
+	Name                 string   `yaml:"name"`
+	URL                  string   `yaml:"url"` // https://github.com/<owner>[/<repo>]
+	Credential           string   `yaml:"credential"`
+	RunnerGroup          string   `yaml:"runner_group"`
+	Labels               []string `yaml:"labels"`
+	MaxConcurrent        int      `yaml:"max_concurrent"`
+	Cores                int      `yaml:"cores"`
+	MemoryMB             int      `yaml:"memory_mb"`
+	KeepOnFailureMinutes int      `yaml:"keep_on_failure_minutes"`
+}
+
+// OwnerRepo splits the scale set URL. repo is empty for organization scale sets.
+func (s ScaleSet) OwnerRepo() (owner, repo string, err error) {
+	m := githubURLPattern.FindStringSubmatch(s.URL)
+	if m == nil {
+		return "", "", fmt.Errorf("scale set %s: url %q must be https://github.com/<owner>[/<repo>]", s.Name, s.URL)
+	}
+	return m[1], m[2], nil
+}
+
+// Credential returns the named credential.
+func (c *Config) Credential(name string) (Credential, bool) {
+	for _, cr := range c.GitHub.Credentials {
+		if cr.Name == name {
+			return cr, true
+		}
+	}
+	return Credential{}, false
 }
 
 // Proxmox configures the proxmox-lxc runtime.
@@ -90,6 +159,40 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
+	if c.DataDir == "" {
+		c.DataDir = "/var/lib/ghrm"
+	}
+	if c.Listen == "" {
+		c.Listen = "127.0.0.1:8080"
+	}
+	cp := &c.Capacity
+	if cp.MaxEnvironments == 0 {
+		cp.MaxEnvironments = 4
+	}
+	if cp.MemoryBudgetMB == 0 {
+		cp.MemoryBudgetMB = 16384
+	}
+	if cp.MemoryMarginMB == 0 {
+		cp.MemoryMarginMB = 4096
+	}
+	if cp.MaxDiskPercent == 0 {
+		cp.MaxDiskPercent = 85
+	}
+	for i := range c.ScaleSets {
+		ss := &c.ScaleSets[i]
+		if ss.RunnerGroup == "" {
+			ss.RunnerGroup = "default"
+		}
+		if ss.MaxConcurrent == 0 {
+			ss.MaxConcurrent = 2
+		}
+		if ss.Cores == 0 {
+			ss.Cores = 2
+		}
+		if ss.MemoryMB == 0 {
+			ss.MemoryMB = 4096
+		}
+	}
 	p := &c.Proxmox
 	if p.VMIDRange == (VMIDRange{}) {
 		p.VMIDRange = VMIDRange{Start: 900, End: 999}
@@ -106,6 +209,28 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) resolveSecrets() error {
+	for i := range c.GitHub.Credentials {
+		cr := &c.GitHub.Credentials[i]
+		env := "GHRM_GITHUB_TOKEN_" + strings.ToUpper(strings.ReplaceAll(cr.Name, "-", "_"))
+		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+			cr.Token = v
+			continue
+		}
+		if cr.TokenFile != "" {
+			raw, err := os.ReadFile(cr.TokenFile)
+			if err != nil {
+				return fmt.Errorf("github credential %s: %w", cr.Name, err)
+			}
+			cr.Token = strings.TrimSpace(string(raw))
+		}
+	}
+	if c.AdminTokenFile != "" {
+		raw, err := os.ReadFile(c.AdminTokenFile)
+		if err != nil {
+			return fmt.Errorf("admin_token_file: %w", err)
+		}
+		c.AdminToken = strings.TrimSpace(string(raw))
+	}
 	p := &c.Proxmox
 	if v := strings.TrimSpace(os.Getenv(EnvProxmoxTokenSecret)); v != "" {
 		p.TokenSecret = v
@@ -125,7 +250,56 @@ func (c *Config) resolveSecrets() error {
 	return nil
 }
 
-var fingerprintPattern = regexp.MustCompile(`^[0-9A-Fa-f]{2}(:?[0-9A-Fa-f]{2}){31}$`)
+var (
+	fingerprintPattern = regexp.MustCompile(`^[0-9A-Fa-f]{2}(:?[0-9A-Fa-f]{2}){31}$`)
+	githubURLPattern   = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9][A-Za-z0-9-]*)(?:/([A-Za-z0-9._-]+))?/?$`)
+	scaleSetNameRe     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+)
+
+// ValidateServe checks the settings that only `ghrm serve` needs.
+func (c *Config) ValidateServe() error {
+	var errs []error
+	if c.Ingest.Listen == "" {
+		errs = append(errs, errors.New("ingest.listen is required"))
+	}
+	if u, err := url.Parse(c.Ingest.AdvertiseURL); c.Ingest.AdvertiseURL == "" || err != nil || u.Scheme != "https" || u.Host == "" {
+		errs = append(errs, fmt.Errorf("ingest.advertise_url must be an https URL, got %q", c.Ingest.AdvertiseURL))
+	}
+	creds := map[string]bool{}
+	for _, cr := range c.GitHub.Credentials {
+		if cr.Name == "" {
+			errs = append(errs, errors.New("github.credentials: name is required"))
+			continue
+		}
+		if cr.Token == "" {
+			errs = append(errs, fmt.Errorf("github credential %s has no token (token_file or GHRM_GITHUB_TOKEN_%s)", cr.Name, strings.ToUpper(strings.ReplaceAll(cr.Name, "-", "_"))))
+		}
+		creds[cr.Name] = true
+	}
+	if len(c.ScaleSets) == 0 {
+		errs = append(errs, errors.New("scale_sets: at least one scale set is required"))
+	}
+	seen := map[string]bool{}
+	for _, ss := range c.ScaleSets {
+		if !scaleSetNameRe.MatchString(ss.Name) {
+			errs = append(errs, fmt.Errorf("scale set name %q must match %s", ss.Name, scaleSetNameRe))
+		}
+		if seen[ss.Name] {
+			errs = append(errs, fmt.Errorf("scale set name %q is duplicated", ss.Name))
+		}
+		seen[ss.Name] = true
+		if _, _, err := ss.OwnerRepo(); err != nil {
+			errs = append(errs, err)
+		}
+		if !creds[ss.Credential] {
+			errs = append(errs, fmt.Errorf("scale set %s: unknown credential %q", ss.Name, ss.Credential))
+		}
+		if ss.MaxConcurrent < 1 || ss.Cores < 1 || ss.MemoryMB < 256 {
+			errs = append(errs, fmt.Errorf("scale set %s: max_concurrent, cores and memory_mb must be positive (memory at least 256)", ss.Name))
+		}
+	}
+	return errors.Join(errs...)
+}
 
 // Validate checks the configuration after defaults have been applied.
 func (c *Config) Validate() error {
