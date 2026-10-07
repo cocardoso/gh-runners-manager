@@ -144,3 +144,46 @@ func TestLoadAcceptsFingerprint(t *testing.T) {
 		t.Fatalf("TLSFingerprint = %q", cfg.Proxmox.TLSFingerprint)
 	}
 }
+
+func TestTemplatesDefaultsAndValidation(t *testing.T) {
+	cfg, err := load(t, validYAML+`templates:
+  vmid_range: {start: 1950, end: 1958}
+  selftest_blocked: ["10.1.1.1:443"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tp := cfg.Templates
+	if !tp.Enabled() || tp.Storage != "local" || tp.RootFSGB != 16 || tp.BuilderDiskGB != 48 || tp.BuilderCores != 4 || tp.BuilderMemoryMB != 8192 ||
+		tp.Keep != 2 || tp.CheckInterval.Std() != 24*time.Hour || !tp.AutoActivate || tp.BuildTimeout.Std() != 90*time.Minute ||
+		tp.VerifyTimeout.Std() != 20*time.Minute || tp.MaxArchiveBytes != 8<<30 || tp.Nameserver != "1.1.1.1" || tp.Bridge != "jobnet" ||
+		tp.FirewallGroup != "gh-runner" {
+		t.Fatalf("defaults = %+v", tp)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	off, _ := load(t, validYAML)
+	if off.Templates.Enabled() {
+		t.Fatal("without a vmid_range template builds are disabled")
+	}
+	for _, bad := range []string{
+		"templates:\n  vmid_range: {start: 905, end: 910}\n",                                       // overlaps proxmox.vmid_range 900-999
+		"templates:\n  vmid_range: {start: 1950, end: 1958}\n  keep: 1\n",                          // keep >= 2
+		"templates:\n  vmid_range: {start: 1950, end: 1958}\n  selftest_blocked: [\"10.1.1.1\"]\n", // host:port
+		"templates:\n  vmid_range: {start: 1958, end: 1950}\n",
+		"templates:\n  vmid_range: {start: 1950, end: 1958}\n  auto_activate: false\n  check_interval: -1h\n",
+	} {
+		c, err := load(t, validYAML+bad)
+		if err == nil {
+			err = c.Validate()
+		}
+		if err == nil {
+			t.Errorf("config %q should be invalid", bad)
+		}
+	}
+	noAuto, _ := load(t, validYAML+"templates:\n  vmid_range: {start: 1950, end: 1958}\n  auto_activate: false\n")
+	if noAuto.Templates.AutoActivate {
+		t.Fatal("auto_activate: false must be kept")
+	}
+}

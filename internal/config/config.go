@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"regexp"
@@ -27,6 +28,7 @@ type Config struct {
 	GitHub         GitHub     `yaml:"github"`
 	Capacity       Capacity   `yaml:"capacity"`
 	ScaleSets      []ScaleSet `yaml:"scale_sets"`
+	Templates      Templates  `yaml:"templates"`
 
 	// AdminToken is read from AdminTokenFile; empty disables mutating API calls.
 	AdminToken string `yaml:"-"`
@@ -109,6 +111,34 @@ type Proxmox struct {
 	// TokenSecret is resolved from EnvProxmoxTokenSecret or TokenSecretFile. It is never read from YAML.
 	TokenSecret string `yaml:"-"`
 }
+
+// Templates configures template builds (spec §8). Builds are disabled until vmid_range is set.
+type Templates struct {
+	VMIDRange       VMIDRange `yaml:"vmid_range"`        // VMIDs for built templates, outside proxmox.vmid_range
+	Storage         string    `yaml:"storage"`           // storage for template archives ("vztmpl"), default local
+	RootFSGB        int       `yaml:"rootfs_gb"`         // template root disk, default 16
+	BuilderDiskGB   int       `yaml:"builder_disk_gb"`   // builder root disk, default 48
+	BuilderCores    int       `yaml:"builder_cores"`     // default 4
+	BuilderMemoryMB int       `yaml:"builder_memory_mb"` // default 8192
+	Keep            int       `yaml:"keep"`              // versions kept for roll-back, default 2
+	CheckInterval   Duration  `yaml:"check_interval"`    // release check, default 24h; 0 disables
+	AutoActivateSet *bool     `yaml:"auto_activate"`     // default true
+	BuildTimeout    Duration  `yaml:"build_timeout"`     // default 90m
+	VerifyTimeout   Duration  `yaml:"verify_timeout"`    // default 20m
+	MaxArchiveBytes int64     `yaml:"max_archive_bytes"` // default 8 GiB
+	AgentPath       string    `yaml:"agent_path"`        // ghrm-agent binary served to builders; default: next to ghrm
+	Nameserver      string    `yaml:"nameserver"`        // template DNS, default 1.1.1.1
+	Bridge          string    `yaml:"bridge"`            // job VNet, default jobnet
+	FirewallGroup   string    `yaml:"firewall_group"`    // security group, default gh-runner
+	// SelfTestBlocked lists host:port addresses a job must not reach (LAN gateway, hypervisor).
+	SelfTestBlocked []string `yaml:"selftest_blocked"`
+
+	// AutoActivate is AutoActivateSet with its default applied.
+	AutoActivate bool `yaml:"-"`
+}
+
+// Enabled reports whether template builds are configured.
+func (t Templates) Enabled() bool { return t.VMIDRange != (VMIDRange{}) }
 
 // VMIDRange is the inclusive range of VMIDs ghrm may allocate for environments.
 type VMIDRange struct {
@@ -206,6 +236,37 @@ func (c *Config) applyDefaults() {
 	if p.FirewallSettle == 0 {
 		p.FirewallSettle = Duration(12 * time.Second)
 	}
+	t := &c.Templates
+	setDefault := func(v *string, d string) {
+		if *v == "" {
+			*v = d
+		}
+	}
+	setDefault(&t.Storage, "local")
+	setDefault(&t.Nameserver, "1.1.1.1")
+	setDefault(&t.Bridge, "jobnet")
+	setDefault(&t.FirewallGroup, "gh-runner")
+	for _, d := range []struct {
+		v   *int
+		def int
+	}{{&t.RootFSGB, 16}, {&t.BuilderDiskGB, 48}, {&t.BuilderCores, 4}, {&t.BuilderMemoryMB, 8192}, {&t.Keep, 2}} {
+		if *d.v == 0 {
+			*d.v = d.def
+		}
+	}
+	if t.CheckInterval == 0 {
+		t.CheckInterval = Duration(24 * time.Hour)
+	}
+	if t.BuildTimeout == 0 {
+		t.BuildTimeout = Duration(90 * time.Minute)
+	}
+	if t.VerifyTimeout == 0 {
+		t.VerifyTimeout = Duration(20 * time.Minute)
+	}
+	if t.MaxArchiveBytes == 0 {
+		t.MaxArchiveBytes = 8 << 30
+	}
+	t.AutoActivate = t.AutoActivateSet == nil || *t.AutoActivateSet
 }
 
 func (c *Config) resolveSecrets() error {
@@ -332,6 +393,26 @@ func (c *Config) Validate() error {
 	}
 	if p.FirewallSettle < 0 {
 		errs = append(errs, errors.New("proxmox.firewall_settle must not be negative"))
+	}
+	if t := c.Templates; t.Enabled() {
+		tr := t.VMIDRange
+		switch {
+		case tr.Start < 100 || tr.End < tr.Start:
+			errs = append(errs, fmt.Errorf("templates.vmid_range %d-%d is invalid", tr.Start, tr.End))
+		case tr.Start <= r.End && r.Start <= tr.End:
+			errs = append(errs, fmt.Errorf("templates.vmid_range %d-%d overlaps proxmox.vmid_range %d-%d", tr.Start, tr.End, r.Start, r.End))
+		}
+		if t.Keep < 2 {
+			errs = append(errs, errors.New("templates.keep must be at least 2 (the active version and one to roll back to)"))
+		}
+		if t.CheckInterval < 0 || t.BuildTimeout < 0 || t.VerifyTimeout < 0 {
+			errs = append(errs, errors.New("templates: durations must not be negative"))
+		}
+		for _, a := range t.SelfTestBlocked {
+			if _, port, err := net.SplitHostPort(a); err != nil || port == "" {
+				errs = append(errs, fmt.Errorf("templates.selftest_blocked entry %q must be host:port", a))
+			}
+		}
 	}
 	return errors.Join(errs...)
 }

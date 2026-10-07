@@ -12,7 +12,7 @@ func TestTemplateRoundTripAndActivation(t *testing.T) {
 	ctx := context.Background()
 	a := Template{ID: "tpla", SlimRelease: "20261005.17", RunnerVersion: "2.338.0", LayerVersion: "1", State: TemplateActive,
 		VMID: 950, Trigger: "bootstrap", Report: []byte(`{"unexpected":0}`), Pinned: true}
-	b := Template{ID: "tplb", SlimRelease: "20261012.3", RunnerVersion: "2.339.0", LayerVersion: "1", State: TemplateReady, VMID: 951, SizeBytes: 123}
+	b := Template{ID: "tplb", SlimRelease: "20261012.3", RunnerVersion: "2.339.0", LayerVersion: "1", State: TemplateReady, VMID: 951, RuntimeRef: "951/tplb", SizeBytes: 123}
 	for _, tpl := range []Template{a, b} {
 		if err := s.CreateTemplate(ctx, tpl); err != nil {
 			t.Fatal(err)
@@ -44,6 +44,9 @@ func TestTemplateRoundTripAndActivation(t *testing.T) {
 	b2.ID = "tplc"
 	if err := s.CreateTemplate(ctx, b2); err == nil {
 		t.Fatal("a second active template must be rejected")
+	}
+	if g, _ := s.GetTemplate(ctx, "tplb"); g.RuntimeRef != "951/tplb" {
+		t.Fatalf("runtime ref = %q", g.RuntimeRef)
 	}
 	list, _ := s.ListTemplates(ctx)
 	if len(list) != 2 || list[0].ID != "tplb" {
