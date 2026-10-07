@@ -323,6 +323,9 @@ func (s *Server) clone(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	g.Config["linked"] = r.PostForm.Get("full")
+	if src.Template && r.PostForm.Get("full") != "1" {
+		g.Config["rootfs"] = fmt.Sprintf("local-lvm:base-%d-disk-0/vm-%d-disk-0,size=8G", src.VMID, newID)
+	}
 	s.guests[newID] = g
 	data(w, s.task("vzclone", newID, "OK"))
 }

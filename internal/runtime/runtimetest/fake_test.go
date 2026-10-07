@@ -3,6 +3,7 @@ package runtimetest
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cocardoso/gh-runners-manager/internal/runtime"
@@ -59,5 +60,35 @@ func TestFakeCreateErrAndValidation(t *testing.T) {
 	bad.Cores = 0
 	if _, err := f.Create(ctx, bad); !errors.Is(err, runtime.ErrInvalidSpec) {
 		t.Fatalf("Create(invalid) = %v, want ErrInvalidSpec", err)
+	}
+}
+
+func TestFakeTemplates(t *testing.T) {
+	f := NewFake()
+	ctx := context.Background()
+	var _ runtime.Templates = f
+	ref, err := f.CreateTemplate(ctx, runtime.TemplateSpec{ID: "t1", Archive: strings.NewReader("abc"), Size: 3, SHA256: strings.Repeat("a", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := spec("e1")
+	s.Template = f.TemplateEnvironmentRef(ref)
+	envRef, _ := f.Create(ctx, s)
+	if used, _ := f.TemplateInUse(ctx, ref); !used {
+		t.Fatal("template should be in use")
+	}
+	if err := f.DeleteTemplate(ctx, ref); !errors.Is(err, runtime.ErrTemplateInUse) {
+		t.Fatalf("delete in use = %v", err)
+	}
+	_ = f.Destroy(ctx, envRef)
+	if err := f.DeleteTemplate(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.TemplateIDs()) != 0 {
+		t.Fatal("template not deleted")
+	}
+	f.CreateTemplateErr = errors.New("boom")
+	if _, err := f.CreateTemplate(ctx, runtime.TemplateSpec{ID: "t2", Archive: strings.NewReader("x"), Size: 1, SHA256: strings.Repeat("a", 64)}); err == nil {
+		t.Fatal("want the injected error")
 	}
 }
