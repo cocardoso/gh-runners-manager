@@ -57,8 +57,12 @@ func run(ctx context.Context, environ, runnerDir, runnerUser, cgroup, poweroff s
 	go client.Run(sendCtx)
 
 	host, _ := os.Hostname()
-	client.Event(ingest.EventHello, map[string]any{"version": version.Version, "hostname": host, "ip": ipv4()})
+	client.Event(ingest.EventHello, map[string]any{"version": version.Version, "hostname": host, "ip": ipv4(), "mode": boot.Mode})
 	client.Log("agent", "ghrm-agent "+version.Version+" started for environment "+boot.EnvironmentID)
+
+	if boot.Mode != "" {
+		return runTemplateMode(ctx, client, boot, runnerDir, poweroff, stopSend)
+	}
 
 	// The runner writes one log per step and one for the whole job; the job stream
 	// carries only the whole-job log, whose record ID is announced in the diag log.
@@ -107,6 +111,8 @@ func run(ctx context.Context, environ, runnerDir, runnerUser, cgroup, poweroff s
 			}
 		}}
 	r.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8"}
+	// Jobs see the image's environment (tool paths, ImageOS, ...), as on hosted runners.
+	r.Env = agent.MergeEnvironmentFile(r.Env, "/etc/environment")
 	if u, err := user.Lookup(runnerUser); err == nil {
 		uid, _ := strconv.ParseUint(u.Uid, 10, 32)
 		gid, _ := strconv.ParseUint(u.Gid, 10, 32)
@@ -162,4 +168,50 @@ func ipv4() string {
 		}
 	}
 	return ""
+}
+
+// runTemplateMode runs a template build or self-test (spec §8.3, §8.4), then powers off.
+func runTemplateMode(ctx context.Context, client *agent.Client, boot agent.Bootstrap, runnerDir, poweroff string, stopSend func()) int {
+	code := 0
+	cmd := agent.OSCommander{}
+	switch boot.Mode {
+	case ingest.ModeBuild:
+		work := "/var/lib/ghrm-build"
+		if err := os.MkdirAll(work, 0o755); err == nil {
+			err = agent.RunBuild(ctx, client, cmd, work)
+		}
+		if err != nil {
+			client.Log("agent", "build failed: "+err.Error())
+			code = 1
+		}
+	case ingest.ModeSelfTest:
+		work := "/var/lib/ghrm-selftest"
+		_ = os.MkdirAll(work, 0o755)
+		rep, err := agent.RunSelfTest(ctx, client, cmd, agent.SelfTestOptions{Work: work, RunnerDir: runnerDir, BlockedAddrs: boot.Blocked})
+		if err != nil {
+			client.Log("agent", "self-test could not report: "+err.Error())
+			code = 1
+		}
+		for _, c := range rep.Checks {
+			if !c.OK {
+				code = 1
+			}
+		}
+	default:
+		client.Log("agent", "unknown mode "+boot.Mode)
+		code = 1
+	}
+	fctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	_ = client.Flush(fctx)
+	cancel()
+	client.Event(ingest.EventShutdown, nil)
+	fctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	_ = client.Flush(fctx)
+	cancel()
+	stopSend()
+	if poweroff != "" {
+		args := strings.Fields(poweroff)
+		_ = exec.Command(args[0], args[1:]...).Run() //nolint:gosec // operator-supplied command
+	}
+	return code
 }

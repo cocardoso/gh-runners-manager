@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -410,5 +411,46 @@ func TestRunnerCancelKillsTheProcessGroup(t *testing.T) {
 	time.Sleep(2500 * time.Millisecond)
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("a child of run.sh survived cancellation")
+	}
+}
+
+func TestBootstrapModes(t *testing.T) {
+	dir := t.TempDir()
+	n := 0
+	write := func(kv ...string) string {
+		n++
+		p := filepath.Join(dir, fmt.Sprint("environ", n))
+		_ = os.WriteFile(p, []byte(strings.Join(kv, "\x00")), 0o600)
+		return p
+	}
+	base := []string{ingest.EnvURL + "=https://x", ingest.EnvToken + "=t", ingest.EnvFingerprint + "=" + strings.Repeat("AB", 32)}
+	b, ok, err := LoadBootstrap(write(append(base, ingest.EnvMode+"=build")...))
+	if err != nil || !ok || b.Mode != "build" {
+		t.Fatalf("build mode = %+v %v %v", b, ok, err)
+	}
+	if _, ok, _ := LoadBootstrap(write(base...)); ok {
+		t.Fatal("without a JIT config or a mode the template boot stays idle")
+	}
+	b, _, _ = LoadBootstrap(write(append(base, ingest.EnvMode+"=selftest", ingest.EnvSelfTestBlocked+"=10.1.1.1:443, 10.1.1.6:8006")...))
+	if b.Mode != "selftest" || len(b.Blocked) != 2 || b.Blocked[1] != "10.1.1.6:8006" {
+		t.Fatalf("selftest = %+v", b)
+	}
+}
+
+func TestEnvironmentFileMerge(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "environment")
+	_ = os.WriteFile(p, []byte("PATH=\"/opt/tool/bin:/usr/bin\"\nImageOS=Linux\n# comment\nLANG=en_US.UTF-8\nbad line\n"), 0o644)
+	env := MergeEnvironmentFile([]string{"PATH=/usr/bin", "LANG=C.UTF-8", "HOME=/home/runner"}, p)
+	got := strings.Join(env, "|")
+	for _, want := range []string{"PATH=/opt/tool/bin:/usr/bin", "ImageOS=Linux", "LANG=C.UTF-8", "HOME=/home/runner"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("env %s lacks %s", got, want)
+		}
+	}
+	if strings.Contains(got, "en_US") {
+		t.Errorf("LANG must stay C.UTF-8: %s", got)
+	}
+	if strings.Count(got, "PATH=") != 1 {
+		t.Errorf("PATH duplicated: %s", got)
 	}
 }
