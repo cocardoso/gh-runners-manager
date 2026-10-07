@@ -2,3 +2,4 @@ node_modules/
 dist/*
 !dist/.keep
 openapi.json
+tsconfig.tsbuildinfo

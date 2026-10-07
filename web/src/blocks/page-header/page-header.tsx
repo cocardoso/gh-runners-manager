@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Tabs, cn, type TabsItem } from "@cloudflare/kumo";
 
 export const KUMO_PAGE_HEADER_VARIANTS = {
