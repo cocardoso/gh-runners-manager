@@ -16,6 +16,7 @@ import (
 )
 
 type fakeBuilds struct {
+	agentErr    error
 	rootfsBytes int64
 	rootfsSHA   string
 	maxChunk    int
@@ -32,6 +33,9 @@ func (f *fakeBuilds) BuildSpec(_ context.Context, envID string) (BuildSpec, erro
 func (f *fakeBuilds) WriteAgent(_ context.Context, envID string, w io.Writer) error {
 	if envID != "bld" {
 		return ErrWrongKind
+	}
+	if f.agentErr != nil {
+		return f.agentErr
 	}
 	_, err := w.Write([]byte("agent-bin"))
 	return err
@@ -182,4 +186,20 @@ func TestBuildEndpointsAbsentWithoutService(t *testing.T) {
 		t.Fatalf("without a build service = %d, want 404", r.StatusCode)
 	}
 	_ = errors.New
+}
+
+// A failed agent download is an error status, not an empty 200 the agent can only
+// reject by its checksum.
+func TestAgentDownloadErrorsAreReported(t *testing.T) {
+	srv, fb, tok := buildHarness(t)
+	fb.agentErr = errors.New("template: ghrm-agent binary: no such file")
+	r := call(t, "GET", srv.URL+BuildAgentPath, tok["bld"], nil, nil)
+	b, _ := io.ReadAll(r.Body)
+	if r.StatusCode != 500 || !strings.Contains(string(b), "no such file") {
+		t.Fatalf("agent = %d %q, want 500 with the cause", r.StatusCode, b)
+	}
+	fb.agentErr = ErrWrongKind
+	if r = call(t, "GET", srv.URL+BuildAgentPath, tok["bld"], nil, nil); r.StatusCode != 403 {
+		t.Fatalf("wrong kind = %d, want 403", r.StatusCode)
+	}
 }

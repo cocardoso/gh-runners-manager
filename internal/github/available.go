@@ -37,13 +37,13 @@ func (a *availableJobs) GetMessage(ctx context.Context, lastMessageID, maxCapaci
 		jobs = append(jobs, &scaleset.JobAvailable{JobMessageBase: j.JobMessageBase})
 	}
 	for _, j := range jobs {
-		a.logger.Info("job message", "type", j.MessageType, "job_id", j.JobID, "queue_time", j.QueueTime,
+		a.logger.Debug("job message", "type", j.MessageType, "job_id", j.JobID, "queue_time", j.QueueTime,
 			"scale_set_assign_time", j.ScaleSetAssignTime, "runner_assign_time", j.RunnerAssignTime)
 		// Recording the queue time is best effort: it never blocks acquiring the job.
 		_ = a.h.HandleJobAvailable(context.WithoutCancel(ctx), j)
 	}
 	for _, j := range msg.JobStartedMessages {
-		a.logger.Info("job message", "type", j.MessageType, "job_id", j.JobID, "queue_time", j.QueueTime,
+		a.logger.Debug("job message", "type", j.MessageType, "job_id", j.JobID, "queue_time", j.QueueTime,
 			"scale_set_assign_time", j.ScaleSetAssignTime, "runner_assign_time", j.RunnerAssignTime)
 	}
 	return msg, nil

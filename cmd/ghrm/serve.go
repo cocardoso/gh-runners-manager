@@ -116,9 +116,10 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	// can leave residue on the host that later breaks new guests; surface it.
 	pc.OnTaskWarnings = func(w proxmox.TaskWarnings) {
 		logger.Warn("proxmox task finished with warnings", "upid", w.UPID, "type", w.Type, "vmid", w.VMID, "log", w.Log)
-		_, _ = rec.Warn(context.WithoutCancel(ctx), "proxmox.task_warnings",
-			fmt.Sprintf("Proxmox %s of %d finished with warnings; check the host for leftovers", w.Type, w.VMID),
-			events.Refs{}, map[string]any{"upid": w.UPID, "log": w.Log})
+		wctx := context.WithoutCancel(ctx)
+		refs, data := taskWarningRefs(wctx, db, w)
+		_, _ = rec.Warn(wctx, "proxmox.task_warnings",
+			fmt.Sprintf("Proxmox %s of %d finished with warnings; check the host for leftovers", w.Type, w.VMID), refs, data)
 	}
 	signIn, err := newAuth(ctx, db, cfg.DataDir, logger)
 	if err != nil {

@@ -11,6 +11,7 @@ const shots: [string, string][] = [
   ["environments", "/environments"],
   ["scale-sets", "/scale-sets"],
   ["live-logs", "/logs"],
+  ["templates", "/templates"],
 ];
 
 test("README screenshots", async ({ page, demo, request }) => {
@@ -19,6 +20,12 @@ test("README screenshots", async ({ page, demo, request }) => {
   await expect.poll(async () => ((await (await request.get(`${demo.url}/api/v1/jobs?status=completed`)).json()).jobs ?? []).length, { timeout: 90_000 }).toBeGreaterThan(12);
   const { jobs } = await (await request.get(`${demo.url}/api/v1/jobs?status=running`)).json();
   if (jobs?.[0]) shots.push(["job-logs", `/jobs/${jobs[0].id}?tab=logs`], ["job-timeline", `/jobs/${jobs[0].id}`]);
+  // A simulated template build, so the Templates page has a verified version.
+  await request.post(`${demo.url}/api/v1/templates/build`, { headers: { Authorization: "Bearer demo" } });
+  await expect.poll(async () => (await (await request.get(`${demo.url}/api/v1/templates`)).json()).templates?.[0]?.state, { timeout: 60_000 }).toBe("active");
+  const { templates } = await (await request.get(`${demo.url}/api/v1/templates`)).json();
+  const verified = (templates ?? []).find((t: { report?: { checks?: unknown[] } }) => (t.report?.checks ?? []).length > 0);
+  if (verified) shots.push(["template-fidelity", `/templates/${verified.id}?tab=fidelity`]);
   const out = path.resolve(import.meta.dirname, "../../docs/images");
   for (const mode of ["light", "dark"]) {
     await page.addInitScript((m) => localStorage.setItem("ghrm.theme", m), mode);

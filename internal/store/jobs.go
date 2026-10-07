@@ -52,6 +52,8 @@ func scanJob(row scanner) (Job, error) {
 }
 
 // UpsertJob inserts a job or merges the non-zero fields of j into the existing row.
+// UpsertJob creates or updates a job; empty fields keep their stored values, and the
+// first queue time recorded is kept.
 func (s *Store) UpsertJob(ctx context.Context, j Job) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO jobs (`+jobColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -66,7 +68,7 @@ func (s *Store) UpsertJob(ctx context.Context, j Job) error {
 			environment_id = CASE WHEN excluded.environment_id != '' THEN excluded.environment_id ELSE jobs.environment_id END,
 			status         = CASE WHEN excluded.status != ''         THEN excluded.status         ELSE jobs.status END,
 			result         = CASE WHEN excluded.result != ''         THEN excluded.result         ELSE jobs.result END,
-			queued_at      = CASE WHEN excluded.queued_at != 0       THEN excluded.queued_at      ELSE jobs.queued_at END,
+			queued_at      = CASE WHEN jobs.queued_at = 0            THEN excluded.queued_at      ELSE jobs.queued_at END,
 			started_at     = CASE WHEN excluded.started_at != 0      THEN excluded.started_at     ELSE jobs.started_at END,
 			finished_at    = CASE WHEN excluded.finished_at != 0     THEN excluded.finished_at    ELSE jobs.finished_at END,
 			updated_at     = excluded.updated_at`,

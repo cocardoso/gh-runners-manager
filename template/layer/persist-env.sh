@@ -16,6 +16,7 @@ drop() {
   rm -f "$tmp"
 }
 for v in "$@"; do
+  # Set, even to an empty value: a container's ENV wins over /etc/environment either way.
   if [ -n "${!v+x}" ]; then
     drop "$v"
     echo "${v}=${!v}" >>"$file"

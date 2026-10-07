@@ -376,6 +376,19 @@ var demoReport = []byte(`{"NodeType":"HeaderNode","Title":"Ubuntu-Slim","Childre
    {"NodeType":"ToolVersionNode","ToolName":"Git","Version":"2.51.0"},
    {"NodeType":"ToolVersionNode","ToolName":"Docker Compose v2","Version":"2.39.4"}]}]}]}`)
 
+// demoBuiltReport is what a simulated template reports: Git moved on since GitHub's
+// build, and the ghrm layer adds the Docker Engine, as on a real build.
+var demoBuiltReport = []byte(`{"NodeType":"HeaderNode","Title":"Ubuntu-Slim","Children":[
+ {"NodeType":"ToolVersionNode","ToolName":"OS Version:","Version":"24.04.3 LTS"},
+ {"NodeType":"HeaderNode","Title":"Installed Software","Children":[
+  {"NodeType":"HeaderNode","Title":"Language and Runtime","Children":[
+   {"NodeType":"ToolVersionNode","ToolName":"Node.js","Version":"24.13.0"},
+   {"NodeType":"ToolVersionNode","ToolName":"Python","Version":"3.12.3"}]},
+  {"NodeType":"HeaderNode","Title":"Tools","Children":[
+   {"NodeType":"ToolVersionNode","ToolName":"Git","Version":"2.51.2"},
+   {"NodeType":"ToolVersionNode","ToolName":"Docker Compose v2","Version":"2.39.4"},
+   {"NodeType":"ToolVersionNode","ToolName":"Docker Server","Version":"28.5.1"}]}]}]}`)
+
 var buildScript = []struct{ step, line string }{
 	{"spec", "template %s: ubuntu-slim/20261005.17, runner 2.338.0, layer 1"},
 	{"clone", "Cloning into '/var/lib/ghrm-build/runner-images'..."},
@@ -441,7 +454,7 @@ func (d *Demo) advanceSpecial(ctx context.Context, e store.Environment, now time
 			"blocked 192.168.1.1:443", "blocked 192.168.1.10:8006", "runner binary", "software report"} {
 			checks = append(checks, ingest.Check{Name: name, OK: true, Seconds: 0.5 + d.rng.Float64()*3})
 		}
-		_ = d.Templates.ReceiveSelfTest(ctx, e.ID, ingest.SelfTestReport{Checks: checks, Software: demoReport})
+		_ = d.Templates.ReceiveSelfTest(ctx, e.ID, ingest.SelfTestReport{Checks: checks, Software: demoBuiltReport})
 		d.Controller.AgentEvent(ctx, e.ID, ingest.EventSelfTestFinished, now, nil)
 		_ = d.Runtime.Stop(ctx, runtime.Ref{ID: e.RuntimeRef})
 	}

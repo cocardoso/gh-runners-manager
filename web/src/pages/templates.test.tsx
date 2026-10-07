@@ -19,7 +19,8 @@ const report = {
   ],
   differences: [
     { kind: "version", name: "Installed Software / Language and Runtime / Node.js", expected: "24.13.0", actual: "24.14.0", explained: false },
-    { kind: "extra", name: "Installed Software / Tools / Docker Server", actual: "28.4.0", explained: true },
+    { kind: "extra", name: "Installed Software / Tools / Docker Server", actual: "28.4.0", explained: true, reason: "installed by the ghrm layer" },
+    { kind: "version", name: "Installed Software / Tools / jq", expected: "1.7.1", actual: "1.7.2", explained: true, reason: "newer release: built after GitHub's image, the recipe installed the latest" },
   ],
   unexpected: 1,
 };
@@ -101,6 +102,8 @@ test("the detail page shows checks and fidelity differences", async () => {
   expect(await screen.findByText("Installed Software / Language and Runtime / Node.js")).toBeInTheDocument();
   expect(screen.getByText("24.14.0")).toBeInTheDocument();
   expect(screen.getByText(/1 unexpected difference/)).toBeInTheDocument();
+  expect(screen.getByText("installed by the ghrm layer")).toBeInTheDocument();
+  expect(screen.getByText(/newer release: built after GitHub's image/)).toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Verification" }));
   expect(await screen.findByText("docker hello-world")).toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Build" }));

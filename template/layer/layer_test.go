@@ -98,20 +98,21 @@ func TestPersistEnvLetsTheImageEnvWin(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath, envPath := filepath.Join(dir, "persist-env.sh"), filepath.Join(dir, "environment")
 	_ = os.WriteFile(scriptPath, script, 0o755)
-	_ = os.WriteFile(envPath, []byte("PATH=/usr/bin:/bin\nImageVersion=1.0.0\nImageOS=\nLANG=en_US.UTF-8\nNVM_DIR=$HOME/.nvm\n"), 0o644)
-	cmd := exec.Command(bash, scriptPath, envPath, "ImageVersion", "ImageOS", "IMAGE_OWNER", "UNSET_VAR")
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "ImageVersion=20260925.9", "ImageOS=Linux", "IMAGE_OWNER=GitHub"}
+	_ = os.WriteFile(envPath, []byte("PATH=/usr/bin:/bin\nImageVersion=1.0.0\nImageOS=\nLANG=en_US.UTF-8\nNVM_DIR=$HOME/.nvm\nEMPTIED=x\n"), 0o644)
+	cmd := exec.Command(bash, scriptPath, envPath, "ImageVersion", "ImageOS", "IMAGE_OWNER", "UNSET_VAR", "EMPTIED")
+	// An ENV set to an empty value is empty in a container too, so it wins as well.
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "ImageVersion=20260925.9", "ImageOS=Linux", "IMAGE_OWNER=GitHub", "EMPTIED="}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
 	b, _ := os.ReadFile(envPath)
 	got := string(b)
-	for _, want := range []string{"PATH=/usr/bin:/bin\n", "NVM_DIR=$HOME/.nvm\n", "ImageVersion=20260925.9\n", "ImageOS=Linux\n", "IMAGE_OWNER=GitHub\n", "LANG=C.UTF-8\n"} {
+	for _, want := range []string{"PATH=/usr/bin:/bin\n", "NVM_DIR=$HOME/.nvm\n", "ImageVersion=20260925.9\n", "ImageOS=Linux\n", "IMAGE_OWNER=GitHub\n", "LANG=C.UTF-8\n", "EMPTIED=\n"} {
 		if strings.Count(got, want) != 1 {
 			t.Errorf("want exactly one %q in:\n%s", want, got)
 		}
 	}
-	for _, gone := range []string{"ImageVersion=1.0.0", "ImageOS=\n", "en_US", "UNSET_VAR"} {
+	for _, gone := range []string{"ImageVersion=1.0.0", "ImageOS=\n", "en_US", "UNSET_VAR", "EMPTIED=x"} {
 		if strings.Contains(got, gone) {
 			t.Errorf("%q must be gone:\n%s", gone, got)
 		}

@@ -4,6 +4,7 @@ package template
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,23 +39,25 @@ const slimPrefix = "ubuntu-slim/"
 var runnerSHA = regexp.MustCompile(`<!-- BEGIN SHA linux-x64 -->([0-9a-f]{64})<!-- END SHA linux-x64 -->`)
 
 type githubReleases struct {
-	api, raw string
-	hc       *http.Client
+	api, raw, web string
+	hc            *http.Client
 }
 
 // NewGitHubReleases reads releases from the GitHub REST API (apiBase, default https://api.github.com)
-// and files from raw.githubusercontent.com (rawBase).
+// and files from raw.githubusercontent.com (rawBase). Release assets come from https://github.com,
+// or from rawBase when one is given (tests).
 func NewGitHubReleases(apiBase, rawBase string, hc *http.Client) Releases {
 	if apiBase == "" {
 		apiBase = "https://api.github.com"
 	}
+	web := rawBase
 	if rawBase == "" {
-		rawBase = "https://raw.githubusercontent.com"
+		rawBase, web = "https://raw.githubusercontent.com", "https://github.com"
 	}
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &githubReleases{api: strings.TrimRight(apiBase, "/"), raw: strings.TrimRight(rawBase, "/"), hc: hc}
+	return &githubReleases{api: strings.TrimRight(apiBase, "/"), raw: strings.TrimRight(rawBase, "/"), web: strings.TrimRight(web, "/"), hc: hc}
 }
 
 func (g *githubReleases) get(ctx context.Context, url string, out any) error {
@@ -73,7 +76,7 @@ func (g *githubReleases) get(ctx context.Context, url string, out any) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("template: GET %s: %s", url, resp.Status)
+		return &httpStatusError{url: url, code: resp.StatusCode, status: resp.Status}
 	}
 	if b, ok := out.(*[]byte); ok {
 		*b = body
@@ -140,8 +143,22 @@ func (g *githubReleases) LatestRunner(ctx context.Context) (RunnerRelease, error
 	}, nil
 }
 
+// The release asset is the report of that very image; the recipe's report file is not
+// refreshed for every release, so it is only a fallback.
 func (g *githubReleases) PublishedReport(ctx context.Context, slim Release) ([]byte, error) {
 	var b []byte
-	err := g.get(ctx, g.raw+"/actions/runner-images/"+slim.Tag+"/images/ubuntu-slim/ubuntu-slim-Report.json", &b)
+	err := g.get(ctx, g.web+"/actions/runner-images/releases/download/"+slim.Tag+"/internal.ubuntu-slim.json", &b)
+	var se *httpStatusError
+	if err == nil || !errors.As(err, &se) || se.code != http.StatusNotFound {
+		return b, err // an outage must not silently compare with the stale file
+	}
+	err = g.get(ctx, g.raw+"/actions/runner-images/"+slim.Tag+"/images/ubuntu-slim/ubuntu-slim-Report.json", &b)
 	return b, err
 }
+
+type httpStatusError struct {
+	url, status string
+	code        int
+}
+
+func (e *httpStatusError) Error() string { return fmt.Sprintf("template: GET %s: %s", e.url, e.status) }
