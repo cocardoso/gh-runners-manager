@@ -321,7 +321,10 @@ func New(d Deps) http.Handler {
 
 	s := &sse{d: d}
 	mux.HandleFunc("GET /api/v1/events/stream", s.events)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK); _, _ = w.Write([]byte("ok\n")) })
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		err := d.Store.Ping(r.Context())
 		if err == nil && d.Ready != nil {

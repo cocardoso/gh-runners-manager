@@ -43,11 +43,16 @@ func (c *Controller) Reap(ctx context.Context) {
 		st := environment.State(e.State)
 		g, exists := byEnv[e.ID]
 		switch {
-		case e.RuntimeRef != "" && !exists && st != environment.Destroying && st != environment.Failed:
+		case e.RuntimeRef != "" && !exists && st != environment.Destroying && st != environment.Failed && c.confirmedGone(ctx, runtime.Ref{ID: e.RuntimeRef}):
 			c.Fail(ctx, e.ID, "runtime_gone", errors.New("the runtime environment no longer exists"))
 		case exists && !g.Running && poweredOffSilently(st) && now.Sub(e.StateChangedAt) > silentPowerOffGrace && !c.liveRunning(ctx, g.Ref):
 			c.log(ctx, e.ID, "control-plane", "guest is no longer running; the agent did not report an exit")
 			c.advance(ctx, e.ID, environment.Completing, nil)
+		case st == environment.Idle && c.d.Timeouts.Expired(st, e.StateChangedAt, now):
+			// No job came: a normal scale-down, not a failure.
+			_, _ = c.d.Recorder.Info(ctx, "environment.idle_timeout", "no job arrived; releasing the environment",
+				events.Refs{ScaleSet: e.ScaleSet, EnvironmentID: e.ID}, nil)
+			c.destroy(ctx, e.ID)
 		case c.d.Timeouts.Expired(st, e.StateChangedAt, now):
 			c.Fail(ctx, e.ID, "timeout:"+e.State, fmt.Errorf("stayed %s longer than %s", e.State, c.d.Timeouts[st]))
 		}
@@ -73,4 +78,11 @@ func (c *Controller) liveRunning(ctx context.Context, ref runtime.Ref) bool {
 		return false
 	}
 	return err != nil || st.Running
+}
+
+// confirmedGone checks with a live status call that a guest missing from the
+// runtime snapshot is really gone (it may have been created after the snapshot).
+func (c *Controller) confirmedGone(ctx context.Context, ref runtime.Ref) bool {
+	_, err := c.d.Runtime.Status(ctx, ref)
+	return errors.Is(err, runtime.ErrNotFound)
 }

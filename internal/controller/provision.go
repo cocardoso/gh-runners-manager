@@ -17,7 +17,9 @@ import (
 )
 
 // servingStates are states of environments that serve, or will serve, an assigned job.
-var servingStates = []string{"pending", "provisioning", "booting", "connected", "idle", "running"}
+// completing is included: GitHub lowers the assigned-job count only after the job
+// completes, so counting it avoids provisioning a replacement for a finished job.
+var servingStates = []string{"pending", "provisioning", "booting", "connected", "idle", "running", "completing"}
 
 // liveStates hold host resources.
 var liveStates = []string{"pending", "provisioning", "booting", "connected", "idle", "running", "completing", "failed", "destroying"}
@@ -171,8 +173,17 @@ func (c *Controller) provision(ctx context.Context, e store.Environment, token s
 		c.Fail(ctx, e.ID, "jit", err)
 		return
 	}
-	if _, err := c.d.Store.UpdateEnvironment(ctx, e.ID, func(x *store.Environment) { x.RunnerID = runnerID }); err != nil {
+	saved, err := c.d.Store.UpdateEnvironment(ctx, e.ID, func(x *store.Environment) { x.RunnerID = runnerID })
+	if err != nil {
 		c.Fail(ctx, e.ID, "store", err)
+		return
+	}
+	if saved.State != string(environment.Provisioning) {
+		// Destroyed (or failed) while the JIT config was being generated: do not
+		// create anything, and do not leave the registration behind.
+		if err := c.d.GitHub.RemoveRunner(ctx, e.ScaleSet, runnerID); err != nil {
+			c.log(ctx, e.ID, "control-plane", "removing runner %d failed: %v", runnerID, err)
+		}
 		return
 	}
 	spec := runtime.EnvironmentSpec{ID: e.ID, Hostname: e.RunnerName, Cores: cfg.Cores, MemoryMB: cfg.MemoryMB,
@@ -230,9 +241,28 @@ func (c *Controller) Fail(ctx context.Context, id, stage string, cause error) {
 }
 
 // destroy tears an environment down: runtime guest, then the GitHub runner.
+// Concurrent calls for the same environment run once, and failed attempts are
+// retried with backoff, logging only when the error changes.
 func (c *Controller) destroy(ctx context.Context, id string) {
+	c.mu.Lock()
+	if c.destroying[id] {
+		c.mu.Unlock()
+		return
+	}
+	if r, ok := c.retries[id]; ok && c.now().Before(r.next) {
+		c.mu.Unlock()
+		return
+	}
+	c.destroying[id] = true
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		delete(c.destroying, id)
+		c.mu.Unlock()
+	}()
+
 	e, err := c.d.Store.GetEnvironment(ctx, id)
-	if err != nil {
+	if err != nil || e.State == string(environment.Destroyed) {
 		return
 	}
 	if e.State != string(environment.Destroying) {
@@ -242,12 +272,14 @@ func (c *Controller) destroy(ctx context.Context, id string) {
 	}
 	if e.RuntimeRef != "" {
 		if err := c.d.Runtime.Destroy(ctx, runtime.Ref{ID: e.RuntimeRef}); err != nil {
-			c.log(ctx, id, "runtime", "destroy failed (will retry): %v", err)
-			_, _ = c.d.Recorder.Warn(ctx, "environment.destroy_failed", err.Error(), events.Refs{ScaleSet: e.ScaleSet, EnvironmentID: id}, nil)
+			c.destroyFailed(ctx, e, err)
 			return
 		}
 		c.log(ctx, id, "runtime", "destroyed %s", e.RuntimeRef)
 	}
+	c.mu.Lock()
+	delete(c.retries, id)
+	c.mu.Unlock()
 	if e.RunnerID != 0 {
 		if err := c.d.GitHub.RemoveRunner(ctx, e.ScaleSet, e.RunnerID); err != nil {
 			c.log(ctx, id, "control-plane", "removing runner %d failed: %v", e.RunnerID, err)
@@ -256,8 +288,34 @@ func (c *Controller) destroy(ctx context.Context, id string) {
 	_, _ = c.transition(ctx, id, []string{"destroying"}, environment.Destroyed, nil)
 }
 
-// completingGrace is how long a completing environment may keep running before it is destroyed anyway.
-const completingGrace = 30 * time.Second
+type retry struct {
+	next    time.Time
+	backoff time.Duration
+	lastErr string
+}
+
+func (c *Controller) destroyFailed(ctx context.Context, e store.Environment, err error) {
+	c.mu.Lock()
+	r, ok := c.retries[e.ID]
+	if !ok {
+		r = &retry{backoff: 30 * time.Second}
+		c.retries[e.ID] = r
+	} else {
+		r.backoff = min(r.backoff*2, 5*time.Minute)
+	}
+	r.next = c.now().Add(r.backoff)
+	changed := r.lastErr != err.Error()
+	r.lastErr = err.Error()
+	c.mu.Unlock()
+	if changed {
+		c.log(ctx, e.ID, "runtime", "destroy failed (will retry with backoff): %v", err)
+		_, _ = c.d.Recorder.Warn(ctx, "environment.destroy_failed", err.Error(), events.Refs{ScaleSet: e.ScaleSet, EnvironmentID: e.ID}, nil)
+	}
+}
+
+// completingGrace is how long a completing environment may keep running before it is
+// destroyed anyway. The agent flushes logs and powers off on its own, normally in seconds.
+const completingGrace = 4 * time.Minute
 
 // Teardown destroys environments whose work is over.
 func (c *Controller) Teardown(ctx context.Context) {

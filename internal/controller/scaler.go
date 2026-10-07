@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strconv"
-	"time"
 
 	"github.com/actions/scaleset"
 	"github.com/actions/scaleset/listener"
@@ -76,8 +75,9 @@ func (s *scaler) HandleJobStarted(ctx context.Context, info *scaleset.JobStarted
 	if err := c.d.Store.UpsertJob(ctx, j); err != nil {
 		return err
 	}
-	_, _ = c.d.Recorder.Info(ctx, "job.started", j.DisplayName+" started on "+info.RunnerName,
-		events.Refs{ScaleSet: s.name, EnvironmentID: envID, JobID: j.ID}, map[string]any{"repository": j.Repository, "run_id": j.RunID})
+	_, _ = c.d.Recorder.Record(ctx, store.Event{Kind: "job.started", Level: "info", Time: c.now(),
+		Message:  j.DisplayName + " started on " + info.RunnerName,
+		ScaleSet: s.name, EnvironmentID: envID, JobID: j.ID, Data: map[string]any{"repository": j.Repository, "run_id": j.RunID}})
 	return nil
 }
 
@@ -104,9 +104,8 @@ func (s *scaler) HandleJobCompleted(ctx context.Context, info *scaleset.JobCompl
 	if info.Result != "succeeded" {
 		level = "warn"
 	}
-	_, _ = c.d.Recorder.Record(ctx, store.Event{Kind: "job.completed", Level: level, Time: time.Now(),
+	_, _ = c.d.Recorder.Record(ctx, store.Event{Kind: "job.completed", Level: level, Time: c.now(),
 		Message:  j.DisplayName + " completed: " + info.Result,
 		ScaleSet: s.name, EnvironmentID: envID, JobID: j.ID, Data: map[string]any{"result": info.Result}})
 	return nil
 }
-

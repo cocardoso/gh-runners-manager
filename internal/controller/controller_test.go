@@ -25,15 +25,21 @@ type fakeGitHub struct {
 	next    int64
 	jits    []string
 	removed []int64
+	onJIT   func(runnerName string)
 }
 
 func (f *fakeGitHub) EnsureScaleSet(context.Context, config.ScaleSet) (int, error) { return 7, nil }
 func (f *fakeGitHub) GenerateJIT(_ context.Context, _ string, _ int, runnerName string) (int64, string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.next++
+	id := f.next
 	f.jits = append(f.jits, runnerName)
-	return f.next, "jit-" + runnerName, nil
+	hook := f.onJIT
+	f.mu.Unlock()
+	if hook != nil {
+		hook(runnerName)
+	}
+	return id, "jit-" + runnerName, nil
 }
 func (f *fakeGitHub) RemoveRunner(_ context.Context, _ string, id int64) error {
 	f.mu.Lock()
@@ -390,5 +396,138 @@ func TestReaperWaitsBeforeConcludingSilentPowerOff(t *testing.T) {
 	h.c.Reap(ctx)
 	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "completing" && got.State != "destroyed" {
 		t.Fatalf("state = %s, want completing after the grace period", got.State)
+	}
+}
+
+// Final review Important #1: a finished job must not trigger another environment
+// before the lower demand arrives from GitHub.
+func TestFinishedJobDoesNotProvisionAnExtraEnvironment(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	for _, ev := range []string{ingest.EventHello, ingest.EventRunnerOnline, ingest.EventJobStarted, ingest.EventRunnerExited} {
+		h.c.AgentEvent(ctx, e.ID, ev, time.Now(), nil)
+	}
+	if err := h.c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.c.Wait()
+	if n := len(h.envs(t)); n != 1 {
+		t.Fatalf("environments = %d, want 1 (no extra environment for a finished job)", n)
+	}
+}
+
+// Final review Important #6: an environment created after the runtime snapshot must not be failed as gone.
+func TestReaperConfirmsBeforeDeclaringRuntimeGone(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	h.rt.ListExclude = map[string]bool{e.ID: true}
+	h.c.Reap(ctx)
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "booting" {
+		t.Fatalf("state = %s / %s, want booting", got.State, got.FailureStage)
+	}
+}
+
+func TestCompletingWaitsForPowerOff(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	h.c.AgentEvent(ctx, e.ID, ingest.EventRunnerExited, time.Now(), nil)
+	h.now = h.now.Add(45 * time.Second) // the agent is still flushing logs
+	h.c.Teardown(ctx)
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "completing" {
+		t.Fatalf("state = %s, want completing while the guest still runs", got.State)
+	}
+	_ = h.rt.Stop(ctx, runtime.Ref{ID: e.RuntimeRef})
+	h.c.Teardown(ctx)
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "destroyed" {
+		t.Fatalf("state = %s, want destroyed once the guest powered off", got.State)
+	}
+}
+
+func TestIdleTimeoutIsNotAFailure(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ScaleSets[0].KeepOnFailureMinutes = 30 })
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	h.c.AgentEvent(ctx, e.ID, ingest.EventHello, time.Now(), nil)
+	h.c.AgentEvent(ctx, e.ID, ingest.EventRunnerOnline, time.Now(), nil)
+	h.now = h.now.Add(11 * time.Minute)
+	h.c.Reap(ctx)
+	got, _ := h.db.GetEnvironment(ctx, e.ID)
+	if got.State != "destroyed" || got.FailureStage != "" {
+		t.Fatalf("env = %s / %q, want destroyed without a failure (scale-down is normal)", got.State, got.FailureStage)
+	}
+}
+
+func TestDestroyRetriesAreThrottled(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	h.rt.DestroyErr = errors.New("locked")
+	_ = h.c.RequestDestroy(ctx, e.ID)
+	for range 5 {
+		h.c.Teardown(ctx)
+	}
+	evs, _ := h.db.ListEvents(ctx, store.EventFilter{EnvironmentID: e.ID})
+	warns := 0
+	for _, ev := range evs {
+		if ev.Kind == "environment.destroy_failed" {
+			warns++
+		}
+	}
+	if warns != 1 || h.rt.DestroyCalls != 1 {
+		t.Fatalf("destroy_failed events = %d, destroy calls = %d; want 1 and 1 within the backoff", warns, h.rt.DestroyCalls)
+	}
+	h.rt.DestroyErr = nil
+	h.now = h.now.Add(time.Minute)
+	h.c.Teardown(ctx)
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "destroyed" {
+		t.Fatalf("state = %s, want destroyed after the backoff", got.State)
+	}
+}
+
+func TestJITRunnerRemovedWhenEnvironmentDestroyedMeanwhile(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	h.gh.onJIT = func(runnerName string) {
+		e, _ := h.db.FindEnvironmentByRunner(ctx, runnerName)
+		_ = h.c.RequestDestroy(ctx, e.ID) // an operator destroys it while the JIT config is generated
+	}
+	h.provision(t, 1)
+	if len(h.gh.removed) != 1 {
+		t.Fatalf("removed runners = %v, want the JIT registration removed", h.gh.removed)
+	}
+	if list, _ := h.rt.List(ctx); len(list) != 0 {
+		t.Fatalf("a destroyed environment was still created: %+v", list)
+	}
+}
+
+func TestConcurrentDestroysRunOnce(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	h.rt.DestroyDelay = 50 * time.Millisecond
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = h.c.RequestDestroy(ctx, e.ID) }()
+	}
+	wg.Wait()
+	if h.rt.DestroyCalls != 1 {
+		t.Fatalf("runtime destroy calls = %d, want 1", h.rt.DestroyCalls)
+	}
+}
+
+func TestJobTimesUseTheControllerClock(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	h.now = time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	sc := h.c.Scaler("lab")
+	_ = sc.HandleJobCompleted(ctx, &scaleset.JobCompleted{Result: "succeeded", RunnerName: "x", JobMessageBase: scaleset.JobMessageBase{JobID: "j9"}})
+	evs, _ := h.db.ListEvents(ctx, store.EventFilter{JobID: "j9"})
+	j, _ := h.db.GetJob(ctx, "j9")
+	if !j.FinishedAt.Equal(h.now) || len(evs) != 1 || !evs[0].Time.Equal(h.now) {
+		t.Fatalf("job finished %v, event %v; want the controller clock %v", j.FinishedAt, evs, h.now)
 	}
 }

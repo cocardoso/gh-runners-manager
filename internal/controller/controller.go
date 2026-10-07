@@ -67,8 +67,10 @@ type scaleSetState struct {
 type Controller struct {
 	d Deps
 
-	mu        sync.Mutex
-	scaleSets map[string]*scaleSetState
+	mu         sync.Mutex
+	scaleSets  map[string]*scaleSetState
+	destroying map[string]bool   // single-flight destroys
+	retries    map[string]*retry // destroy backoff
 
 	reconcileMu sync.Mutex
 	inflight    sync.WaitGroup
@@ -83,7 +85,8 @@ func New(d Deps) *Controller {
 	if d.Timeouts == nil {
 		d.Timeouts = environment.DefaultTimeouts()
 	}
-	c := &Controller{d: d, scaleSets: map[string]*scaleSetState{}, kick: make(chan struct{}, 1)}
+	c := &Controller{d: d, scaleSets: map[string]*scaleSetState{}, destroying: map[string]bool{},
+		retries: map[string]*retry{}, kick: make(chan struct{}, 1)}
 	for _, ss := range d.Config.ScaleSets {
 		c.scaleSets[ss.Name] = &scaleSetState{cfg: ss}
 	}

@@ -70,9 +70,9 @@ type Server struct {
 	StorageUsed  int64
 	// PowerOffOnNextStop simulates a guest that powers itself off just before a stop request.
 	PowerOffOnNextStop bool
-	MemoryTotal     int64
-	MemoryAvailable int64
-	ThinPools       []ThinPool
+	MemoryTotal        int64
+	MemoryAvailable    int64
+	ThinPools          []ThinPool
 }
 
 // NewServer starts a fake server that accepts the given API token. It is closed when the test ends.

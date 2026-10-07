@@ -96,7 +96,9 @@ func TestListAndGetEndpoints(t *testing.T) {
 	if h.getJSON(t, "/api/v1/events?environment=env1", &evs); len(evs.Events) != 1 {
 		t.Fatalf("events = %+v", evs)
 	}
-	var ss struct{ ScaleSets []map[string]any `json:"scale_sets"` }
+	var ss struct {
+		ScaleSets []map[string]any `json:"scale_sets"`
+	}
 	if h.getJSON(t, "/api/v1/scale-sets", &ss); len(ss.ScaleSets) != 1 || ss.ScaleSets[0]["name"] != "lab" {
 		t.Fatalf("scale sets = %+v", ss)
 	}

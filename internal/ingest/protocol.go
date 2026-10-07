@@ -20,15 +20,15 @@ const (
 // Agent event names. Events share the "agent" stream's sequence numbers, so a
 // replayed event is recognised and delivered once.
 const (
-	EventHello         = "hello"
-	EventRunnerStarted = "runner_started"
-	EventRunnerOnline  = "runner_online"
-	EventJobStarted    = "job_started"
-	EventJobFinished   = "job_finished"
-	EventRunnerExited  = "runner_exited"
+	EventHello          = "hello"
+	EventRunnerStarted  = "runner_started"
+	EventRunnerOnline   = "runner_online"
+	EventJobStarted     = "job_started"
+	EventJobFinished    = "job_finished"
+	EventRunnerExited   = "runner_exited"
 	EventFramesDropped  = "frames_dropped"
 	EventFramesRejected = "frames_rejected"
-	EventShutdown      = "shutdown"
+	EventShutdown       = "shutdown"
 )
 
 // AgentStreams are the log streams an agent may write.

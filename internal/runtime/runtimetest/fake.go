@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/runtime"
 )
@@ -23,6 +24,15 @@ type Fake struct {
 	// StaleList makes List report every environment as not running, like a
 	// cached hypervisor listing right after a start.
 	StaleList bool
+	// ListExclude hides environments (by environment ID) from List, like a snapshot
+	// taken before they were created.
+	ListExclude map[string]bool
+	// DestroyErr, when non-nil, is returned by Destroy (the environment is kept).
+	DestroyErr error
+	// DestroyDelay makes Destroy slow, to exercise concurrent callers.
+	DestroyDelay time.Duration
+	// DestroyCalls counts Destroy calls for existing environments.
+	DestroyCalls int
 }
 
 type fakeEnv struct {
@@ -69,7 +79,17 @@ func (f *Fake) setRunning(ref runtime.Ref, running bool) error {
 
 func (f *Fake) Destroy(_ context.Context, ref runtime.Ref) error {
 	f.mu.Lock()
+	delay := f.DestroyDelay
+	if _, ok := f.envs[ref.ID]; ok {
+		f.DestroyCalls++
+	}
+	f.mu.Unlock()
+	time.Sleep(delay)
+	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.DestroyErr != nil {
+		return f.DestroyErr
+	}
 	delete(f.envs, ref.ID)
 	return nil
 }
@@ -79,6 +99,9 @@ func (f *Fake) List(_ context.Context) ([]runtime.Status, error) {
 	defer f.mu.Unlock()
 	out := make([]runtime.Status, 0, len(f.envs))
 	for id, e := range f.envs {
+		if f.ListExclude[e.spec.ID] {
+			continue
+		}
 		st := f.status(id, e)
 		if f.StaleList {
 			st.Running, st.IP = false, ""
