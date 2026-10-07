@@ -1,0 +1,292 @@
+package controller
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/cocardoso/gh-runners-manager/internal/config"
+	"github.com/cocardoso/gh-runners-manager/internal/environment"
+	"github.com/cocardoso/gh-runners-manager/internal/events"
+	"github.com/cocardoso/gh-runners-manager/internal/ids"
+	"github.com/cocardoso/gh-runners-manager/internal/ingest"
+	"github.com/cocardoso/gh-runners-manager/internal/runtime"
+	"github.com/cocardoso/gh-runners-manager/internal/scheduler"
+	"github.com/cocardoso/gh-runners-manager/internal/store"
+)
+
+// servingStates are states of environments that serve, or will serve, an assigned job.
+var servingStates = []string{"pending", "provisioning", "booting", "connected", "idle", "running"}
+
+// liveStates hold host resources.
+var liveStates = []string{"pending", "provisioning", "booting", "connected", "idle", "running", "completing", "failed", "destroying"}
+
+const provisionTimeout = 5 * time.Minute
+
+// Reconcile creates environments for unmet demand within the capacity limits.
+func (c *Controller) Reconcile(ctx context.Context) error {
+	c.reconcileMu.Lock()
+	defer c.reconcileMu.Unlock()
+
+	live, err := c.d.Store.ListEnvironments(ctx, store.EnvironmentFilter{States: liveStates})
+	if err != nil {
+		return err
+	}
+	serving := map[string]int{}
+	committed := 0
+	for _, e := range live {
+		committed += e.MemoryMB
+		if isServing(e.State) {
+			serving[e.ScaleSet]++
+		}
+	}
+
+	c.mu.Lock()
+	var demands []scheduler.Demand
+	now := c.now()
+	for _, cfg := range c.d.Config.ScaleSets {
+		s := c.scaleSets[cfg.Name]
+		if s.desired > serving[cfg.Name] {
+			if s.waitingSince.IsZero() {
+				s.waitingSince = now
+			}
+		} else {
+			s.waitingSince = time.Time{}
+		}
+		demands = append(demands, scheduler.Demand{ScaleSet: cfg.Name, Desired: s.desired, Live: serving[cfg.Name],
+			MaxConcurrent: cfg.MaxConcurrent, MemoryMB: cfg.MemoryMB, WaitingSince: s.waitingSince})
+	}
+	c.mu.Unlock()
+
+	if !needsMore(demands) {
+		c.updateWaiting(ctx, scheduler.Plan{})
+		return nil
+	}
+	rc, err := c.d.Runtime.Capacity(ctx)
+	if err != nil {
+		return fmt.Errorf("runtime capacity: %w", err)
+	}
+	cp := c.d.Config.Capacity
+	plan := scheduler.Decide(demands, scheduler.Capacity{
+		MaxEnvironments: cp.MaxEnvironments, LiveEnvironments: len(live),
+		MemoryBudgetMB: cp.MemoryBudgetMB, CommittedMemoryMB: committed,
+		HostAvailableMB: rc.HostMemoryAvailableMB, MemoryMarginMB: cp.MemoryMarginMB,
+		ThinPoolPercent: rc.ThinPoolPercent, MaxThinPoolPercent: cp.MaxDiskPercent,
+	})
+	c.updateWaiting(ctx, plan)
+	for name, n := range plan.Create {
+		for range n {
+			if err := c.startProvisioning(ctx, name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func isServing(state string) bool {
+	for _, s := range servingStates {
+		if s == state {
+			return true
+		}
+	}
+	return false
+}
+
+func needsMore(ds []scheduler.Demand) bool {
+	for _, d := range ds {
+		if d.Desired > d.Live {
+			return true
+		}
+	}
+	return false
+}
+
+// updateWaiting records a scaleset.waiting event when a scale set's reason changes.
+func (c *Controller) updateWaiting(ctx context.Context, plan scheduler.Plan) {
+	c.mu.Lock()
+	type change struct{ name, reason string }
+	var changes []change
+	for name, s := range c.scaleSets {
+		reason := string(plan.Waiting[name])
+		if reason != s.waiting {
+			s.waiting = reason
+			changes = append(changes, change{name, reason})
+		}
+	}
+	c.mu.Unlock()
+	for _, ch := range changes {
+		msg := "demand is being served"
+		level := "info"
+		if ch.reason != "" {
+			msg = "jobs are waiting: " + ch.reason
+			level = "warn"
+		}
+		_, _ = c.d.Recorder.Record(ctx, store.Event{Kind: "scaleset.waiting", Level: level, Message: msg,
+			ScaleSet: ch.name, Data: map[string]any{"reason": ch.reason}})
+	}
+}
+
+// startProvisioning inserts a pending environment synchronously (so the next
+// reconcile counts it) and provisions it in the background.
+func (c *Controller) startProvisioning(ctx context.Context, scaleSet string) error {
+	c.mu.Lock()
+	s := c.scaleSets[scaleSet]
+	cfg, ghID := s.cfg, s.githubID
+	c.mu.Unlock()
+
+	id := ids.NewEnvironmentID()
+	token, err := ingest.NewToken()
+	if err != nil {
+		return err
+	}
+	e := store.Environment{ID: id, ScaleSet: scaleSet, State: string(environment.Pending),
+		RunnerName: "ghrm-" + id[len(id)-12:], TokenHash: ingest.HashToken(token), MemoryMB: cfg.MemoryMB}
+	if err := c.d.Store.CreateEnvironment(ctx, e); err != nil {
+		return err
+	}
+	_, _ = c.d.Recorder.Info(ctx, "environment.created", "environment created for "+scaleSet,
+		events.Refs{ScaleSet: scaleSet, EnvironmentID: id}, map[string]any{"runner_name": e.RunnerName})
+	c.log(ctx, id, "control-plane", "created for scale set %s (runner %s)", scaleSet, e.RunnerName)
+
+	c.inflight.Add(1)
+	go func() {
+		defer c.inflight.Done()
+		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), provisionTimeout)
+		defer cancel()
+		c.provision(pctx, e, token, ghID)
+	}()
+	return nil
+}
+
+func (c *Controller) provision(ctx context.Context, e store.Environment, token string, scaleSetID int) {
+	cfg := c.scaleSetConfig(e.ScaleSet)
+	if _, err := c.transition(ctx, e.ID, []string{"pending"}, environment.Provisioning, nil); err != nil {
+		return
+	}
+	c.log(ctx, e.ID, "control-plane", "requesting a just-in-time runner config")
+	runnerID, jit, err := c.d.GitHub.GenerateJIT(ctx, e.ScaleSet, scaleSetID, e.RunnerName)
+	if err != nil {
+		c.Fail(ctx, e.ID, "jit", err)
+		return
+	}
+	if _, err := c.d.Store.UpdateEnvironment(ctx, e.ID, func(x *store.Environment) { x.RunnerID = runnerID }); err != nil {
+		c.Fail(ctx, e.ID, "store", err)
+		return
+	}
+	spec := runtime.EnvironmentSpec{ID: e.ID, Hostname: e.RunnerName, Cores: cfg.Cores, MemoryMB: cfg.MemoryMB,
+		Env: map[string]string{
+			ingest.EnvJITConfig:   jit,
+			ingest.EnvEnvironment: e.ID,
+			ingest.EnvURL:         c.d.IngestURL,
+			ingest.EnvToken:       token,
+			ingest.EnvFingerprint: c.d.IngestFingerprint,
+		}}
+	c.log(ctx, e.ID, "runtime", "creating environment (%d cores, %d MB)", cfg.Cores, cfg.MemoryMB)
+	start := c.now()
+	ref, err := c.d.Runtime.Create(ctx, spec)
+	if err != nil {
+		c.log(ctx, e.ID, "runtime", "create failed: %v", err)
+		c.Fail(ctx, e.ID, "create", err)
+		return
+	}
+	c.log(ctx, e.ID, "runtime", "created %s in %s", ref, c.now().Sub(start).Round(time.Millisecond))
+	if _, err := c.transition(ctx, e.ID, []string{"provisioning"}, environment.Booting, func(x *store.Environment) { x.RuntimeRef = ref.ID }); err != nil {
+		return
+	}
+	if err := c.d.Runtime.Start(ctx, ref); err != nil {
+		c.log(ctx, e.ID, "runtime", "start failed: %v", err)
+		c.Fail(ctx, e.ID, "start", err)
+		return
+	}
+	c.log(ctx, e.ID, "runtime", "started %s", ref)
+}
+
+func (c *Controller) scaleSetConfig(name string) (cfg config.ScaleSet) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if s, ok := c.scaleSets[name]; ok {
+		return s.cfg
+	}
+	return cfg
+}
+
+// Fail marks an environment failed at stage and destroys it unless its scale set
+// keeps failed environments for debugging.
+func (c *Controller) Fail(ctx context.Context, id, stage string, cause error) {
+	reason := cause.Error()
+	e, err := c.transition(ctx, id, nil, environment.Failed, func(x *store.Environment) {
+		x.FailureStage, x.FailureReason = stage, reason
+	})
+	if err != nil {
+		return
+	}
+	_, _ = c.d.Recorder.Error(ctx, "environment.failed", fmt.Sprintf("failed at %s: %s", stage, reason),
+		events.Refs{ScaleSet: e.ScaleSet, EnvironmentID: id, JobID: e.JobID}, map[string]any{"stage": stage})
+	if c.scaleSetConfig(e.ScaleSet).KeepOnFailureMinutes == 0 {
+		c.destroy(ctx, id)
+	}
+}
+
+// destroy tears an environment down: runtime guest, then the GitHub runner.
+func (c *Controller) destroy(ctx context.Context, id string) {
+	e, err := c.d.Store.GetEnvironment(ctx, id)
+	if err != nil {
+		return
+	}
+	if e.State != string(environment.Destroying) {
+		if e, err = c.transition(ctx, id, nil, environment.Destroying, nil); err != nil {
+			return
+		}
+	}
+	if e.RuntimeRef != "" {
+		if err := c.d.Runtime.Destroy(ctx, runtime.Ref{ID: e.RuntimeRef}); err != nil {
+			c.log(ctx, id, "runtime", "destroy failed (will retry): %v", err)
+			_, _ = c.d.Recorder.Warn(ctx, "environment.destroy_failed", err.Error(), events.Refs{ScaleSet: e.ScaleSet, EnvironmentID: id}, nil)
+			return
+		}
+		c.log(ctx, id, "runtime", "destroyed %s", e.RuntimeRef)
+	}
+	if e.RunnerID != 0 {
+		if err := c.d.GitHub.RemoveRunner(ctx, e.ScaleSet, e.RunnerID); err != nil {
+			c.log(ctx, id, "control-plane", "removing runner %d failed: %v", e.RunnerID, err)
+		}
+	}
+	_, _ = c.transition(ctx, id, []string{"destroying"}, environment.Destroyed, nil)
+}
+
+// completingGrace is how long a completing environment may keep running before it is destroyed anyway.
+const completingGrace = 30 * time.Second
+
+// Teardown destroys environments whose work is over.
+func (c *Controller) Teardown(ctx context.Context) {
+	envs, err := c.d.Store.ListEnvironments(ctx, store.EnvironmentFilter{States: []string{"completing", "failed", "destroying"}})
+	if err != nil {
+		return
+	}
+	now := c.now()
+	for _, e := range envs {
+		switch e.State {
+		case "completing":
+			running := false
+			if e.RuntimeRef != "" {
+				st, err := c.d.Runtime.Status(ctx, runtime.Ref{ID: e.RuntimeRef})
+				running = err == nil && st.Running
+				if err != nil && !errors.Is(err, runtime.ErrNotFound) {
+					running = true // unknown: wait for the grace period
+				}
+			}
+			if !running || now.Sub(e.StateChangedAt) > completingGrace {
+				c.destroy(ctx, e.ID)
+			}
+		case "failed":
+			keep := time.Duration(c.scaleSetConfig(e.ScaleSet).KeepOnFailureMinutes) * time.Minute
+			if now.Sub(e.StateChangedAt) >= keep {
+				c.destroy(ctx, e.ID)
+			}
+		case "destroying":
+			c.destroy(ctx, e.ID)
+		}
+	}
+}
