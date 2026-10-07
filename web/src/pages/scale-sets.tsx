@@ -1,19 +1,23 @@
-import { Badge, Banner, ClipboardText, Empty, Grid, LayerCard, Link, Meter } from "@cloudflare/kumo";
-import { StackIcon, WarningIcon, WarningCircleIcon } from "@phosphor-icons/react";
-import type { ScaleSet } from "@/api/client";
-import { useScaleSets, useSettings } from "@/api/queries";
+import { useState } from "react";
+import { Badge, Banner, Button, ClipboardText, Empty, Grid, LayerCard, Link, Meter, useKumoToastManager } from "@cloudflare/kumo";
+import { PencilSimpleIcon, PlusIcon, StackIcon, TrashIcon, WarningIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { useQueryClient } from "@tanstack/react-query";
+import { api, unwrap, type ScaleSet } from "@/api/client";
+import { useScaleSets } from "@/api/queries";
+import { DeleteResource } from "@/blocks/delete-resource/delete-resource";
+import { ScaleSetDialog } from "@/components/scale-set-editor";
 import { ErrorState, Loading, Page, RelativeTime } from "@/components/common";
 import { DefinitionList } from "@/components/definition-list";
 import { formatMB, isSet } from "@/lib/format";
-
-type Config = Record<string, unknown>;
 
 function list(v: unknown) {
   return Array.isArray(v) && v.length ? v.join(", ") : "—";
 }
 
-function ScaleSetCard({ s, config }: { s: ScaleSet; config?: Config }) {
-  const max = typeof config?.max_concurrent === "number" ? config.max_concurrent : undefined;
+function ScaleSetCard({ s, onEdit, onRemove }: { s: ScaleSet; onEdit: () => void; onRemove: () => void }) {
+  const config = s.settings ?? undefined;
+  const max = config?.max_concurrent || undefined;
+  const ui = s.source === "ui";
   return (
     <section id={s.name} aria-labelledby={`ss-${s.name}`} className="scroll-mt-20">
       <LayerCard>
@@ -21,15 +25,27 @@ function ScaleSetCard({ s, config }: { s: ScaleSet; config?: Config }) {
           <h2 id={`ss-${s.name}`} className="min-w-0 truncate text-base font-semibold text-kumo-default">
             {s.name}
           </h2>
-          {s.listening ? (
-            <Badge variant="success" appearance="dot">
-              Listening
-            </Badge>
-          ) : (
-            <Badge variant="error" appearance="dot">
-              Not listening
-            </Badge>
-          )}
+          <span className="flex flex-wrap items-center gap-1">
+            {s.removed ? (
+              <Badge variant="neutral" appearance="dot">
+                Removed, draining
+              </Badge>
+            ) : s.listening ? (
+              <Badge variant="success" appearance="dot">
+                Listening
+              </Badge>
+            ) : (
+              <Badge variant="error" appearance="dot">
+                Not listening
+              </Badge>
+            )}
+            {ui && !s.removed && (
+              <>
+                <Button variant="ghost" size="sm" shape="square" icon={PencilSimpleIcon} aria-label={`Edit ${s.name}`} onClick={onEdit} />
+                <Button variant="ghost" size="sm" shape="square" icon={TrashIcon} aria-label={`Remove ${s.name}`} onClick={onRemove} />
+              </>
+            )}
+          </span>
         </LayerCard.Secondary>
         <LayerCard.Primary className="flex flex-col gap-4">
           {s.listen_error && <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title="The listener stopped" description={s.listen_error} />}
@@ -61,12 +77,13 @@ function ScaleSetCard({ s, config }: { s: ScaleSet; config?: Config }) {
           <LayerCard.Primary className="border-t border-kumo-line p-0">
             <DefinitionList
               items={[
-                ["Repository or organization", typeof config.url === "string" ? <Link href={config.url} target="_blank" rel="noreferrer">{config.url}</Link> : "—"],
+                ["Repository or organization", config.url ? <Link href={config.url} target="_blank" rel="noreferrer">{config.url}</Link> : "—"],
                 ["Labels", list(config.labels)],
-                ["Resources", `${config.cores ?? "?"} cores · ${typeof config.memory_mb === "number" ? formatMB(config.memory_mb) : "?"}`],
-                ["Runner group", String(config.runner_group || "default")],
-                ["Credential", String(config.credential ?? "—")],
+                ["Resources", `${config.cores ?? "?"} cores · ${config.memory_mb ? formatMB(config.memory_mb) : "?"}`],
+                ["Runner group", config.runner_group || "default"],
+                ["Credential", config.credential || "—"],
                 ["Keep failed environments", config.keep_on_failure_minutes ? `${config.keep_on_failure_minutes} min` : "No"],
+                ["Source", ui ? "Created in the UI" : "Defined in ghrm.yaml (edit the file to change it)"],
               ]}
             />
           </LayerCard.Primary>
@@ -78,10 +95,37 @@ function ScaleSetCard({ s, config }: { s: ScaleSet; config?: Config }) {
 
 export function ScaleSetsPage() {
   const sets = useScaleSets();
-  const settings = useSettings();
-  const configs = new Map((settings.data?.scale_sets ?? []).map((c) => [String((c as Config).name), c as Config]));
+  const qc = useQueryClient();
+  const toast = useKumoToastManager();
+  const [editing, setEditing] = useState<ScaleSet | "new" | null>(null);
+  const [removing, setRemoving] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const remove = async () => {
+    if (!removing) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      unwrap(await api.DELETE("/api/v1/scale-sets/{name}", { params: { path: { name: removing } } }));
+      toast.add({ title: `${removing} removed`, description: "Running environments finish first. It stays registered on GitHub until you delete it there.", variant: "success" });
+      setRemoving(undefined);
+      void qc.invalidateQueries({ queryKey: ["scale-sets"] });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <Page title="Scale sets" description="Each scale set listens to GitHub and creates one environment per job.">
+    <Page
+      title="Scale sets"
+      description="Each scale set listens to GitHub and creates one environment per job."
+      actions={
+        <Button variant="primary" icon={PlusIcon} onClick={() => setEditing("new")}>
+          New scale set
+        </Button>
+      }
+    >
       {sets.isLoading ? (
         <Loading />
       ) : sets.error ? (
@@ -90,15 +134,32 @@ export function ScaleSetsPage() {
         <Empty
           icon={<StackIcon size={48} className="text-kumo-inactive" />}
           title="No scale sets"
-          description="Add a scale set under scale_sets in ghrm.yaml and restart the control plane."
+          description="Create one with New scale set (add a GitHub credential in Settings first), or add it under scale_sets in ghrm.yaml."
         />
       ) : (
         <Grid variant="2up" gap="base">
           {(sets.data ?? []).map((s) => (
-            <ScaleSetCard key={s.name} s={s} config={configs.get(s.name)} />
+            <ScaleSetCard key={s.name} s={s} onEdit={() => setEditing(s)} onRemove={() => setRemoving(s.name)} />
           ))}
         </Grid>
       )}
+      {editing && (
+        <ScaleSetDialog
+          name={editing === "new" ? undefined : editing.name}
+          initial={editing === "new" ? undefined : editing.settings}
+          onClose={() => setEditing(null)}
+        />
+      )}
+      <DeleteResource
+        open={!!removing}
+        onOpenChange={(o) => !o && setRemoving(undefined)}
+        resourceType="Scale set"
+        resourceName={removing ?? ""}
+        onDelete={remove}
+        isDeleting={busy}
+        deleteButtonText="Remove scale set"
+        errorMessage={error}
+      />
     </Page>
   );
 }

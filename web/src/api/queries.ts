@@ -95,3 +95,7 @@ export function useSession() {
     staleTime: 60_000,
   });
 }
+
+export function useCredentials() {
+  return useQuery({ queryKey: ["credentials"], queryFn: async () => unwrap(await api.GET("/api/v1/credentials")).credentials ?? [] });
+}

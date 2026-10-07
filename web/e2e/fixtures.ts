@@ -54,16 +54,16 @@ export const demoAccount = { username: "admin", password: "demo-password" };
 
 export const test = base.extend<object, { demo: Demo }>({
   // Every test runs signed in; the API request context shares the browser's cookies.
-  context: async ({ context, demo }, use) => {
+  context: async ({ context, demo }, provide) => {
     const r = await context.request.post(`${demo.url}/api/v1/auth/login`, { data: demoAccount });
     if (!r.ok()) throw new Error(`sign-in failed: ${r.status()} ${await r.text()}`);
-    await use(context);
+    await provide(context);
   },
   // The standalone API client signs in too (it keeps the session cookie).
-  request: async ({ request, demo }, use) => {
+  request: async ({ request, demo }, provide) => {
     const r = await request.post(`${demo.url}/api/v1/auth/login`, { data: demoAccount });
     if (!r.ok()) throw new Error(`sign-in failed: ${r.status()} ${await r.text()}`);
-    await use(request);
+    await provide(request);
   },
   demo: [
     // eslint-disable-next-line no-empty-pattern

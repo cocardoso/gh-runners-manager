@@ -1,8 +1,8 @@
-import { Badge, Banner, LayerCard } from "@cloudflare/kumo";
-import { InfoIcon } from "@phosphor-icons/react";
+import { Badge, LayerCard } from "@cloudflare/kumo";
 import { useSettings } from "@/api/queries";
 import { ErrorState, Loading, Page } from "@/components/common";
 import { DefinitionList } from "@/components/definition-list";
+import { CredentialsEditor } from "@/components/credentials-editor";
 import { formatMB } from "@/lib/format";
 
 type Map = Record<string, unknown>;
@@ -27,13 +27,10 @@ export function SettingsPage() {
   const i = (s.ingest ?? {}) as Map;
   const range = Array.isArray(p.vmid_range) ? `${p.vmid_range[0]}–${p.vmid_range[1]}` : "—";
   return (
-    <Page title="Settings" description="The running configuration, without secrets.">
-      <Banner
-        variant="secondary"
-        icon={<InfoIcon weight="fill" />}
-        title="Read-only for now"
-        description="The configuration comes from ghrm.yaml. Editing credentials and testing connections from the UI arrives with sign-in."
-      />
+    <Page title="Settings" description="The running configuration, without secrets. Credentials and scale sets can be added here; the rest comes from ghrm.yaml.">
+      <Section title="GitHub credentials">
+        <CredentialsEditor />
+      </Section>
       <Section title="Control plane">
         <DefinitionList
           items={[
