@@ -20,6 +20,11 @@ import { JobDuration } from "./jobs";
 
 const STREAMS: LogStreamName[] = ["job", "runner", "agent", "control-plane", "runtime"];
 
+function sentence(s: string) {
+  const t = s.charAt(0).toUpperCase() + s.slice(1);
+  return /[.!?]$/.test(t) ? t : `${t}.`;
+}
+
 function Steps({ details, loading, error, onOpen }: { details?: JobDetails; loading: boolean; error: unknown; onOpen: (name: string) => void }) {
   if (loading) return <Loading />;
   if (error) return <ErrorState error={error} />;
@@ -30,9 +35,13 @@ function Steps({ details, loading, error, onOpen }: { details?: JobDetails; load
         icon={<LockKeyIcon weight="fill" />}
         title="Steps are not available"
         description={
-          <>
-            {details?.reason || "GitHub did not return this job."} To see steps, give the scale set's token the <strong>Actions: read</strong> permission.
-          </>
+          details?.reason?.includes("Actions: read") ? (
+            sentence(details.reason)
+          ) : (
+            <>
+              {sentence(details?.reason || "GitHub did not return this job")} To see steps, give the scale set's token the <strong>Actions: read</strong> permission.
+            </>
+          )
         }
       />
     );

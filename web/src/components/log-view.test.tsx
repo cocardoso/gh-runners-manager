@@ -68,3 +68,8 @@ test("the runner's own timestamp prefix is folded into the timestamp column", ()
   expect(screen.getByText("Run actions/checkout@v5")).toHaveClass("font-semibold");
   expect(screen.queryByText(/2026-10-07T15:59:56/)).not.toBeInTheDocument();
 });
+
+test("a byte-order mark before the runner timestamp is dropped too", () => {
+  render(<LogView {...base} lines={lines(1, () => "﻿2026-10-07T15:18:40.9736953Z Current runner version: '2.338.0'")} />);
+  expect(screen.getByText("Current runner version: '2.338.0'")).toBeInTheDocument();
+});

@@ -75,3 +75,10 @@ test("an unknown job says so", async () => {
   renderApp("/jobs/nope");
   expect(await screen.findByText("Job not found")).toBeInTheDocument();
 });
+
+test("the permission hint is not repeated when the server already gives it", async () => {
+  mockApi(routes({ available: false, reason: "the GitHub credential cannot read workflow runs; grant it the Actions: read permission", steps: [] }));
+  renderApp("/jobs/j1?tab=steps");
+  const text = (await screen.findByText(/cannot read workflow runs/)).closest("div")!.textContent ?? "";
+  expect(text.match(/Actions: read/g)).toHaveLength(1);
+});

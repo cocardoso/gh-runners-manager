@@ -60,7 +60,7 @@ function highlight(text: string, query: string): ReactNode {
 }
 
 // The runner prefixes job log lines with its own ISO timestamp; the viewer has a timestamp column.
-const RUNNER_TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z /;
+const RUNNER_TS = /^\uFEFF?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z /;
 
 /** Renders one log line: GitHub Actions workflow commands, ANSI colours and search highlights. */
 function LineText({ text: raw, search }: { text: string; search?: string }) {
