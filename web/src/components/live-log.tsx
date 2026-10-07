@@ -67,19 +67,21 @@ export interface LiveLogProps {
   defaultStream: LogStreamName;
   /** Whether the environment can still write lines (false once destroyed). */
   live: boolean;
+  /** Search to start with (for example a step name). */
+  initialSearch?: string;
   className?: string;
   createEventSource?: (url: string) => EventSource;
 }
 
 /** A log panel: stream tabs, follow/pause, search, wrap, timestamps, copy and download. */
-export function LiveLog({ envId, streams, defaultStream, live, className, createEventSource }: LiveLogProps) {
+export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "", className, createEventSource }: LiveLogProps) {
   const toast = useKumoToastManager();
   const [stream, setStream] = useState<LogStreamName>(defaultStream);
   const [follow, setFollow] = useState(true);
   const [wrap, setWrap] = useState(false);
   const [timestamps, setTimestamps] = useState(false);
   const [numbers, setNumbers] = useState(true);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialSearch);
   const [matchIndex, setMatchIndex] = useState(0);
   const [downloading, setDownloading] = useState(false);
   const search = useDeferredValue(query.trim());

@@ -62,3 +62,9 @@ test("styles GitHub Actions workflow commands", () => {
   expect(screen.getByText("Process completed with exit code 1.")).toHaveClass("text-kumo-danger");
   expect(screen.getByText("Run npm test")).toHaveClass("font-semibold");
 });
+
+test("the runner's own timestamp prefix is folded into the timestamp column", () => {
+  render(<LogView {...base} lines={lines(1, () => "2026-10-07T15:59:56.620323Z ##[group]Run actions/checkout@v5")} />);
+  expect(screen.getByText("Run actions/checkout@v5")).toHaveClass("font-semibold");
+  expect(screen.queryByText(/2026-10-07T15:59:56/)).not.toBeInTheDocument();
+});
