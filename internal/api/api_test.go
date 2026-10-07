@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
+	"github.com/cocardoso/gh-runners-manager/internal/github"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
@@ -23,6 +25,13 @@ type fakeController struct{ destroyed []string }
 func (f *fakeController) ScaleSets(context.Context) []controller.ScaleSetStatus {
 	return []controller.ScaleSetStatus{{Name: "lab", GitHubID: 7, Desired: 1, Live: 1}}
 }
+
+type fakeGitHubJobs struct{}
+
+func (fakeGitHubJobs) JobDetails(_ context.Context, scaleSet, repo string, runID int64, runner string) (github.JobDetails, error) {
+	return github.JobDetails{Available: true, ID: 2, URL: "https://github.com/" + repo, Steps: []github.Step{{Number: 1, Name: "build"}}}, nil
+}
+
 func (f *fakeController) RequestDestroy(_ context.Context, id string) error {
 	f.destroyed = append(f.destroyed, id)
 	return nil
@@ -44,7 +53,11 @@ func newHarness(t *testing.T, adminToken string) *harness {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	h := &harness{db: db, rec: events.NewRecorder(db, events.NewBus(), nil), logs: logs.New(t.TempDir(), db), ctl: &fakeController{}}
-	h.srv = httptest.NewServer(New(Deps{Store: db, Recorder: h.rec, Logs: h.logs, Controller: h.ctl, AdminToken: adminToken}))
+	cfg := &config.Config{Proxmox: config.Proxmox{URL: "https://pve.example.test:8006", TokenSecret: "pve-secret"},
+		GitHub:    config.GitHub{Credentials: []config.Credential{{Name: "c", Token: "token-value"}}},
+		ScaleSets: []config.ScaleSet{{Name: "lab", URL: "https://github.com/o/r", Credential: "c"}}, AdminToken: adminToken}
+	h.srv = httptest.NewServer(New(Deps{Store: db, Recorder: h.rec, Logs: h.logs, Controller: h.ctl, AdminToken: adminToken,
+		Config: cfg, GitHubJobs: fakeGitHubJobs{}}))
 	t.Cleanup(h.srv.Close)
 	return h
 }
@@ -296,5 +309,71 @@ func TestLogFollowEndsForDestroyedEnvironment(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("following a destroyed environment's log never ended")
+	}
+}
+
+func TestOverviewAndStats(t *testing.T) {
+	h := newHarness(t, "")
+	ctx := context.Background()
+	now := time.Now()
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "e1", ScaleSet: "lab", State: "running", MemoryMB: 2048})
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "e2", ScaleSet: "lab", State: "destroyed", MemoryMB: 2048, FailureStage: "create", FailureReason: "boom"})
+	_ = h.db.UpsertJob(ctx, store.Job{ID: "j1", ScaleSet: "lab", Status: "completed", Result: "succeeded", QueuedAt: now.Add(-10 * time.Minute), StartedAt: now.Add(-9 * time.Minute), FinishedAt: now.Add(-5 * time.Minute)})
+	_ = h.db.UpsertJob(ctx, store.Job{ID: "j2", ScaleSet: "lab", Status: "completed", Result: "failed", QueuedAt: now.Add(-4 * time.Minute), StartedAt: now.Add(-3 * time.Minute), FinishedAt: now.Add(-time.Minute)})
+	_ = h.db.UpsertJob(ctx, store.Job{ID: "j3", ScaleSet: "lab", Status: "running", QueuedAt: now.Add(-time.Minute), StartedAt: now})
+	var ov map[string]any
+	if code := h.getJSON(t, "/api/v1/overview", &ov); code != 200 {
+		t.Fatalf("overview = %d", code)
+	}
+	k := ov["kpis"].(map[string]any)
+	if k["running_jobs"] != 1.0 || k["jobs_24h"] != 2.0 || k["success_rate_24h"] != 0.5 || k["median_queue_seconds_24h"] != 60.0 {
+		t.Fatalf("kpis = %+v", k)
+	}
+	c := ov["capacity"].(map[string]any)
+	if c["environments_live"] != 1.0 || c["memory_committed_mb"] != 2048.0 {
+		t.Fatalf("capacity = %+v", c)
+	}
+	if alerts, _ := ov["alerts"].([]any); len(alerts) == 0 {
+		t.Fatalf("alerts = %+v, want the failed environment", ov["alerts"])
+	}
+	var st struct{ Buckets []map[string]any }
+	if code := h.getJSON(t, "/api/v1/stats/jobs?hours=24", &st); code != 200 || len(st.Buckets) != 24 {
+		t.Fatalf("stats = %d %d buckets", code, len(st.Buckets))
+	}
+	total := 0.0
+	for _, b := range st.Buckets {
+		total += b["succeeded"].(float64) + b["failed"].(float64)
+	}
+	if total != 2 {
+		t.Fatalf("bucketed jobs = %v, want 2", total)
+	}
+}
+
+func TestSettingsHaveNoSecrets(t *testing.T) {
+	h := newHarness(t, "s3cret")
+	var s map[string]any
+	if code := h.getJSON(t, "/api/v1/settings", &s); code != 200 {
+		t.Fatalf("settings = %d", code)
+	}
+	raw, _ := json.Marshal(s)
+	for _, secret := range []string{"s3cret", "token-value", "pve-secret"} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("settings leak %q: %s", secret, raw)
+		}
+	}
+	if s["admin_actions"] != true || s["version"] == "" {
+		t.Fatalf("settings = %s", raw)
+	}
+}
+
+func TestJobGitHubDetails(t *testing.T) {
+	h := newHarness(t, "")
+	_ = h.db.UpsertJob(context.Background(), store.Job{ID: "j1", ScaleSet: "lab", Repository: "o/r", RunID: 7, RunnerName: "ghrm-abc"})
+	var d map[string]any
+	if code := h.getJSON(t, "/api/v1/jobs/j1/github", &d); code != 200 || d["available"] != true {
+		t.Fatalf("github = %d %+v", code, d)
+	}
+	if code := h.getJSON(t, "/api/v1/jobs/nope/github", nil); code != 404 {
+		t.Fatalf("missing job = %d", code)
 	}
 }

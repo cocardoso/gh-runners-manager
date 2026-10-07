@@ -12,9 +12,11 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
+	"github.com/cocardoso/gh-runners-manager/internal/runtime"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 	"github.com/cocardoso/gh-runners-manager/internal/version"
 )
@@ -34,8 +36,14 @@ type Deps struct {
 	AdminToken string
 	// Ready, when set, is called by /readyz in addition to the store ping.
 	Ready func(ctx context.Context) error
-	// UI, when set, serves every path that is not an API path (M3).
+	// UI, when set, serves every path that is not an API path.
 	UI http.Handler
+	// Config is shown (without secrets) on the settings endpoint and used for limits.
+	Config *config.Config
+	// Capacity reports runtime capacity for the overview.
+	Capacity func(ctx context.Context) (runtime.Capacity, error)
+	// GitHubJobs fetches job steps from GitHub.
+	GitHubJobs GitHubJobs
 }
 
 // Environment is the API view of an environment.
@@ -318,6 +326,8 @@ func New(d Deps) http.Handler {
 			}
 			return out, nil
 		})
+
+	registerOverview(a, d)
 
 	s := &sse{d: d}
 	mux.HandleFunc("GET /api/v1/events/stream", s.events)
