@@ -569,3 +569,16 @@ func TestAvailableJobRecordsTheQueueTime(t *testing.T) {
 		t.Fatalf("j3 queued at %v, want the controller clock %v", j.QueuedAt, h.now)
 	}
 }
+
+// GitHub's started message has no queue time but has the scale set assignment time,
+// which stands in when the assigned message was missed (a control plane restart).
+func TestStartedJobWithoutAnEarlierMessageGetsTheAssignmentTime(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	assigned := time.Date(2026, 10, 7, 21, 11, 22, 0, time.UTC)
+	base := scaleset.JobMessageBase{JobID: "j7", ScaleSetAssignTime: assigned, RunnerAssignTime: assigned.Add(20 * time.Second)}
+	_ = h.c.Scaler("lab").HandleJobStarted(ctx, &scaleset.JobStarted{RunnerName: "x", JobMessageBase: base})
+	if j, _ := h.db.GetJob(ctx, "j7"); !j.QueuedAt.Equal(assigned) {
+		t.Fatalf("queued at %v, want the assignment time %v", j.QueuedAt, assigned)
+	}
+}

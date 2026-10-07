@@ -53,8 +53,14 @@ func (s *scaler) job(base scaleset.JobMessageBase, runner string) store.Job {
 	if base.OwnerName != "" {
 		repo = base.OwnerName + "/" + base.RepositoryName
 	}
+	// GitHub leaves queueTime empty in practice; the scale set assignment time is the
+	// moment the job reached this scale set. A known queue time is never overwritten.
+	queued := base.QueueTime
+	if queued.IsZero() {
+		queued = base.ScaleSetAssignTime
+	}
 	return store.Job{ID: base.JobID, ScaleSet: s.name, Repository: repo, Owner: base.OwnerName, WorkflowRef: base.JobWorkflowRef,
-		DisplayName: base.JobDisplayName, EventName: base.EventName, RunID: base.WorkflowRunID, RunnerName: runner, QueuedAt: base.QueueTime}
+		DisplayName: base.JobDisplayName, EventName: base.EventName, RunID: base.WorkflowRunID, RunnerName: runner, QueuedAt: queued}
 }
 
 // HandleJobAvailable records a job assigned to the scale set with its queue time,
