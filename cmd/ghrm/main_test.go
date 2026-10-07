@@ -85,3 +85,10 @@ func TestWaitOrTimeout(t *testing.T) {
 		t.Fatal("waitOrTimeout did not return at its deadline")
 	}
 }
+
+func TestDemoRejectsUnknownFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"demo", "--bogus"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+}
