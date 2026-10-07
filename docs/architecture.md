@@ -8,20 +8,23 @@ Legend used in the diagrams: **green** = implemented, **grey dashed** = planned 
 
 | Component | Package / location | Status |
 |---|---|---|
-| Configuration | `internal/config` | Implemented (M1) |
+| Configuration | `internal/config` | Implemented (M1, M2) |
 | Environment state machine | `internal/environment` | Implemented (M1) |
 | Capacity scheduler (pure logic) | `internal/scheduler` | Implemented (M1) |
 | Runtime interface and in-memory fake | `internal/runtime`, `internal/runtime/runtimetest` | Implemented (M1) |
 | Proxmox API client and fake server | `internal/proxmox`, `internal/proxmox/proxmoxtest` | Implemented (M1) |
 | `proxmox-lxc` runtime | `internal/runtime/proxmoxlxc` | Implemented (M1) |
-| `ghrm version`, `ghrm smoke` | `cmd/ghrm` | Implemented (M1) |
-| Store (SQLite) and event bus | `internal/store`, `internal/events` | Planned (M2) |
-| Scale set listener (`actions/scaleset`) | `internal/scaleset` | Planned (M2) |
-| Controller and reaper | — | Planned (M2) |
-| Agent and ingest | `cmd/ghrm-agent`, `internal/ingest` | Planned (M2) |
-| REST API and SSE | `internal/api` | Planned (M2) |
+| Store (SQLite) | `internal/store` | Implemented (M2) |
+| Event bus and recorder | `internal/events` | Implemented (M2) |
+| Log store (files + follow) | `internal/logs` | Implemented (M2) |
+| Scale set adapter (`actions/scaleset`) | `internal/github` | Implemented (M2) |
+| Controller and reaper | `internal/controller` | Implemented (M2) |
+| Ingest (TLS, per-environment tokens) | `internal/ingest` | Implemented (M2) |
+| Agent | `cmd/ghrm-agent`, `internal/agent` | Implemented (M2) |
+| REST API and SSE | `internal/api` | Implemented (M2) |
+| `ghrm version`, `smoke`, `serve` | `cmd/ghrm` | Implemented (M1, M2) |
 | Web UI (React, Kumo) | `web/` | Planned (M3) |
-| Template builder (`ubuntu-slim`) | `internal/template`, `template/layer` | Planned (M4) |
+| Template builder (`ubuntu-slim`) | `internal/template`, `template/layer` | Planned (M4); M2 uses `deploy/proxmox/dev-template.sh` |
 | UI auth, secrets, installer | `internal/auth`, `internal/secrets`, `deploy/` | Planned (M5) |
 
 ## 1. System overview
@@ -75,8 +78,8 @@ flowchart LR
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef planned fill:#f1f3f5,stroke:#868e96,stroke-dasharray:5 5,color:#000
-    class runtime,scheduler done
-    class listener,reaper,store,ingest,api,ui planned
+    class runtime,scheduler,listener,reaper,store,ingest,api done
+    class ui planned
 ```
 
 ## 2. Network and isolation
@@ -110,7 +113,7 @@ Security group applied to every job LXC (inherited from the template):
 | Order | Direction | Rule |
 |---|---|---|
 | 1 | out | ACCEPT UDP 67 (DHCP) |
-| 2 | out | ACCEPT TCP to the ingest address and port (planned, M2) |
+| 2 | out | ACCEPT TCP to the ingest address and port |
 | 3 | in | DROP everything |
 | 4 | out | DROP 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 |
 | — | out | everything else (internet) is allowed |
@@ -124,35 +127,63 @@ sequenceDiagram
     autonumber
     participant GH as GitHub (scale set)
     participant L as Listener
-    participant S as Scheduler
+    participant C as Controller
     participant R as Runtime (proxmox-lxc)
     participant P as Proxmox API
     participant E as Job LXC (ghrm-agent)
     participant I as Ingest
+    participant UI as API / SSE clients
 
     GH-->>L: statistics: assigned jobs = N
-    L->>S: desired environments
-    S->>S: capacity check (memory, disk, limits)
-    S->>GH: generate JIT runner config
-    S->>R: Create(spec with JIT config in env)
-    R->>P: nextid probe, linked clone, tag, configure (cores, memory, env)
-    R->>R: wait for the firewall rules to apply
-    S->>R: Start
+    L->>C: desired count
+    C->>C: scheduler: capacity check (memory, disk, limits)
+    C->>GH: generate JIT runner config
+    C->>R: Create(spec: JIT config, ingest URL, token, fingerprint in env)
+    R->>P: nextid probe, linked clone, tag, configure, wait for firewall
+    C->>R: Start
     R->>P: start
-    E->>I: hello, then logs and metrics
+    E->>I: hello, runner_started (TLS pinned, bearer token)
     E->>GH: runner online, takes one job
+    E->>I: runner_online, job_started, live job log, metrics
     GH-->>L: JobStarted / JobCompleted
-    E->>I: job finished, exit code
+    E->>I: job_finished, runner_exited, shutdown
     E->>E: power off
-    S->>R: Destroy
-    R->>P: stop (if needed), delete
+    C->>R: Destroy (stop if needed, delete)
+    C->>GH: remove runner (if still registered)
+    I-->>UI: every step is an event and a log line, streamed live
 ```
 
-Steps 4–8 and 10 exist today in `internal/runtime/proxmoxlxc` and are exercised by `ghrm smoke`. The listener, scheduler wiring, agent and ingest arrive in M2.
+Agent → ingest frames are NDJSON batches every 250 ms. Each log stream has its own sequence numbers, so a retried batch is stored once. Events share the `agent` stream's sequence and reach the controller exactly once.
+
+## 3a. Where each log stream comes from
+
+```mermaid
+flowchart LR
+    subgraph env["Job LXC"]
+        stdout["run.sh stdout/stderr"]
+        diag["_diag/Runner_*.log, Worker_*.log"]
+        pages["_diag/pages/&lt;plan&gt;_&lt;job record&gt;_&lt;n&gt;.log (whole-job log)"]
+        cg["cgroup v2: cpu.stat, memory.current"]
+        agentlog["agent messages and events"]
+    end
+    subgraph cp["Control plane"]
+        ctl["controller decisions"]
+        rt["runtime operations"]
+    end
+    stdout --> runner["stream: runner"]
+    diag --> runner
+    pages --> job["stream: job"]
+    cg --> metrics["stream: metrics"]
+    agentlog --> agent["stream: agent"]
+    ctl --> controlplane["stream: control-plane"]
+    rt --> runtimes["stream: runtime"]
+```
+
+The runner writes one log per step and one for the whole job. The agent learns the job's record ID from the diagnostic log (`Job request … job <id> received`) and streams only the whole-job log, in numeric page order.
 
 ## 4. Environment states
 
-Implemented in `internal/environment`. Every state with a timeout is enforced by the reaper (M2).
+Implemented in `internal/environment`; transitions are compare-and-set in the store. The reaper enforces every timeout. It concludes that a guest powered off silently only after 60 s in the state and a live status check, because the Proxmox LXC listing is cached and lags behind a start.
 
 ```mermaid
 stateDiagram-v2
@@ -224,23 +255,40 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    main["cmd/ghrm"] --> config["internal/config"]
-    main --> ids["internal/ids"]
-    main --> proxmoxlxc["internal/runtime/proxmoxlxc"]
-    proxmoxlxc --> runtime["internal/runtime"]
+    ghrm["cmd/ghrm"] --> config["internal/config"]
+    ghrm --> api["internal/api"]
+    ghrm --> controller["internal/controller"]
+    ghrm --> ingest["internal/ingest"]
+    ghrm --> github["internal/github"]
+    ghrm --> proxmoxlxc["internal/runtime/proxmoxlxc"]
+    controller --> scheduler["internal/scheduler"]
+    controller --> environment["internal/environment"]
+    controller --> runtime["internal/runtime"]
+    controller --> store["internal/store"]
+    controller --> events["internal/events"]
+    controller --> logs["internal/logs"]
+    api --> store
+    api --> events
+    api --> logs
+    ingest --> logs
+    ingest --> events
+    github --> scaleset[("actions/scaleset")]
+    proxmoxlxc --> runtime
     proxmoxlxc --> proxmox["internal/proxmox"]
+    agentcmd["cmd/ghrm-agent"] --> agent["internal/agent"]
+    agent --> ingestproto["internal/ingest (protocol)"]
     runtimetest["internal/runtime/runtimetest"] --> runtime
     proxmoxtest["internal/proxmox/proxmoxtest"]
-    scheduler["internal/scheduler"]
-    environment["internal/environment"]
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef testonly fill:#fff3bf,stroke:#e67700,color:#000
-    class main,config,ids,proxmoxlxc,runtime,proxmox,scheduler,environment done
+    classDef ext fill:#e7f5ff,stroke:#1971c2,color:#000
+    class ghrm,config,api,controller,ingest,github,proxmoxlxc,scheduler,environment,runtime,store,events,logs,proxmox,agentcmd,agent,ingestproto done
     class runtimetest,proxmoxtest testonly
+    class scaleset ext
 ```
 
-`internal/scheduler` and `internal/environment` have no dependencies; the controller (M2) will connect them to the runtime and the store. Yellow packages are test doubles used only by tests.
+Yellow packages are test doubles. `cmd/ghrm-agent` shares only the wire protocol with the control plane.
 
 ## 7. Template pipeline (planned, M4)
 
