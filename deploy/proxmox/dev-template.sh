@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Development helper (M2): builds a job template with ghrm-agent from an existing
-# runner template. M4 replaces this with the ubuntu-slim template builder.
+# Bootstrap helper: builds the first job template with ghrm-agent from an existing
+# runner template. ghrm then builds every later template itself from ubuntu-slim (M4),
+# cloning its builder from the active template.
 #
 # Run on the Proxmox host:
-#   dev-template.sh <source-template-vmid> <new-template-vmid> <path-to-ghrm-agent> <path-to-ghrm-agent.service> [pool]
+#   dev-template.sh <source-template-vmid> <new-template-vmid> <path-to-ghrm-agent> <path-to-ghrm-agent.service (template/layer/ghrm-agent.service)> [pool]
 set -euo pipefail
 
 src=$1 new=$2 agent=$3 unit=$4 pool=${5:-ghrm}

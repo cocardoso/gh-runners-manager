@@ -53,7 +53,7 @@ Until the installer (M5) and the template builder (M4) exist, a development depl
    4. OUT DROP 169.254.0.0/16, 192.168.0.0/16, 172.16.0.0/12 and 10.0.0.0/8.
 2. **Job template with the agent.**
    1. Build the binaries with `make build-linux`.
-   2. On the Proxmox host, run `deploy/proxmox/dev-template.sh <source-template> <new-template> dist/linux-amd64/ghrm-agent deploy/systemd/ghrm-agent.service ghrm`. The source template must already contain the GitHub runner in `/home/runner/actions-runner`, Docker, and the job security group on its NIC.
+   2. On the Proxmox host, run `deploy/proxmox/dev-template.sh <source-template> <new-template> dist/linux-amd64/ghrm-agent template/layer/ghrm-agent.service ghrm`. The source template must already contain the GitHub runner in `/home/runner/actions-runner`, Docker, and the job security group on its NIC.
 3. **Control-plane LXC.** A small Debian container with two NICs:
    - one on the LAN, used for the UI/API and to reach the Proxmox API;
    - one on the job network at the ingest address.
