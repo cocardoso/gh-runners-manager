@@ -176,6 +176,22 @@ func runTemplateMode(ctx context.Context, client *agent.Client, boot agent.Boots
 	cmd := agent.OSCommander{}
 	switch boot.Mode {
 	case ingest.ModeBuild:
+		if exe, err := os.Executable(); err == nil {
+			updated, err := agent.UpdateSelf(ctx, client, exe)
+			switch {
+			case err != nil:
+				client.Log("agent", "could not update to the control plane's agent, building with this one: "+err.Error())
+			case updated:
+				client.Log("agent", "updated to the control plane's agent; restarting it")
+				fctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				_ = client.Flush(fctx)
+				cancel()
+				stopSend()
+				err := syscall.Exec(exe, os.Args, os.Environ()) //nolint:gosec // the agent re-executes itself
+				fmt.Fprintln(os.Stderr, "ghrm-agent: re-exec:", err)
+				return 1
+			}
+		}
 		work := "/var/lib/ghrm-build"
 		err := os.MkdirAll(work, 0o755)
 		if err == nil {

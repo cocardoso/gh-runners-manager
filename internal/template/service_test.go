@@ -214,6 +214,16 @@ func TestBuildVerifyActivate(t *testing.T) {
 	if err := h.s.WriteLayer(ctx, tpl.BuildEnvID, &layerTar); err != nil || !bytes.Contains(layerTar.Bytes(), []byte("\x7fELF")) {
 		t.Fatalf("layer: %v", err)
 	}
+	var agentBin bytes.Buffer
+	if sum := sha256.Sum256([]byte("\x7fELF")); spec.AgentSHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("spec agent checksum = %q, want the control plane's agent", spec.AgentSHA256)
+	}
+	if err := h.s.WriteAgent(ctx, tpl.BuildEnvID, &agentBin); err != nil || agentBin.String() != "\x7fELF" {
+		t.Fatalf("agent = %q, %v", agentBin.String(), err)
+	}
+	if err := h.s.WriteAgent(ctx, "job-env", &agentBin); !errors.Is(err, ingest.ErrWrongKind) {
+		t.Fatalf("agent for a job env: %v", err)
+	}
 	if _, err := h.s.BuildSpec(ctx, "job-env"); !errors.Is(err, ingest.ErrWrongKind) {
 		t.Fatalf("unknown env: %v", err)
 	}

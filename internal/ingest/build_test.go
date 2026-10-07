@@ -29,6 +29,14 @@ func (f *fakeBuilds) BuildSpec(_ context.Context, envID string) (BuildSpec, erro
 	return BuildSpec{TemplateID: "t1", SlimTag: "ubuntu-slim/20261005.17", RunnerVersion: "2.338.0", RunnerSHA256: strings.Repeat("a", 64), LayerVersion: "1"}, nil
 }
 
+func (f *fakeBuilds) WriteAgent(_ context.Context, envID string, w io.Writer) error {
+	if envID != "bld" {
+		return ErrWrongKind
+	}
+	_, err := w.Write([]byte("agent-bin"))
+	return err
+}
+
 func (f *fakeBuilds) WriteLayer(_ context.Context, envID string, w io.Writer) error {
 	if envID != "bld" {
 		return ErrWrongKind
@@ -104,7 +112,7 @@ func call(t *testing.T, method, url, token string, body io.Reader, hdr map[strin
 
 func TestBuildEndpointsAuthenticate(t *testing.T) {
 	srv, _, tok := buildHarness(t)
-	for _, p := range []string{BuildSpecPath, BuildLayerPath} {
+	for _, p := range []string{BuildSpecPath, BuildLayerPath, BuildAgentPath} {
 		if r := call(t, "GET", srv.URL+p, "", nil, nil); r.StatusCode != 401 {
 			t.Errorf("%s without token = %d", p, r.StatusCode)
 		}
@@ -122,6 +130,10 @@ func TestBuildEndpointsAuthenticate(t *testing.T) {
 	b, _ := io.ReadAll(r.Body)
 	if string(b) != "layer-tar" {
 		t.Fatalf("layer = %q", b)
+	}
+	r = call(t, "GET", srv.URL+BuildAgentPath, tok["bld"], nil, nil)
+	if b, _ = io.ReadAll(r.Body); r.StatusCode != 200 || string(b) != "agent-bin" {
+		t.Fatalf("agent = %d %q", r.StatusCode, b)
 	}
 }
 

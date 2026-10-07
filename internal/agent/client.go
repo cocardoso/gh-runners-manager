@@ -46,6 +46,7 @@ type Client struct {
 	nextID   uint64
 	inflight uint64 // highest frame id in the request being sent
 	seq      map[string]int64
+	seqBase  int64 // the client's start time in µs: a restarted agent continues above its predecessor
 	dropped  int
 	notify   chan struct{}
 }
@@ -93,13 +94,14 @@ func NewClient(b Bootstrap, opts Options) (*Client, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = tlsCfg
 	return &Client{
-		base:   strings.TrimRight(b.URL, "/"),
-		url:    strings.TrimRight(b.URL, "/") + ingest.FramesPath,
-		token:  b.Token,
-		http:   &http.Client{Transport: tr, Timeout: 30 * time.Second},
-		opts:   opts,
-		seq:    map[string]int64{},
-		notify: make(chan struct{}, 1),
+		base:    strings.TrimRight(b.URL, "/"),
+		url:     strings.TrimRight(b.URL, "/") + ingest.FramesPath,
+		token:   b.Token,
+		http:    &http.Client{Transport: tr, Timeout: 30 * time.Second},
+		opts:    opts,
+		seq:     map[string]int64{},
+		seqBase: time.Now().UnixMicro(),
+		notify:  make(chan struct{}, 1),
 	}, nil
 }
 
@@ -119,7 +121,7 @@ func (c *Client) enqueue(seqStream string, f ingest.Frame) {
 	}
 	f.Text = truncate(f.Text)
 	c.seq[seqStream]++
-	f.Seq = c.seq[seqStream]
+	f.Seq = c.seqBase + c.seq[seqStream]
 	if len(c.queue) >= c.opts.MaxQueue {
 		// Drop the oldest log or metric that is not part of the request in flight.
 		for i, q := range c.queue {

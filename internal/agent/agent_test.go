@@ -118,8 +118,9 @@ func TestClientPinsFingerprintAndRetries(t *testing.T) {
 	rec.mu.Lock()
 	seqs := []int64{rec.frames[0].Seq, rec.frames[1].Seq, rec.frames[2].Seq}
 	rec.mu.Unlock()
-	if seqs[0] != 1 || seqs[1] != 1 || seqs[2] != 2 {
-		t.Fatalf("seqs = %v, want agent 1, runner 1, runner 2", seqs)
+	// Sequences are per stream and consecutive, from a base shared by the streams.
+	if seqs[0] != seqs[1] || seqs[2] != seqs[1]+1 || seqs[0] <= 0 {
+		t.Fatalf("seqs = %v, want agent n, runner n, runner n+1", seqs)
 	}
 }
 

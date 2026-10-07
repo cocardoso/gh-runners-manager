@@ -184,16 +184,11 @@ func layerVersionPrefix() string { return layer.Version + "." }
 // layerVersion identifies what the layer installs: the layer files and the ghrm-agent binary,
 // so an upgraded agent triggers a rebuild (spec §8.5).
 func (s *Service) layerVersion() string {
-	f, err := os.Open(s.agentPath())
+	sum, err := s.agentSHA256()
 	if err != nil {
 		return layer.Version
 	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return layer.Version
-	}
-	return layerVersionPrefix() + hex.EncodeToString(h.Sum(nil))[:12]
+	return layerVersionPrefix() + sum[:12]
 }
 
 // Build starts a template build. Only one build runs at a time.
@@ -286,8 +281,40 @@ func (s *Service) BuildSpec(ctx context.Context, envID string) (ingest.BuildSpec
 	if !ok {
 		return ingest.BuildSpec{}, ingest.ErrWrongKind
 	}
-	return ingest.BuildSpec{TemplateID: t.ID, SlimTag: slimPrefix + t.SlimRelease, RunnerVersion: t.RunnerVersion,
-		RunnerSHA256: t.RunnerSHA256, LayerVersion: t.LayerVersion}, nil
+	spec := ingest.BuildSpec{TemplateID: t.ID, SlimTag: slimPrefix + t.SlimRelease, RunnerVersion: t.RunnerVersion,
+		RunnerSHA256: t.RunnerSHA256, LayerVersion: t.LayerVersion}
+	if t.BuildEnvID == envID {
+		spec.AgentSHA256, _ = s.agentSHA256()
+	}
+	return spec, nil
+}
+
+func (s *Service) agentSHA256() (string, error) {
+	f, err := os.Open(s.agentPath())
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// WriteAgent implements ingest.BuildService: the control plane's ghrm-agent binary.
+func (s *Service) WriteAgent(ctx context.Context, envID string, w io.Writer) error {
+	t, ok := s.templateFor(ctx, envID)
+	if !ok || t.BuildEnvID != envID {
+		return ingest.ErrWrongKind
+	}
+	f, err := os.Open(s.agentPath())
+	if err != nil {
+		return fmt.Errorf("template: ghrm-agent binary: %w", err)
+	}
+	defer f.Close()
+	_, err = io.Copy(w, f)
+	return err
 }
 
 // WriteLayer implements ingest.BuildService: the layer files and the ghrm-agent binary.

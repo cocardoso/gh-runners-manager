@@ -82,6 +82,8 @@ type fakeIngest struct {
 	rootfs    []byte
 	rootfsSHA string
 	report    *ingest.SelfTestReport
+	agent     []byte // served as the current agent binary
+	agentSHA  string // announced in the build spec
 }
 
 func (f *fakeIngest) handler(t *testing.T) http.Handler {
@@ -101,7 +103,10 @@ func (f *fakeIngest) handler(t *testing.T) http.Handler {
 	})
 	mux.HandleFunc("GET "+ingest.BuildSpecPath, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(ingest.BuildSpec{TemplateID: "tpl1", SlimTag: "ubuntu-slim/20261005.17", RunnerVersion: "2.338.0",
-			RunnerSHA256: strings.Repeat("c", 64), LayerVersion: "1"})
+			RunnerSHA256: strings.Repeat("c", 64), LayerVersion: "1", AgentSHA256: f.agentSHA})
+	})
+	mux.HandleFunc("GET "+ingest.BuildAgentPath, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(f.agent)
 	})
 	mux.HandleFunc("GET "+ingest.BuildLayerPath, func(w http.ResponseWriter, r *http.Request) {
 		tw := tar.NewWriter(w)
@@ -246,5 +251,75 @@ func TestOSCommanderUsesItsEnvironment(t *testing.T) {
 	err := OSCommander{Env: []string{"PATH=/usr/bin:/bin", "ImageVersion=20261005.17"}}.Run(context.Background(), t.TempDir(), "sh", []string{"-c", "echo v=$ImageVersion"}, func(l string) { lines = append(lines, l) })
 	if err != nil || len(lines) != 1 || lines[0] != "v=20261005.17" {
 		t.Fatalf("lines = %v, %v", lines, err)
+	}
+}
+
+func sha(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
+
+// The builder is a clone of the active template, whose agent can be older than the
+// control plane's: build fixes must not wait for another template generation.
+func TestUpdateSelfReplacesAStaleAgent(t *testing.T) {
+	current := []byte("\x7fELF new agent")
+	fi := &fakeIngest{agent: current, agentSHA: sha(current)}
+	c := newBuildClient(t, fi)
+	exe := filepath.Join(t.TempDir(), "ghrm-agent")
+	_ = os.WriteFile(exe, []byte("\x7fELF old agent"), 0o755)
+	updated, err := UpdateSelf(context.Background(), c, exe)
+	if err != nil || !updated {
+		t.Fatalf("updated = %v, %v; want the stale agent replaced", updated, err)
+	}
+	b, _ := os.ReadFile(exe)
+	st, _ := os.Stat(exe)
+	if !bytes.Equal(b, current) || st.Mode().Perm() != 0o755 {
+		t.Fatalf("exe = %q mode %v", b, st.Mode())
+	}
+	updated, err = UpdateSelf(context.Background(), c, exe)
+	if err != nil || updated {
+		t.Fatalf("second run = %v, %v; want no update for a matching agent", updated, err)
+	}
+}
+
+func TestUpdateSelfRejectsACorruptDownload(t *testing.T) {
+	fi := &fakeIngest{agent: []byte("truncated"), agentSHA: strings.Repeat("d", 64)}
+	c := newBuildClient(t, fi)
+	exe := filepath.Join(t.TempDir(), "ghrm-agent")
+	_ = os.WriteFile(exe, []byte("old"), 0o755)
+	if updated, err := UpdateSelf(context.Background(), c, exe); err == nil || updated {
+		t.Fatalf("updated = %v, %v; want a checksum error", updated, err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" {
+		t.Fatalf("exe = %q; a bad download must not replace the agent", b)
+	}
+	if _, err := os.Stat(exe + ".new"); !os.IsNotExist(err) {
+		t.Fatal("the partial download must be removed")
+	}
+}
+
+func TestUpdateSelfWithoutAnnouncedChecksumKeepsTheAgent(t *testing.T) {
+	c := newBuildClient(t, &fakeIngest{})
+	exe := filepath.Join(t.TempDir(), "ghrm-agent")
+	_ = os.WriteFile(exe, []byte("old"), 0o755)
+	if updated, err := UpdateSelf(context.Background(), c, exe); err != nil || updated {
+		t.Fatalf("updated = %v, %v; an older control plane announces no checksum", updated, err)
+	}
+}
+
+// The control plane drops frames whose sequence is not above the last one it stored,
+// so an agent that restarts (after updating itself) must continue above its predecessor.
+func TestARestartedAgentContinuesTheSequences(t *testing.T) {
+	fi := &fakeIngest{}
+	a := newBuildClient(t, fi)
+	for range 3 {
+		a.Event("tick", nil)
+	}
+	_ = a.Flush(context.Background())
+	time.Sleep(2 * time.Millisecond)
+	b := newBuildClient(t, fi)
+	b.Event("tick", nil)
+	_ = b.Flush(context.Background())
+	fi.mu.Lock()
+	defer fi.mu.Unlock()
+	if n := len(fi.frames); n != 4 || fi.frames[3].Seq <= fi.frames[2].Seq {
+		t.Fatalf("frames = %+v; want the second agent's sequence above the first's", fi.frames)
 	}
 }

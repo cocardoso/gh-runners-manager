@@ -15,6 +15,7 @@ import (
 const (
 	BuildSpecPath   = "/ingest/v1/build/spec"
 	BuildLayerPath  = "/ingest/v1/build/layer"
+	BuildAgentPath  = "/ingest/v1/build/agent"
 	BuildRootFSPath = "/ingest/v1/build/rootfs"
 	SelfTestPath    = "/ingest/v1/selftest"
 	// HeaderSHA256 carries the hex SHA-256 of an uploaded root filesystem.
@@ -49,6 +50,9 @@ type BuildSpec struct {
 	RunnerVersion string `json:"runner_version"`
 	RunnerSHA256  string `json:"runner_sha256"`
 	LayerVersion  string `json:"layer_version"`
+	// AgentSHA256 is the control plane's ghrm-agent; a builder running another
+	// agent updates itself first (it is a clone of the active template).
+	AgentSHA256 string `json:"agent_sha256,omitempty"`
 }
 
 // Check is one self-test result.
@@ -69,6 +73,7 @@ type SelfTestReport struct {
 type BuildService interface {
 	BuildSpec(ctx context.Context, envID string) (BuildSpec, error)
 	WriteLayer(ctx context.Context, envID string, w io.Writer) error
+	WriteAgent(ctx context.Context, envID string, w io.Writer) error
 	ReceiveRootFS(ctx context.Context, envID string, r io.Reader, sha256 string) error
 	ReceiveSelfTest(ctx context.Context, envID string, rep SelfTestReport) error
 }
@@ -129,6 +134,19 @@ func (s *server) buildLayer(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/x-tar")
 	_ = s.builds.WriteLayer(r.Context(), envID, w)
+}
+
+func (s *server) buildAgent(w http.ResponseWriter, r *http.Request) {
+	envID, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if _, err := s.builds.BuildSpec(r.Context(), envID); err != nil {
+		buildError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	_ = s.builds.WriteAgent(r.Context(), envID, w)
 }
 
 func (s *server) buildRootFS(w http.ResponseWriter, r *http.Request) {

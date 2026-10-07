@@ -44,6 +44,7 @@ func NewServer(resolver TokenResolver, sink EventSink, logStore *logs.Store, rec
 	if s.builds != nil {
 		mux.HandleFunc("GET "+BuildSpecPath, s.buildSpec)
 		mux.HandleFunc("GET "+BuildLayerPath, s.buildLayer)
+		mux.HandleFunc("GET "+BuildAgentPath, s.buildAgent)
 		mux.HandleFunc("PUT "+BuildRootFSPath, s.buildRootFS)
 		mux.HandleFunc("POST "+SelfTestPath, s.selfTest)
 	}
