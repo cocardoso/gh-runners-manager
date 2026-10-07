@@ -180,6 +180,8 @@ sequenceDiagram
     participant I as Ingest
     participant UI as API / SSE clients
 
+    GH-->>L: JobAvailable (the only message with the queue time)
+    L->>C: job assigned, queued at
     GH-->>L: statistics: assigned jobs = N
     L->>C: desired count
     C->>C: scheduler: capacity check (memory, disk, limits)
@@ -199,7 +201,7 @@ sequenceDiagram
     I-->>UI: every step is an event and a log line, streamed live
 ```
 
-Agent → ingest frames are NDJSON batches every 250 ms. Each log stream has its own sequence numbers, so a retried batch is stored once. Events share the `agent` stream's sequence and reach the controller exactly once.
+Agent → ingest frames are NDJSON batches every 250 ms. Each log stream has its own sequence numbers, so a retried batch is stored once; an agent numbers from its start time in microseconds, so an agent that restarts (a builder updating itself) continues above its predecessor. Events share the `agent` stream's sequence and reach the controller exactly once.
 
 ## 3a. Where each log stream comes from
 
@@ -290,11 +292,14 @@ flowchart TD
     mine -- no --> gone(["nil: already gone or VMID reused"])
     mine -- yes --> running{"running?"}
     running -- yes --> stop["stop"]
-    running -- no --> del["delete (purge)"]
+    running -- no --> settle2["wait a few seconds: a guest that powered itself off<br/>may still be unmounting its disk"]
+    settle2 --> del["delete (purge)"]
     stop --> del
     stop -- "error: re-read and retry" --> look
     del -- "error: re-read and retry" --> look
     del --> done(["nil"])
+    del -- "task ends with WARNINGS (e.g. disk in use)" --> warn["log + proxmox.task_warnings event<br/>(leftovers on the host need a look)"]
+    warn --> done
 ```
 
 ## 6. Code map
@@ -345,20 +350,21 @@ Yellow packages are test doubles; `internal/demo` uses the fake runtime to serve
 
 ## 7. Template pipeline
 
-A build clones the **active template** into a builder environment (it already has Docker, systemd and `ghrm-agent`), because the Proxmox API cannot run commands inside a fresh stock container. The very first template comes from `deploy/proxmox/dev-template.sh` (the bootstrap template, `proxmox.template_vmid`).
+A build clones the **active template** into a builder environment (it already has Docker, systemd and `ghrm-agent`), because the Proxmox API cannot run commands inside a fresh stock container. The very first template comes from `deploy/proxmox/dev-template.sh` (the bootstrap template, `proxmox.template_vmid`). Since the builder runs the active template's agent, which can be older than the control plane, it first replaces itself with the control plane's agent, so fixes to the build take effect in the next build.
 
 ```mermaid
 flowchart LR
     rel["actions/runner-images release ubuntu-slim/*"] --> b1
-    runner["actions/runner release + SHA-256"] --> b1
+    runner["actions/runner release + SHA-256"] --> b2
     layer["ghrm layer (template/layer, embedded in ghrm)"] --> b2
     subgraph builder["Builder LXC (clone of the active template, job network)"]
+        b0["agent update: a builder whose ghrm-agent differs from the control plane's<br/>downloads it (GET /ingest/v1/build/agent), checks the SHA-256, re-executes"] --> b1
         b1["docker build: official ubuntu-slim Dockerfile, unmodified"] --> b2["docker build: ghrm layer (systemd, Docker Engine, runner, agent)"]
         b2 --> b3["docker export, drop container markers, zstd, SHA-256"]
     end
     b3 -- "PUT /ingest/v1/build/rootfs (streamed, size-capped)" --> cp["control plane: verify SHA-256"]
     cp --> up["upload to template storage (Proxmox verifies the SHA-256)"]
-    up --> create["create LXC: unprivileged, nesting, keyctl, DNS, firewalled NIC, gh-runner group; convert to template"]
+    up --> create["create LXC: unprivileged, nesting (keyctl is reserved to root@pam), DNS, firewalled NIC, gh-runner group; convert to template"]
     create --> verify["verify LXC (clone): self-test + software report"]
     verify --> compare["compare with GitHub's published report"]
     compare -- "all checks pass, no unexpected differences, nothing pinned" --> active["active template"]
@@ -369,7 +375,7 @@ flowchart LR
     create -- "Proxmox error, restart" --> failed
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
-    class rel,runner,layer,b1,b2,b3,cp,up,create,verify,compare,active,ready,failed done
+    class rel,runner,layer,b0,b1,b2,b3,cp,up,create,verify,compare,active,ready,failed done
 ```
 
 ### 7a. Template version states
