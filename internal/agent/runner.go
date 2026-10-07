@@ -42,24 +42,27 @@ func (r Runner) Run(ctx context.Context) (int, error) {
 	if cmd.WaitDelay <= 0 {
 		cmd.WaitDelay = 10 * time.Second
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return -1, err
-	}
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Start(); err != nil {
-		return -1, err
-	}
+	// An io.Pipe (not *os.File) makes exec copy the output in its own goroutine,
+	// which WaitDelay bounds; reading continues until the writer is closed below.
+	pr, pw := io.Pipe()
+	cmd.Stdout, cmd.Stderr = pw, pw
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		readLines(stdout, func(line string) {
+		readLines(pr, func(line string) {
 			if r.OnLine != nil {
 				r.OnLine(line)
 			}
 		})
+		_, _ = io.Copy(io.Discard, pr)
 	}()
-	err = cmd.Wait() // closes stdout after WaitDelay even if a child keeps it open
+	if err := cmd.Start(); err != nil {
+		_ = pw.Close()
+		<-done
+		return -1, err
+	}
+	err := cmd.Wait()
+	_ = pw.Close()
 	<-done
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
