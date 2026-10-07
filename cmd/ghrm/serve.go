@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -118,8 +119,13 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	// Requests (SSE streams in particular) derive from baseCtx, which is cancelled
+	// at shutdown so open streams end instead of eating the shutdown budget.
+	baseCtx, cancelBase := context.WithCancel(context.Background())
+	defer cancelBase()
 	apiSrv := &http.Server{
-		Addr: cfg.Listen,
+		BaseContext: func(net.Listener) context.Context { return baseCtx },
+		Addr:        cfg.Listen,
 		Handler: api.New(api.Deps{Store: db, Recorder: rec, Logs: logStore, Controller: ctl, AdminToken: cfg.AdminToken,
 			Ready: func(ctx context.Context) error { _, err := rt.Capacity(ctx); return err }}),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -135,12 +141,16 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	}
 	logger.Info("shutting down")
 	cancel()
+	cancelBase()
 	sctx, scancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer scancel()
 	_ = apiSrv.Shutdown(sctx)
 	_ = ingestSrv.Shutdown(sctx)
-	waitTimeout(&wg, 30*time.Second)
-	ctl.Wait()
+	// Bounded: systemd stops waiting at TimeoutStopSec. Unfinished provisioning is
+	// adopted or cleaned up at the next start.
+	if !waitOrTimeout(func() { wg.Wait(); ctl.Wait() }, 25*time.Second) {
+		logger.Warn("shutdown timed out waiting for background work")
+	}
 	return serveErr
 }
 
@@ -179,11 +189,14 @@ func ignoreClosed(err error) error {
 	return err
 }
 
-func waitTimeout(wg *sync.WaitGroup, d time.Duration) {
+// waitOrTimeout runs wait and reports whether it returned within d.
+func waitOrTimeout(wait func(), d time.Duration) bool {
 	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
+	go func() { wait(); close(done) }()
 	select {
 	case <-done:
+		return true
 	case <-time.After(d):
+		return false
 	}
 }

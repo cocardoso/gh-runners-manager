@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunVersion(t *testing.T) {
@@ -69,5 +70,18 @@ func TestServeRejectsInvalidConfig(t *testing.T) {
 	code := run(context.Background(), []string{"serve", "--config", cfg}, &stdout, &stderr)
 	if code != 1 || !strings.Contains(stderr.String(), "ingest.listen") {
 		t.Fatalf("exit %d, stderr %q; want a serve validation error", code, stderr.String())
+	}
+}
+
+func TestWaitOrTimeout(t *testing.T) {
+	if !waitOrTimeout(func() {}, time.Second) {
+		t.Fatal("a quick wait must report completion")
+	}
+	start := time.Now()
+	if waitOrTimeout(func() { time.Sleep(5 * time.Second) }, 50*time.Millisecond) {
+		t.Fatal("a slow wait must report a timeout")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("waitOrTimeout did not return at its deadline")
 	}
 }

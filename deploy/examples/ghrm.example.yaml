@@ -20,7 +20,9 @@ proxmox:
 
 # --- ghrm serve ---
 data_dir: /var/lib/ghrm
-listen: 0.0.0.0:8080                 # REST API, SSE and (from M3) the web UI
+# REST API, SSE and the web UI. Bind to the LAN address only: 0.0.0.0 would also
+# expose it on the job network, where jobs run.
+listen: 192.0.2.10:8080
 admin_token_file: /etc/ghrm/admin-token   # enables mutating API calls (Bearer token)
 
 ingest:

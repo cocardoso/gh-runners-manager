@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -12,6 +13,9 @@ import (
 )
 
 const heartbeat = 15 * time.Second
+
+// followIdleCheck is how often a log follow checks whether its environment is gone.
+var followIdleCheck = 5 * time.Second
 
 type sse struct{ d Deps }
 
@@ -116,6 +120,14 @@ func (s *sse) logs(w http.ResponseWriter, r *http.Request, envID, stream string)
 		http.Error(w, "unknown stream", http.StatusBadRequest)
 		return
 	}
+	if _, err := s.d.Store.GetEnvironment(r.Context(), envID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "environment not found", http.StatusNotFound)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
 	offset, _ := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
 	skip := int64(-1)
 	if v := r.Header.Get("Last-Event-ID"); v != "" {
@@ -131,6 +143,9 @@ func (s *sse) logs(w http.ResponseWriter, r *http.Request, envID, stream string)
 	ch := s.d.Logs.Follow(ctx, envID, stream, offset)
 	tick := time.NewTicker(heartbeat)
 	defer tick.Stop()
+	check := time.NewTicker(followIdleCheck)
+	defer check.Stop()
+	lastEntry := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -140,10 +155,20 @@ func (s *sse) logs(w http.ResponseWriter, r *http.Request, envID, stream string)
 				return
 			}
 			f.Flush()
+		case <-check.C:
+			// A destroyed environment writes nothing more: end the stream once caught up.
+			if time.Since(lastEntry) >= followIdleCheck {
+				if e, err := s.d.Store.GetEnvironment(ctx, envID); err == nil && e.State == "destroyed" {
+					_, _ = fmt.Fprint(w, "event: end\ndata: {}\n\n")
+					f.Flush()
+					return
+				}
+			}
 		case e, ok := <-ch:
 			if !ok {
 				return
 			}
+			lastEntry = time.Now()
 			if e.Offset == skip {
 				continue
 			}

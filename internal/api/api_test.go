@@ -181,6 +181,7 @@ func TestEventStreamResumesFromLastEventID(t *testing.T) {
 func TestLogFollowStreamsNewLines(t *testing.T) {
 	h := newHarness(t, "")
 	ctx := context.Background()
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "env1", ScaleSet: "lab", State: "running"})
 	_ = h.logs.Write(ctx, "env1", "job", "first", time.Now())
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -254,5 +255,46 @@ func TestHealthz(t *testing.T) {
 	h := newHarness(t, "")
 	if code := h.getJSON(t, "/healthz", nil); code != 200 {
 		t.Fatalf("healthz = %d", code)
+	}
+}
+
+func TestLogFollowRejectsUnknownEnvironment(t *testing.T) {
+	h := newHarness(t, "")
+	resp, err := http.Get(h.srv.URL + "/api/v1/environments/missing/logs/job?follow=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatalf("status = %d, want 404 for an unknown environment", resp.StatusCode)
+	}
+	resp, _ = http.Get(h.srv.URL + "/api/v1/environments/env1/logs/bogus?follow=true")
+	_ = resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("status = %d, want 400 for an unknown stream", resp.StatusCode)
+	}
+}
+
+func TestLogFollowEndsForDestroyedEnvironment(t *testing.T) {
+	followIdleCheck = 50 * time.Millisecond
+	defer func() { followIdleCheck = 5 * time.Second }()
+	h := newHarness(t, "")
+	ctx := context.Background()
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "env1", ScaleSet: "lab", State: "destroyed"})
+	_ = h.logs.Write(ctx, "env1", "job", "last line", time.Now())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		resp, err := http.Get(h.srv.URL + "/api/v1/environments/env1/logs/job?follow=true")
+		if err != nil {
+			return
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("following a destroyed environment's log never ended")
 	}
 }
