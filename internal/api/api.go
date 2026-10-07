@@ -113,6 +113,10 @@ type ScaleSet struct {
 	WaitingSince time.Time `json:"waiting_since"`
 	Listening    bool      `json:"listening"`
 	ListenError  string    `json:"listen_error,omitempty"`
+	// Removed scale sets are listed while their environments drain.
+	Removed  bool              `json:"removed"`
+	Source   string            `json:"source,omitempty" enum:"file,ui,"`
+	Settings *ScaleSetSettings `json:"settings,omitempty"`
 }
 
 func toEnvironment(e store.Environment) Environment {
@@ -169,8 +173,14 @@ func New(d Deps) http.Handler {
 			}{}
 			out.Body.ScaleSets = []ScaleSet{}
 			for _, s := range d.Controller.ScaleSets(ctx) {
-				out.Body.ScaleSets = append(out.Body.ScaleSets, ScaleSet{Name: s.Name, GitHubID: s.GitHubID, Desired: s.Desired, Live: s.Live,
-					Waiting: s.Waiting, WaitingSince: s.WaitingSince, Listening: s.Listening, ListenError: s.ListenError})
+				v := ScaleSet{Name: s.Name, GitHubID: s.GitHubID, Desired: s.Desired, Live: s.Live,
+					Waiting: s.Waiting, WaitingSince: s.WaitingSince, Listening: s.Listening, ListenError: s.ListenError, Removed: s.Removed}
+				if d.Settings != nil {
+					if ss, ok := d.Settings.ScaleSet(s.Name); ok {
+						v.Source, v.Settings = ss.Source, toScaleSetSettings(ss.ScaleSet)
+					}
+				}
+				out.Body.ScaleSets = append(out.Body.ScaleSets, v)
 			}
 			return out, nil
 		})

@@ -66,6 +66,9 @@ type ScaleSetStatus struct {
 	WaitingSince time.Time
 	Listening    bool
 	ListenError  string
+	// Removed means the scale set was deleted from the settings; it stays listed
+	// until its live environments are gone and gets no new ones.
+	Removed bool
 }
 
 type scaleSetState struct {
@@ -76,6 +79,7 @@ type scaleSetState struct {
 	waiting      string
 	listening    bool
 	listenErr    string
+	removed      bool
 }
 
 // Controller provisions and tears down environments.
@@ -84,6 +88,7 @@ type Controller struct {
 
 	mu         sync.Mutex
 	scaleSets  map[string]*scaleSetState
+	order      []string          // scale set names in settings order, removed ones last
 	destroying map[string]bool   // single-flight destroys
 	retries    map[string]*retry // destroy backoff
 
@@ -102,9 +107,7 @@ func New(d Deps) *Controller {
 	}
 	c := &Controller{d: d, scaleSets: map[string]*scaleSetState{}, destroying: map[string]bool{},
 		retries: map[string]*retry{}, kick: make(chan struct{}, 1)}
-	for _, ss := range d.Config.ScaleSets {
-		c.scaleSets[ss.Name] = &scaleSetState{cfg: ss}
-	}
+	c.UpdateScaleSets(d.Config.ScaleSets)
 	return c
 }
 
@@ -148,12 +151,19 @@ func (c *Controller) ScaleSets(ctx context.Context) []ScaleSetStatus {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	out := make([]ScaleSetStatus, 0, len(c.d.Config.ScaleSets))
-	for _, cfg := range c.d.Config.ScaleSets {
-		s := c.scaleSets[cfg.Name]
-		out = append(out, ScaleSetStatus{Name: cfg.Name, GitHubID: s.githubID, Desired: s.desired, Live: live[cfg.Name],
-			Waiting: s.waiting, WaitingSince: s.waitingSince, Listening: s.listening, ListenError: s.listenErr})
+	out := make([]ScaleSetStatus, 0, len(c.order))
+	keep := c.order[:0]
+	for _, name := range c.order {
+		s := c.scaleSets[name]
+		if s.removed && live[name] == 0 {
+			delete(c.scaleSets, name) // drained
+			continue
+		}
+		keep = append(keep, name)
+		out = append(out, ScaleSetStatus{Name: name, GitHubID: s.githubID, Desired: s.desired, Live: live[name],
+			Waiting: s.waiting, WaitingSince: s.waitingSince, Listening: s.listening, ListenError: s.listenErr, Removed: s.removed})
 	}
+	c.order = keep
 	return out
 }
 

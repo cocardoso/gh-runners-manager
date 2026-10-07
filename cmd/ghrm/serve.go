@@ -139,19 +139,34 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	ctl.SetTemplates(tpl, tpl)
 
 	_, _ = rec.Info(ctx, "control_plane.started", "ghrm "+version.Version+" started", events.Refs{},
-		map[string]any{"ingest_fingerprint": fingerprint, "scale_sets": len(cfg.ScaleSets)})
+		map[string]any{"ingest_fingerprint": fingerprint, "scale_sets": len(reg.ScaleSets())})
 	logger.Info("starting", "version", version.Version, "listen", cfg.Listen, "ingest", cfg.Ingest.Listen, "ingest_fingerprint", fingerprint)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var wg sync.WaitGroup
-	for _, ss := range cfg.ScaleSets {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			listenLoop(ctx, ss, gh, ctl, db, rec, logger)
-		}()
+	// Scale sets come from the file and the UI; listeners follow every change.
+	sup := newSupervisor(func(ctx context.Context, ss config.ScaleSet) { listenLoop(ctx, ss, gh, ctl, db, rec, logger) })
+	applyScaleSets := func() {
+		list := reg.ScaleSetConfigs()
+		ctl.UpdateScaleSets(list)
+		sup.Reconcile(ctx, list)
 	}
+	applyScaleSets()
+	changes, unsubscribe := reg.Subscribe()
+	defer unsubscribe()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-changes:
+				applyScaleSets()
+			}
+		}
+	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -202,7 +217,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	_ = ingestSrv.Shutdown(sctx)
 	// Bounded: systemd stops waiting at TimeoutStopSec. Unfinished provisioning is
 	// adopted or cleaned up at the next start.
-	if !waitOrTimeout(func() { wg.Wait(); ctl.Wait(); tpl.Wait() }, 25*time.Second) {
+	if !waitOrTimeout(func() { wg.Wait(); sup.Wait(); ctl.Wait(); tpl.Wait() }, 25*time.Second) {
 		logger.Warn("shutdown timed out waiting for background work")
 	}
 	return serveErr

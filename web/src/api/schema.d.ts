@@ -311,6 +311,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/scale-sets/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Create or change a scale set; running environments keep their settings */
+        put: operations["put-scale-set"];
+        post?: never;
+        /** Remove a scale set; its running environments finish first */
+        delete: operations["delete-scale-set"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings": {
         parameters: {
             query?: never;
@@ -796,9 +814,34 @@ export interface components {
             /** Format: int64 */
             live: number;
             name: string;
+            removed: boolean;
+            settings?: components["schemas"]["ScaleSetSettings"];
+            /** @enum {string} */
+            source?: "file" | "ui" | "";
             waiting?: string;
             /** Format: date-time */
             waiting_since: string;
+        };
+        ScaleSetSettings: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ScaleSetSettings.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            cores?: number;
+            credential: string;
+            /** Format: int64 */
+            keep_on_failure_minutes?: number;
+            labels?: string[] | null;
+            /** Format: int64 */
+            max_concurrent?: number;
+            /** Format: int64 */
+            memory_mb?: number;
+            runner_group?: string;
+            /** @description https://github.com/<owner>[/<repo>] */
+            url: string;
         };
         SessionState: {
             /**
@@ -1500,6 +1543,68 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["List-scale-setsResponse"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-scale-set": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScaleSetSettings"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-scale-set": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
 	"github.com/cocardoso/gh-runners-manager/internal/settings"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
@@ -18,6 +19,23 @@ type CredentialView struct {
 	Source    string   `json:"source" enum:"file,ui"`
 	UsedBy    []string `json:"used_by"`
 	TokenHint string   `json:"token_hint" doc:"The token's last four characters"`
+}
+
+// ScaleSetSettings are a scale set's editable settings.
+type ScaleSetSettings struct {
+	URL                  string   `json:"url" doc:"https://github.com/<owner>[/<repo>]"`
+	Credential           string   `json:"credential"`
+	RunnerGroup          string   `json:"runner_group,omitempty"`
+	Labels               []string `json:"labels,omitempty"`
+	MaxConcurrent        int      `json:"max_concurrent,omitempty"`
+	Cores                int      `json:"cores,omitempty"`
+	MemoryMB             int      `json:"memory_mb,omitempty"`
+	KeepOnFailureMinutes int      `json:"keep_on_failure_minutes,omitempty"`
+}
+
+func toScaleSetSettings(ss config.ScaleSet) *ScaleSetSettings {
+	return &ScaleSetSettings{URL: ss.URL, Credential: ss.Credential, RunnerGroup: ss.RunnerGroup, Labels: ss.Labels,
+		MaxConcurrent: ss.MaxConcurrent, Cores: ss.Cores, MemoryMB: ss.MemoryMB, KeepOnFailureMinutes: ss.KeepOnFailureMinutes}
 }
 
 // settingsError maps registry errors; anything else is a validation error.
@@ -100,6 +118,39 @@ func registerSettingsEdit(a huma.API, d Deps) {
 				return nil, settingsError(err)
 			}
 			audit(ctx, d, "credential_delete", "credential "+in.Name+" deleted by "+Actor(ctx), events.Refs{}, map[string]any{"credential": in.Name})
+			return &struct{}{}, nil
+		})
+
+	type putScaleSetIn struct {
+		Name string `path:"name"`
+		Body ScaleSetSettings
+	}
+	huma.Register(a, huma.Operation{OperationID: "put-scale-set", Method: http.MethodPut, Path: "/api/v1/scale-sets/{name}",
+		Summary: "Create or change a scale set; running environments keep their settings", Tags: tags, DefaultStatus: http.StatusNoContent},
+		func(ctx context.Context, in *putScaleSetIn) (*struct{}, error) {
+			if d.Settings == nil {
+				return nil, readOnly()
+			}
+			b := in.Body
+			ss := config.ScaleSet{Name: in.Name, URL: b.URL, Credential: b.Credential, RunnerGroup: b.RunnerGroup, Labels: b.Labels,
+				MaxConcurrent: b.MaxConcurrent, Cores: b.Cores, MemoryMB: b.MemoryMB, KeepOnFailureMinutes: b.KeepOnFailureMinutes}
+			if err := d.Settings.PutScaleSet(ctx, ss); err != nil {
+				return nil, settingsError(err)
+			}
+			audit(ctx, d, "scale_set_put", "scale set "+in.Name+" saved by "+Actor(ctx), events.Refs{ScaleSet: in.Name}, nil)
+			return &struct{}{}, nil
+		})
+	huma.Register(a, huma.Operation{OperationID: "delete-scale-set", Method: http.MethodDelete, Path: "/api/v1/scale-sets/{name}",
+		Summary: "Remove a scale set; its running environments finish first", Tags: tags, DefaultStatus: http.StatusNoContent},
+		func(ctx context.Context, in *nameIn) (*struct{}, error) {
+			if d.Settings == nil {
+				return nil, readOnly()
+			}
+			if err := d.Settings.DeleteScaleSet(ctx, in.Name); err != nil {
+				return nil, settingsError(err)
+			}
+			audit(ctx, d, "scale_set_delete", "scale set "+in.Name+" removed by "+Actor(ctx)+
+				"; it stays registered on GitHub (without runners) until deleted there", events.Refs{ScaleSet: in.Name}, nil)
 			return &struct{}{}, nil
 		})
 

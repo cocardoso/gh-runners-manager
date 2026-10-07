@@ -72,6 +72,26 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	// Scale sets created in the UI join the simulated fleet (as listening, without jobs).
+	applyScaleSets := func() {
+		list := reg.ScaleSetConfigs()
+		d.Controller.UpdateScaleSets(list)
+		for _, ss := range list {
+			d.Controller.SetListening(ss.Name, true, nil)
+		}
+	}
+	changes, unsubscribe := reg.Subscribe()
+	defer unsubscribe()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-changes:
+				applyScaleSets()
+			}
+		}
+	}()
 	srv := &http.Server{
 		Addr:              *listen,
 		BaseContext:       func(net.Listener) context.Context { return ctx },

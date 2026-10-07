@@ -47,8 +47,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	c.mu.Lock()
 	var demands []scheduler.Demand
 	now := c.now()
-	for _, cfg := range c.d.Config.ScaleSets {
-		s := c.scaleSets[cfg.Name]
+	for _, name := range c.order {
+		s := c.scaleSets[name]
+		if s.removed {
+			continue // drains: no new environments
+		}
+		cfg := s.cfg
 		if s.desired > serving[cfg.Name] {
 			if s.waitingSince.IsZero() {
 				s.waitingSince = now
