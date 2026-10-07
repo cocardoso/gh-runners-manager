@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -310,5 +311,25 @@ func TestUsersAndSessions(t *testing.T) {
 	_ = s.DeleteSession(ctx, "s1")
 	if _, err := s.GetSession(ctx, "s1"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("deleted session still there")
+	}
+}
+
+// The database holds sealed secrets and session hashes: only its owner may read it.
+func TestDatabaseFilesArePrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ghrm.db")
+	s, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.PutMeta(context.Background(), "k", "v") // creates the WAL
+	defer s.Close()
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		st, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		if st.Mode().Perm()&0o077 != 0 {
+			t.Errorf("%s mode = %v, want 0600", filepath.Base(p), st.Mode().Perm())
+		}
 	}
 }
