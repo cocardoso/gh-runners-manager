@@ -3,6 +3,7 @@ CREATE TABLE templates (
     id              TEXT PRIMARY KEY,
     slim_release    TEXT NOT NULL DEFAULT '',
     runner_version  TEXT NOT NULL DEFAULT '',
+    runner_sha256   TEXT NOT NULL DEFAULT '',
     layer_version   TEXT NOT NULL DEFAULT '',
     state           TEXT NOT NULL,
     vmid            INTEGER NOT NULL DEFAULT 0,

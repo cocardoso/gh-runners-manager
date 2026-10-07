@@ -110,6 +110,12 @@ func New(d Deps) *Controller {
 
 func (c *Controller) now() time.Time { return c.d.Now() }
 
+// SetTemplates connects the template service, which itself needs the controller.
+// Call it before Run.
+func (c *Controller) SetTemplates(src TemplateSource, ev TemplateEvents) {
+	c.d.Templates, c.d.TemplateEvents = src, ev
+}
+
 // SetScaleSetID records the GitHub ID of a scale set.
 func (c *Controller) SetScaleSetID(name string, id int) {
 	c.mu.Lock()

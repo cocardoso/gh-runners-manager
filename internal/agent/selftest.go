@@ -90,7 +90,9 @@ func RunSelfTest(ctx context.Context, c *Client, cmd Commander, o SelfTestOption
 		if err := writeFile(filepath.Join(bx, "Dockerfile"), "FROM busybox\nRUN echo ok > /ok\n"); err != nil {
 			return err
 		}
-		defer func() { _ = cmd.Run(context.WithoutCancel(ctx), bx, "docker", []string{"buildx", "rm", "ghrm-selftest"}, log) }()
+		defer func() {
+			_ = cmd.Run(context.WithoutCancel(ctx), bx, "docker", []string{"buildx", "rm", "ghrm-selftest"}, log)
+		}()
 		if err := cmd.Run(ctx, bx, "docker", []string{"buildx", "create", "--name", "ghrm-selftest", "--driver", "docker-container"}, log); err != nil {
 			return err
 		}

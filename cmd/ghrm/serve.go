@@ -26,15 +26,25 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/proxmox"
 	"github.com/cocardoso/gh-runners-manager/internal/runtime/proxmoxlxc"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
+	"github.com/cocardoso/gh-runners-manager/internal/template"
 	"github.com/cocardoso/gh-runners-manager/internal/version"
 )
 
 var (
-	_ controller.GitHub    = (*github.Client)(nil)
-	_ ingest.TokenResolver = (*controller.Controller)(nil)
-	_ ingest.EventSink     = (*controller.Controller)(nil)
-	_ api.Controller       = (*controller.Controller)(nil)
+	_ controller.GitHub     = (*github.Client)(nil)
+	_ ingest.TokenResolver  = (*controller.Controller)(nil)
+	_ ingest.EventSink      = (*controller.Controller)(nil)
+	_ api.Controller        = (*controller.Controller)(nil)
+	_ ingest.BuildService   = (*template.Service)(nil)
+	_ template.Environments = (*controller.Controller)(nil)
 )
+
+// runtimeTemplates maps the templates configuration to the proxmox-lxc runtime.
+func runtimeTemplates(cfg *config.Config) proxmoxlxc.TemplateConfig {
+	t := cfg.Templates
+	return proxmoxlxc.TemplateConfig{VMIDStart: t.VMIDRange.Start, VMIDEnd: t.VMIDRange.End, Storage: t.Storage, RootFSGB: t.RootFSGB,
+		Nameserver: t.Nameserver, Bridge: t.Bridge, FirewallGroup: t.FirewallGroup}
+}
 
 // serve runs the control plane until ctx ends.
 func serve(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -84,7 +94,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	}
 	rt := proxmoxlxc.New(pc, proxmoxlxc.Config{Node: p.Node, TemplateVMID: p.TemplateVMID, Pool: p.Pool,
 		VMIDStart: p.VMIDRange.Start, VMIDEnd: p.VMIDRange.End, ThinPool: p.ThinPool, Storage: p.Storage,
-		FirewallSettle: p.FirewallSettle.Std()})
+		FirewallSettle: p.FirewallSettle.Std(), Templates: runtimeTemplates(cfg)})
 
 	bus := events.NewBus()
 	rec := events.NewRecorder(db, bus, nil)
@@ -92,6 +102,13 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	gh := github.New(cfg, logger)
 	ctl := controller.New(controller.Deps{Store: db, Recorder: rec, Runtime: rt, GitHub: gh, Logs: logStore, Config: cfg,
 		IngestURL: cfg.Ingest.AdvertiseURL, IngestFingerprint: fingerprint})
+	tpl := template.NewService(template.Deps{Store: db, Recorder: rec, Logs: logStore, Runtime: rt, Environments: ctl,
+		Releases: template.NewGitHubReleases("", "", nil), Config: cfg.Templates, BootstrapVMID: p.TemplateVMID, DataDir: cfg.DataDir})
+	if err := tpl.EnsureBootstrap(ctx); err != nil {
+		return err
+	}
+	tpl.Recover(ctx)
+	ctl.SetTemplates(tpl, tpl)
 
 	_, _ = rec.Info(ctx, "control_plane.started", "ghrm "+version.Version+" started", events.Refs{},
 		map[string]any{"ingest_fingerprint": fingerprint, "scale_sets": len(cfg.ScaleSets)})
@@ -112,10 +129,17 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		defer wg.Done()
 		ctl.Run(ctx)
 	}()
+	if cfg.Templates.Enabled() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tpl.Run(ctx)
+		}()
+	}
 
 	ingestSrv := &http.Server{
 		Addr:              cfg.Ingest.Listen,
-		Handler:           ingest.NewServer(ctl, ctl, logStore, rec),
+		Handler:           ingest.NewServer(ctl, ctl, logStore, rec, ingest.WithBuilds(tpl)),
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -149,7 +173,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	_ = ingestSrv.Shutdown(sctx)
 	// Bounded: systemd stops waiting at TimeoutStopSec. Unfinished provisioning is
 	// adopted or cleaned up at the next start.
-	if !waitOrTimeout(func() { wg.Wait(); ctl.Wait() }, 25*time.Second) {
+	if !waitOrTimeout(func() { wg.Wait(); ctl.Wait(); tpl.Wait() }, 25*time.Second) {
 		logger.Warn("shutdown timed out waiting for background work")
 	}
 	return serveErr

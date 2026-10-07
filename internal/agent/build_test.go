@@ -32,7 +32,9 @@ type fakeCommander struct {
 	files   map[string]string // files to create when a command runs: prefix -> path|content
 }
 
-func (f *fakeCommander) line(name string, args []string) string { return name + " " + strings.Join(args, " ") }
+func (f *fakeCommander) line(name string, args []string) string {
+	return name + " " + strings.Join(args, " ")
+}
 
 func (f *fakeCommander) Run(_ context.Context, _ string, name string, args []string, out func(string)) error {
 	l := f.line(name, args)
