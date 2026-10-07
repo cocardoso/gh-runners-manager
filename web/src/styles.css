@@ -7,3 +7,55 @@ body,
 #root {
   height: 100%;
 }
+
+/* ANSI colours for the log viewer, readable on Kumo's recessed surface in both themes. */
+:root {
+  --ansi-black: light-dark(#1f2328, #8b949e);
+  --ansi-red: light-dark(#cf222e, #ff7b72);
+  --ansi-green: light-dark(#116329, #3fb950);
+  --ansi-yellow: light-dark(#7d4e00, #d29922);
+  --ansi-blue: light-dark(#0550ae, #58a6ff);
+  --ansi-magenta: light-dark(#8250df, #bc8cff);
+  --ansi-cyan: light-dark(#1b7c83, #39c5cf);
+  --ansi-white: light-dark(#6e7781, #b1bac4);
+  --ansi-bright-black: light-dark(#57606a, #6e7681);
+  --ansi-bright-red: light-dark(#a40e26, #ffa198);
+  --ansi-bright-green: light-dark(#1a7f37, #56d364);
+  --ansi-bright-yellow: light-dark(#633c01, #e3b341);
+  --ansi-bright-blue: light-dark(#218bff, #79c0ff);
+  --ansi-bright-magenta: light-dark(#a475f9, #d2a8ff);
+  --ansi-bright-cyan: light-dark(#3192aa, #56d4dd);
+  --ansi-bright-white: light-dark(#8c959f, #f0f6fc);
+}
+.ansi-fg-black { color: var(--ansi-black); }
+.ansi-bg-black { background-color: color-mix(in srgb, var(--ansi-black) 30%, transparent); }
+.ansi-fg-red { color: var(--ansi-red); }
+.ansi-bg-red { background-color: color-mix(in srgb, var(--ansi-red) 30%, transparent); }
+.ansi-fg-green { color: var(--ansi-green); }
+.ansi-bg-green { background-color: color-mix(in srgb, var(--ansi-green) 30%, transparent); }
+.ansi-fg-yellow { color: var(--ansi-yellow); }
+.ansi-bg-yellow { background-color: color-mix(in srgb, var(--ansi-yellow) 30%, transparent); }
+.ansi-fg-blue { color: var(--ansi-blue); }
+.ansi-bg-blue { background-color: color-mix(in srgb, var(--ansi-blue) 30%, transparent); }
+.ansi-fg-magenta { color: var(--ansi-magenta); }
+.ansi-bg-magenta { background-color: color-mix(in srgb, var(--ansi-magenta) 30%, transparent); }
+.ansi-fg-cyan { color: var(--ansi-cyan); }
+.ansi-bg-cyan { background-color: color-mix(in srgb, var(--ansi-cyan) 30%, transparent); }
+.ansi-fg-white { color: var(--ansi-white); }
+.ansi-bg-white { background-color: color-mix(in srgb, var(--ansi-white) 30%, transparent); }
+.ansi-fg-bright-black { color: var(--ansi-bright-black); }
+.ansi-bg-bright-black { background-color: color-mix(in srgb, var(--ansi-bright-black) 30%, transparent); }
+.ansi-fg-bright-red { color: var(--ansi-bright-red); }
+.ansi-bg-bright-red { background-color: color-mix(in srgb, var(--ansi-bright-red) 30%, transparent); }
+.ansi-fg-bright-green { color: var(--ansi-bright-green); }
+.ansi-bg-bright-green { background-color: color-mix(in srgb, var(--ansi-bright-green) 30%, transparent); }
+.ansi-fg-bright-yellow { color: var(--ansi-bright-yellow); }
+.ansi-bg-bright-yellow { background-color: color-mix(in srgb, var(--ansi-bright-yellow) 30%, transparent); }
+.ansi-fg-bright-blue { color: var(--ansi-bright-blue); }
+.ansi-bg-bright-blue { background-color: color-mix(in srgb, var(--ansi-bright-blue) 30%, transparent); }
+.ansi-fg-bright-magenta { color: var(--ansi-bright-magenta); }
+.ansi-bg-bright-magenta { background-color: color-mix(in srgb, var(--ansi-bright-magenta) 30%, transparent); }
+.ansi-fg-bright-cyan { color: var(--ansi-bright-cyan); }
+.ansi-bg-bright-cyan { background-color: color-mix(in srgb, var(--ansi-bright-cyan) 30%, transparent); }
+.ansi-fg-bright-white { color: var(--ansi-bright-white); }
+.ansi-bg-bright-white { background-color: color-mix(in srgb, var(--ansi-bright-white) 30%, transparent); }

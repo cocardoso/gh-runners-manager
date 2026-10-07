@@ -31,3 +31,13 @@ console.warn = (...args: unknown[]) => {
   if (typeof args[0] === "string" && args[0].includes("[kumo]")) throw new Error(`Kumo warning: ${args.join(" ")}`);
   warn(...args);
 };
+
+// jsdom has no layout: give log viewports a size so TanStack Virtual renders rows.
+for (const [prop, size] of [["offsetHeight", 400], ["offsetWidth", 800]] as const) {
+  Object.defineProperty(HTMLElement.prototype, prop, {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.getAttribute("role") === "log" ? size : 0;
+    },
+  });
+}
