@@ -1,5 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api, unwrap } from "./client";
+import { setCsrfToken } from "./auth-state";
 
 // Query keys match invalidationKeys in lib/event-stream.ts.
 
@@ -81,4 +82,16 @@ export function useTemplates() {
 
 export function useTemplate(id: string) {
   return useQuery({ queryKey: ["templates", id], queryFn: async () => unwrap(await api.GET("/api/v1/templates/{id}", { params: { path: { id } } })) });
+}
+
+export function useSession() {
+  return useQuery({
+    queryKey: ["session"],
+    queryFn: async () => {
+      const s = unwrap(await api.GET("/api/v1/auth/session"));
+      setCsrfToken(s.csrf);
+      return s;
+    },
+    staleTime: 60_000,
+  });
 }

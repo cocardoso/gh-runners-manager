@@ -38,7 +38,7 @@ export function SettingsPage() {
         <DefinitionList
           items={[
             ["Version", s.version],
-            ["Admin actions", s.admin_actions ? <Badge variant="success" appearance="dot">Enabled</Badge> : <Badge variant="neutral" appearance="dot">Disabled (no admin token)</Badge>],
+            ["Admin actions", s.admin_actions ? <Badge variant="success" appearance="dot">Enabled</Badge> : <Badge variant="neutral" appearance="dot">Disabled</Badge>],
           ]}
         />
       </Section>

@@ -38,14 +38,14 @@ export function TemplateActions({ t, run }: { t: TemplateView; run: ReturnType<t
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ["templates"] });
   const activate = () =>
-    run(t.state === "ready" && t.activated_at && !t.activated_at.startsWith("0001") ? `Rolled back to ${t.id}` : `${t.id} is now active`, async (auth) => {
-      unwrap(await api.POST("/api/v1/templates/{id}/activate", { params: { path: { id: t.id }, header: { Authorization: auth } } }));
+    run(t.state === "ready" && t.activated_at && !t.activated_at.startsWith("0001") ? `Rolled back to ${t.id}` : `${t.id} is now active`, async () => {
+      unwrap(await api.POST("/api/v1/templates/{id}/activate", { params: { path: { id: t.id } } }));
       await refresh();
     });
   const pin = (pinned: boolean) =>
-    run(pinned ? `${t.id} pinned` : `${t.id} unpinned`, async (auth) => {
+    run(pinned ? `${t.id} pinned` : `${t.id} unpinned`, async () => {
       const path = pinned ? "/api/v1/templates/{id}/pin" : "/api/v1/templates/{id}/unpin";
-      unwrap(await api.POST(path, { params: { path: { id: t.id }, header: { Authorization: auth } } }));
+      unwrap(await api.POST(path, { params: { path: { id: t.id } } }));
       await refresh();
     });
   const wasActive = !!t.activated_at && !t.activated_at.startsWith("0001");
@@ -81,8 +81,8 @@ export function TemplatesPage() {
   const templates: TemplateView[] = list.data?.templates ?? [];
 
   const buildNow = () =>
-    admin.run("Build started", async (auth) => {
-      unwrap(await api.POST("/api/v1/templates/build", { params: { header: { Authorization: auth } } }));
+    admin.run("Build started", async () => {
+      unwrap(await api.POST("/api/v1/templates/build"));
       await qc.invalidateQueries({ queryKey: ["templates"] });
     });
   const reason = !enabled ? "Template builds are not configured" : building ? "A build is already running" : !canAct ? "No admin token is configured" : "";
@@ -168,7 +168,6 @@ export function TemplatesPage() {
       <LayerCard>
         <LayerCard.Primary className="p-0">{body}</LayerCard.Primary>
       </LayerCard>
-      {admin.dialog}
     </Page>
   );
 }

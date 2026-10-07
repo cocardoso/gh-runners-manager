@@ -247,7 +247,7 @@ type Settings struct {
 }
 
 func settingsView(d Deps) Settings {
-	s := Settings{Version: version.Version, AdminActions: d.AdminToken != "", ScaleSets: []map[string]any{}}
+	s := Settings{Version: version.Version, AdminActions: d.AdminToken != "" || d.Auth != nil, ScaleSets: []map[string]any{}}
 	c := d.Config
 	if c == nil {
 		return s

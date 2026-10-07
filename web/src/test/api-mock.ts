@@ -54,6 +54,7 @@ export type Routes = Record<string, unknown | ((url: URL) => unknown)>;
 
 export function defaultRoutes(): Routes {
   return {
+    "/api/v1/auth/session": { state: "signed_in", username: "admin", csrf: "csrf-1" },
     "/api/v1/overview": emptyOverview,
     "/api/v1/stats/jobs": { buckets: [] },
     "/api/v1/jobs": { jobs: [] },
@@ -68,11 +69,11 @@ export function defaultRoutes(): Routes {
 /** Stubs fetch with JSON answers by pathname; unknown paths answer 404. Returns the request log. */
 export function mockApi(overrides: Routes = {}) {
   const routes = { ...defaultRoutes(), ...overrides };
-  const calls: { method: string; url: URL; headers: Headers }[] = [];
+  const calls: { method: string; url: URL; headers: Headers; request: Request }[] = [];
   vi.stubGlobal("fetch", async (req: Request) => {
     const url = new URL(req.url);
-    calls.push({ method: req.method, url, headers: req.headers });
-    const r = routes[`${req.method} ${url.pathname}`] ?? routes[url.pathname];
+    calls.push({ method: req.method, url, headers: req.headers, request: req.clone() });
+    const r = routes[`${req.method} ${url.pathname}`] ?? (req.method === "GET" ? routes[url.pathname] : undefined) ?? routes[url.pathname];
     if (r === undefined) return new Response(JSON.stringify({ title: "Not Found", detail: "not found" }), { status: 404, headers: { "Content-Type": "application/json" } });
     const body = typeof r === "function" ? (r as (u: URL) => unknown)(url) : r;
     if (body instanceof Response) return body;

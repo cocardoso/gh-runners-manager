@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, type RouterHistory } from "@tanstack/react-router";
 import { Toasty, TooltipProvider } from "@cloudflare/kumo";
 import { LiveProvider } from "@/lib/live";
+import { onUnauthorized } from "@/api/auth-state";
 import { createAppRouter } from "./router";
 
 export function newQueryClient() {
@@ -29,6 +30,11 @@ export function App({
 }) {
   const [qc] = useState(() => queryClient ?? newQueryClient());
   const [router] = useState(() => createAppRouter(history));
+  // A 401 means the session ended: re-read it, which shows the sign-in page.
+  useEffect(() => {
+    onUnauthorized(() => void qc.invalidateQueries({ queryKey: ["session"] }));
+    return () => onUnauthorized(null);
+  }, [qc]);
   return (
     <QueryClientProvider client={qc}>
       <LiveProvider createEventSource={createEventSource}>

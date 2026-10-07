@@ -10,6 +10,7 @@ import { TemplatesPage } from "@/pages/templates";
 import { TemplateDetailPage } from "@/pages/template-detail";
 import { LiveLogsPage } from "@/pages/live-logs";
 import { SettingsPage } from "@/pages/settings";
+import { AccountPage } from "@/pages/account";
 import { NotFoundPage } from "@/pages/not-found";
 
 const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : typeof v === "number" ? String(v) : undefined);
@@ -58,6 +59,7 @@ const routes = [
   createRoute({ getParentRoute: () => rootRoute, path: "/templates/$id", component: TemplateDetailPage, validateSearch: detailSearch }),
   createRoute({ getParentRoute: () => rootRoute, path: "/logs", component: LiveLogsPage, validateSearch: listSearch }),
   createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/account", component: AccountPage }),
 ];
 
 const routeTree = rootRoute.addChildren(routes);

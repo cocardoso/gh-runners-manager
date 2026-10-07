@@ -1,5 +1,6 @@
 import createClient from "openapi-fetch";
 import type { components, paths } from "./schema";
+import { csrfToken, notifyUnauthorized } from "./auth-state";
 
 type Schemas = components["schemas"];
 
@@ -12,6 +13,7 @@ export type LogEntry = Schemas["Entry"];
 export type LogStreamInfo = Schemas["LogStream"];
 export type Overview = Schemas["Overview"];
 export type ScaleSet = Schemas["ScaleSet"];
+export type SessionState = Schemas["SessionState"];
 export type Settings = Schemas["Settings"];
 export type TemplateVersion = Schemas["Template"];
 export type ApiEvent = Omit<Schemas["Event"], "$schema" | "data"> & { data?: Record<string, unknown>; [extra: string]: unknown };
@@ -20,6 +22,19 @@ export type ApiEvent = Omit<Schemas["Event"], "$schema" | "data"> & { data?: Rec
 export const api = createClient<paths>({
   baseUrl: typeof window === "undefined" ? "" : window.location.origin,
   fetch: (req) => globalThis.fetch(req),
+});
+
+// Writes carry the session's CSRF token; a 401 outside the sign-in calls means the
+// session ended, so the app shows the sign-in page again.
+api.use({
+  onRequest({ request }) {
+    if (request.method !== "GET" && request.method !== "HEAD" && csrfToken()) request.headers.set("X-CSRF-Token", csrfToken());
+    return request;
+  },
+  onResponse({ request, response }) {
+    if (response.status === 401 && !new URL(request.url).pathname.startsWith("/api/v1/auth/")) notifyUnauthorized();
+    return response;
+  },
 });
 
 /** Thrown for non-2xx answers, with the server's detail when there is one. */

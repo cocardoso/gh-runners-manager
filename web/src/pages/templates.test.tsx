@@ -49,7 +49,7 @@ test("lists versions with their state, badges and inputs", async () => {
   expect(within(table).getByRole("link", { name: /tplnew/ })).toHaveAttribute("href", "/templates/tplnew");
 });
 
-test("build now asks for the admin token and starts a build", async () => {
+test("build now starts a build with the session's CSRF token", async () => {
   const calls = mockApi({
     "/api/v1/templates": { templates, building: false, enabled: true },
     "/api/v1/settings": settings,
@@ -59,10 +59,10 @@ test("build now asks for the admin token and starts a build", async () => {
   renderApp("/templates");
   await waitFor(() => expect(screen.getByRole("button", { name: "Build now" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Build now" }));
-  await user.type(await screen.findByLabelText("Admin token"), "s3cret");
-  await user.click(screen.getByRole("button", { name: "Continue" }));
   await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.url.pathname === "/api/v1/templates/build")).toBe(true));
-  expect(calls.find((c) => c.method === "POST")!.headers.get("Authorization")).toBe("Bearer s3cret");
+  const post = calls.find((c) => c.method === "POST")!;
+  expect(post.headers.get("X-CSRF-Token")).toBe("csrf-1");
+  expect(post.headers.get("Authorization")).toBeNull();
   expect(await screen.findByText("Build started")).toBeInTheDocument();
 });
 
