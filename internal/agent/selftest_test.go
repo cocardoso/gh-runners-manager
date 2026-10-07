@@ -17,7 +17,7 @@ func TestRunSelfTestReportsEveryCheck(t *testing.T) {
 		failOn: "hello-world",
 		files: map[string]string{
 			"docker compose": filepath.Join(work, "compose", "data", "out") + "|ok\n",
-			"pwsh":           filepath.Join(work, "report", "software-report.json") + `|{"NodeType":"HeaderNode","Title":"Ubuntu-Slim"}`,
+			"env INSTALLER_SCRIPT_FOLDER=" + filepath.Join(work, "runner-images", "images", "ubuntu-slim", "toolsets") + " pwsh ": filepath.Join(work, "report", "software-report.json") + `|{"NodeType":"HeaderNode","Title":"Ubuntu-Slim"}`,
 		},
 	}
 	scripts := filepath.Join(work, "scripts-root", "scripts")

@@ -160,7 +160,11 @@ func RunSelfTest(ctx context.Context, c *Client, cmd Commander, o SelfTestOption
 			}
 		}
 		out := filepath.Join(o.Work, "report")
-		if err := cmd.Run(ctx, o.Work, "pwsh", []string{filepath.Join(o.ScriptsDir, "docs-gen", "Generate-SoftwareReport.ps1"), "-OutputDirectory", out}, log); err != nil {
+		// The report reads the toolset definitions from INSTALLER_SCRIPT_FOLDER; the image build
+		// removes them, so point it at the recipe's copy.
+		toolsets := filepath.Join(recipe, "images", "ubuntu-slim", "toolsets")
+		if err := cmd.Run(ctx, o.Work, "env", []string{"INSTALLER_SCRIPT_FOLDER=" + toolsets, "pwsh",
+			filepath.Join(o.ScriptsDir, "docs-gen", "Generate-SoftwareReport.ps1"), "-OutputDirectory", out}, log); err != nil {
 			return err
 		}
 		b, err := os.ReadFile(filepath.Join(out, "software-report.json"))
