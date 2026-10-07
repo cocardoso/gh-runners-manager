@@ -22,6 +22,9 @@ ghrm never uses `root`. Create a dedicated user, role, pool and token on the Pro
     pveum acl modify /nodes/pve --users ghrm@pve --roles GhrmRuntime
     pveum pool modify ghrm --vms 9000          # the template must be in the pool
     pveum user token add ghrm@pve ghrm --privsep 0
+    # Template builds (templates.vmid_range): upload archives to the template storage.
+    pveum role add GhrmTemplates --privs "Datastore.AllocateTemplate Datastore.Audit"
+    pveum acl modify /storage/local --users ghrm@pve --roles GhrmTemplates
 
 Store the printed secret in `/etc/ghrm/proxmox-token` (mode `0600`) or export it as `GHRM_PROXMOX_TOKEN_SECRET`.
 
@@ -79,4 +82,14 @@ The UI lives in `web/` (Vite, React, TypeScript, Tailwind CSS v4 and Kumo). `mak
 - `pnpm lint`, `pnpm typecheck` and `pnpm test` run ESLint, TypeScript and Vitest. Component tests fail on any Kumo console warning.
 - `pnpm e2e` builds `ghrm` with the current `web/dist` and runs the Playwright browser tests against `ghrm demo`, including a control-plane restart and a phone viewport.
 - `pnpm screenshots` refreshes the README screenshots in `docs/images`.
+
+## Template builds
+
+With `templates.vmid_range` set, ghrm builds templates itself (spec §8): a builder environment, cloned from the active template, builds GitHub's official `ubuntu-slim` image unmodified, then the ghrm layer in `template/layer`; the control plane uploads the root filesystem to Proxmox, creates and converts the template, and verifies a clone (Docker, buildx, compose, DNS, HTTPS, blocked addresses, the runner binary and the software report).
+
+- The first template is the bootstrap template (`proxmox.template_vmid`), made with `deploy/proxmox/dev-template.sh`. Its `ghrm-agent` must support the build mode, so recreate it with the current agent when upgrading from M3.
+- `ghrm-agent` must sit next to the `ghrm` binary (or set `templates.agent_path`): builders receive it with the layer.
+- Change any file in `template/layer` together with `layer.Version`; a new version triggers a rebuild.
+- A build needs about 10 GB of free space in the builder (`templates.builder_disk_gb`, default 48) and room for the archive in the control plane's `data_dir` until it is uploaded.
+- `templates.selftest_blocked` lists `host:port` addresses that answer on the LAN (for example the Proxmox API and SSH); the self-test fails if a job can reach any of them.
 

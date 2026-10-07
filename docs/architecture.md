@@ -25,7 +25,8 @@ Legend used in the diagrams: **green** = implemented, **grey dashed** = planned 
 | `ghrm version`, `smoke`, `serve`, `openapi`, `demo` | `cmd/ghrm` | Implemented (M1–M3) |
 | Simulated fleet for UI work and browser tests | `internal/demo` | Implemented (M3) |
 | Web UI (React, Kumo), embedded in the binary | `web/` | Implemented (M3); template pages in M4, sign-in and editable settings in M5 |
-| Template builder (`ubuntu-slim`) | `internal/template`, `template/layer` | Planned (M4); M2 uses `deploy/proxmox/dev-template.sh` |
+| Template builder (`ubuntu-slim`): build, verify, activate, retain, release checks | `internal/template`, `template/layer` | Implemented (M4); `deploy/proxmox/dev-template.sh` creates the bootstrap template |
+| Agent build and self-test modes | `internal/agent` (`build.go`, `selftest.go`) | Implemented (M4) |
 | UI auth, secrets, installer | `internal/auth`, `internal/secrets`, `deploy/` | Planned (M5) |
 
 ## 1. System overview
@@ -42,6 +43,7 @@ flowchart LR
         scheduler["Scheduler"]
         runtime["Runtime: proxmox-lxc"]
         reaper["Reaper"]
+        templates["Template service"]
         store["Store: SQLite + log files"]
         ingest["Ingest"]
         api["REST API + SSE"]
@@ -50,10 +52,12 @@ flowchart LR
 
     subgraph pve["Proxmox VE host"]
         pveapi["Proxmox API"]
-        tmpl["Template LXC"]
+        tmpl["Active template LXC"]
+        tmplstore["Template storage (vztmpl archives)"]
         subgraph jobnet["Isolated job network"]
             env1["Job LXC + ghrm-agent"]
             env2["Job LXC + ghrm-agent"]
+            builder["Builder / verify LXC + ghrm-agent (build, self-test mode)"]
         end
     end
 
@@ -71,6 +75,12 @@ flowchart LR
     env1 -- "runner protocol (outbound)" --> github
     reaper --> runtime
     reaper --> rest
+    templates -- "release checks" --> rest
+    templates -- "upload archive, create, convert" --> pveapi
+    pveapi -.-> tmplstore
+    tmpl -. "clone of" .-> builder
+    builder -- "build log, root filesystem, self-test report" --> ingest
+    ingest --> templates
     ingest --> store
     scheduler --> store
     api --> store
@@ -79,7 +89,7 @@ flowchart LR
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef planned fill:#f1f3f5,stroke:#868e96,stroke-dasharray:5 5,color:#000
-    class runtime,scheduler,listener,reaper,store,ingest,api,ui done
+    class runtime,scheduler,listener,reaper,store,ingest,api,ui,templates done
 ```
 
 ## 1a. Web UI data flow
@@ -298,6 +308,9 @@ flowchart LR
     ghrm --> github["internal/github"]
     ghrm --> proxmoxlxc["internal/runtime/proxmoxlxc"]
     ghrm --> demo["internal/demo"]
+    ghrm --> template["internal/template"]
+    template --> controller
+    template --> layer["template/layer"]
     ghrm --> webui["web (embedded UI)"]
     demo --> controller
     demo --> runtimetest
@@ -323,30 +336,56 @@ flowchart LR
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef testonly fill:#fff3bf,stroke:#e67700,color:#000
     classDef ext fill:#e7f5ff,stroke:#1971c2,color:#000
-    class ghrm,config,api,controller,ingest,github,proxmoxlxc,scheduler,environment,runtime,store,events,logs,proxmox,agentcmd,agent,ingestproto,demo,webui done
+    class ghrm,config,api,controller,ingest,github,proxmoxlxc,scheduler,environment,runtime,store,events,logs,proxmox,agentcmd,agent,ingestproto,demo,webui,template,layer done
     class runtimetest,proxmoxtest testonly
     class scaleset ext
 ```
 
 Yellow packages are test doubles; `internal/demo` uses the fake runtime to serve a simulated fleet (`ghrm demo`). `cmd/ghrm-agent` shares only the wire protocol with the control plane.
 
-## 7. Template pipeline (planned, M4)
+## 7. Template pipeline
+
+A build clones the **active template** into a builder environment (it already has Docker, systemd and `ghrm-agent`), because the Proxmox API cannot run commands inside a fresh stock container. The very first template comes from `deploy/proxmox/dev-template.sh` (the bootstrap template, `proxmox.template_vmid`).
 
 ```mermaid
 flowchart LR
     rel["actions/runner-images release ubuntu-slim/*"] --> b1
-    runner["actions/runner release"] --> b1
-    layer["ghrm layer version"] --> b1
-    subgraph builder["Builder LXC (temporary, job network)"]
-        b1["docker build: official ubuntu-slim Dockerfile"] --> b2["docker build: ghrm layer (systemd, Docker, runner, agent)"]
-        b2 --> b3["docker export: rootfs.tar.zst"]
+    runner["actions/runner release + SHA-256"] --> b1
+    layer["ghrm layer (template/layer, embedded in ghrm)"] --> b2
+    subgraph builder["Builder LXC (clone of the active template, job network)"]
+        b1["docker build: official ubuntu-slim Dockerfile, unmodified"] --> b2["docker build: ghrm layer (systemd, Docker Engine, runner, agent)"]
+        b2 --> b3["docker export, drop container markers, zstd, SHA-256"]
     end
-    b3 --> up["control plane uploads to Proxmox template storage"]
-    up --> create["create template LXC (unprivileged, nesting, DNS, firewall group)"]
-    create --> verify["verify: self-test + software report vs GitHub's report"]
-    verify -- pass --> active["active template"]
-    verify -- fail --> keep["keep the current active template"]
+    b3 -- "PUT /ingest/v1/build/rootfs (streamed, size-capped)" --> cp["control plane: verify SHA-256"]
+    cp --> up["upload to template storage (Proxmox verifies the SHA-256)"]
+    up --> create["create LXC: unprivileged, nesting, keyctl, DNS, firewalled NIC, gh-runner group; convert to template"]
+    create --> verify["verify LXC (clone): self-test + software report"]
+    verify --> compare["compare with GitHub's published report"]
+    compare -- "all checks pass, no unexpected differences, nothing pinned" --> active["active template"]
+    compare -- "unexpected differences or pinned" --> ready["ready (manual activation)"]
+    verify -- "a check fails" --> failed["failed: guests, template and archive removed"]
 
-    classDef planned fill:#f1f3f5,stroke:#868e96,stroke-dasharray:5 5,color:#000
-    class rel,runner,layer,b1,b2,b3,up,create,verify,active,keep planned
+    classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
+    class rel,runner,layer,b1,b2,b3,cp,up,create,verify,compare,active,ready,failed done
 ```
+
+### 7a. Template version states
+
+```mermaid
+stateDiagram-v2
+    [*] --> building: Build (manual or release check)
+    building --> creating: archive received
+    creating --> verifying: template created
+    verifying --> ready: checks pass
+    ready --> active: auto (no unexpected differences, nothing pinned) or manual
+    active --> ready: another version activated (kept for roll-back)
+    ready --> retired: beyond keep (default 2)
+    retired --> deleted: no environment uses it
+    building --> failed
+    creating --> failed
+    verifying --> failed: check failed, timeout, restart
+    failed --> [*]
+    deleted --> [*]
+```
+
+A failed build never changes the active template. Only one build runs at a time. The bootstrap template is never deleted.
