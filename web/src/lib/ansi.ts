@@ -34,44 +34,42 @@ function color256(n: number): { name?: AnsiColor; rgb?: string } {
   return { rgb: `rgb(${v},${v},${v})` };
 }
 
+function setColor(s: Style, layer: "fg" | "bg", c: { name?: AnsiColor; rgb?: string }) {
+  const rgbKey = layer === "fg" ? "fgRgb" : "bgRgb";
+  delete s[layer];
+  delete s[rgbKey];
+  if (c.name) s[layer] = c.name;
+  else if (c.rgb) s[rgbKey] = c.rgb;
+}
+
 function apply(style: Style, params: number[]): Style {
-  const s = { ...style };
+  let s: Style = { ...style };
   for (let i = 0; i < params.length; i++) {
     const p = params[i]!;
-    if (p === 0) for (const k of Object.keys(s)) delete s[k as keyof Style];
+    if (p === 0) s = {};
     else if (p === 1) s.bold = true;
     else if (p === 2) s.dim = true;
     else if (p === 3) s.italic = true;
     else if (p === 4) s.underline = true;
-    else if (p === 22) delete s.bold, delete s.dim;
-    else if (p === 23) delete s.italic;
+    else if (p === 22) {
+      delete s.bold;
+      delete s.dim;
+    } else if (p === 23) delete s.italic;
     else if (p === 24) delete s.underline;
-    else if (p >= 30 && p <= 37) (s.fg = NAMES[p - 30]), delete s.fgRgb;
-    else if (p >= 90 && p <= 97) (s.fg = `bright-${NAMES[p - 90]}` as AnsiColor), delete s.fgRgb;
-    else if (p >= 40 && p <= 47) (s.bg = NAMES[p - 40]), delete s.bgRgb;
-    else if (p >= 100 && p <= 107) (s.bg = `bright-${NAMES[p - 100]}` as AnsiColor), delete s.bgRgb;
-    else if (p === 39) delete s.fg, delete s.fgRgb;
-    else if (p === 49) delete s.bg, delete s.bgRgb;
+    else if (p >= 30 && p <= 37) setColor(s, "fg", { name: NAMES[p - 30] });
+    else if (p >= 90 && p <= 97) setColor(s, "fg", { name: `bright-${NAMES[p - 90]}` as AnsiColor });
+    else if (p >= 40 && p <= 47) setColor(s, "bg", { name: NAMES[p - 40] });
+    else if (p >= 100 && p <= 107) setColor(s, "bg", { name: `bright-${NAMES[p - 100]}` as AnsiColor });
+    else if (p === 39) setColor(s, "fg", {});
+    else if (p === 49) setColor(s, "bg", {});
     else if (p === 38 || p === 48) {
-      const fg = p === 38;
-      let c: { name?: AnsiColor; rgb?: string } | undefined;
+      const layer = p === 38 ? "fg" : "bg";
       if (params[i + 1] === 5 && params[i + 2] !== undefined) {
-        c = color256(params[i + 2]!);
+        setColor(s, layer, color256(params[i + 2]!));
         i += 2;
       } else if (params[i + 1] === 2 && params[i + 4] !== undefined) {
-        c = { rgb: `rgb(${params[i + 2]},${params[i + 3]},${params[i + 4]})` };
+        setColor(s, layer, { rgb: `rgb(${params[i + 2]},${params[i + 3]},${params[i + 4]})` });
         i += 4;
-      }
-      if (c) {
-        if (fg) {
-          delete s.fg, delete s.fgRgb;
-          if (c.name) s.fg = c.name;
-          else s.fgRgb = c.rgb;
-        } else {
-          delete s.bg, delete s.bgRgb;
-          if (c.name) s.bg = c.name;
-          else s.bgRgb = c.rgb;
-        }
       }
     }
   }
