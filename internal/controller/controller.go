@@ -43,6 +43,13 @@ type Deps struct {
 	Templates TemplateSource
 	// TemplateEvents receives agent events of build and verify environments.
 	TemplateEvents TemplateEvents
+	// Stages, when set, receives how long each environment stayed in a state.
+	Stages StageObserver
+}
+
+// StageObserver records how long environments stay in each state (metrics).
+type StageObserver interface {
+	ObserveStage(stage string, d time.Duration)
 }
 
 // TemplateSource reports the active template: the runtime reference environments clone
@@ -118,6 +125,9 @@ func (c *Controller) now() time.Time { return c.d.Now() }
 func (c *Controller) SetTemplates(src TemplateSource, ev TemplateEvents) {
 	c.d.Templates, c.d.TemplateEvents = src, ev
 }
+
+// SetStages connects the stage-duration observer (metrics). Call it before Run.
+func (c *Controller) SetStages(o StageObserver) { c.d.Stages = o }
 
 // SetScaleSetID records the GitHub ID of a scale set.
 func (c *Controller) SetScaleSetID(name string, id int) {
@@ -221,14 +231,18 @@ func (c *Controller) log(ctx context.Context, envID, stream, format string, a ..
 // transition moves an environment and records it as an event and a control-plane log line.
 func (c *Controller) transition(ctx context.Context, id string, from []string, to environment.State, mutate func(*store.Environment)) (store.Environment, error) {
 	before := ""
+	var since time.Time
 	e, err := c.d.Store.TransitionEnvironment(ctx, id, from, string(to), func(e *store.Environment) {
-		before = e.State
+		before, since = e.State, e.StateChangedAt
 		if mutate != nil {
 			mutate(e)
 		}
 	})
 	if err != nil {
 		return e, err
+	}
+	if c.d.Stages != nil && !since.IsZero() && before != string(to) {
+		c.d.Stages.ObserveStage(before, c.now().Sub(since))
 	}
 	level := "info"
 	if to == environment.Failed {

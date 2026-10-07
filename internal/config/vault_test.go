@@ -80,3 +80,18 @@ func TestMissingSecretsNameAllSources(t *testing.T) {
 		}
 	}
 }
+
+func TestBackupDefaults(t *testing.T) {
+	cfg, err := loadServe(t, serveYAML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := cfg.Backup
+	if b.Dir != "/var/lib/ghrm/backups" || b.Keep != 7 || b.AtHour() != 3 {
+		t.Fatalf("backup defaults = %+v (hour %d)", b, b.AtHour())
+	}
+	cfg, _ = loadServe(t, serveYAML+"backup:\n  hour: 0\n  keep: 3\n")
+	if cfg.Backup.AtHour() != 0 || cfg.Backup.Keep != 3 {
+		t.Fatalf("midnight backups = %+v", cfg.Backup)
+	}
+}

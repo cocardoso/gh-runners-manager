@@ -186,3 +186,13 @@ func TestSetupLoginLogoutFlow(t *testing.T) {
 		}
 	}
 }
+
+func TestMetricsEndpointIsPublic(t *testing.T) {
+	h := newHarnessWith(t, "", func(d *Deps) {
+		d.Metrics = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ghrm_build_info 1\n")) })
+	})
+	resp, b := h.call(t, "GET", "/metrics", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "ghrm_build_info") {
+		t.Fatalf("metrics = %d %s", resp.StatusCode, b)
+	}
+}

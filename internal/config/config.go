@@ -33,6 +33,7 @@ type Config struct {
 	Capacity      Capacity   `yaml:"capacity"`
 	ScaleSets     []ScaleSet `yaml:"scale_sets"`
 	Templates     Templates  `yaml:"templates"`
+	Backup        Backup     `yaml:"backup"`
 
 	// AdminToken is read from AdminTokenFile; empty disables mutating API calls.
 	AdminToken string `yaml:"-"`
@@ -226,6 +227,21 @@ func Read(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// Backup configures the daily database copy (spec §12.3).
+type Backup struct {
+	Dir  string `yaml:"dir"`  // default <data_dir>/backups
+	Keep int    `yaml:"keep"` // copies kept, default 7
+	Hour *int   `yaml:"hour"` // local hour of the copy, default 3
+}
+
+// AtHour returns the configured hour, 3 when unset.
+func (b Backup) AtHour() int {
+	if b.Hour == nil {
+		return 3
+	}
+	return *b.Hour
+}
+
 // Load reads, defaults, resolves secrets for and validates the configuration at path.
 func Load(path string) (*Config, error) {
 	cfg, err := Read(path)
@@ -250,6 +266,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.SecretKeyFile == "" {
 		c.SecretKeyFile = filepath.Join(c.DataDir, "secret.key")
+	}
+	if c.Backup.Dir == "" {
+		c.Backup.Dir = filepath.Join(c.DataDir, "backups")
+	}
+	if c.Backup.Keep == 0 {
+		c.Backup.Keep = 7
 	}
 	cp := &c.Capacity
 	if cp.MaxEnvironments == 0 {

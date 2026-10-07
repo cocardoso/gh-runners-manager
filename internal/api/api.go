@@ -51,6 +51,8 @@ type Deps struct {
 	Auth *auth.Service
 	// Settings holds the editable credentials and scale sets (nil: read-only).
 	Settings *settings.Registry
+	// Metrics, when set, serves Prometheus metrics on /metrics (public, like /healthz).
+	Metrics http.Handler
 	// TestCredential checks a GitHub token and returns its login.
 	TestCredential func(ctx context.Context, token string) (string, error)
 	// Now is the clock (tests); time.Now when nil.
@@ -385,6 +387,9 @@ func New(d Deps) http.Handler {
 		}
 		_, _ = w.Write([]byte("ready\n"))
 	})
+	if d.Metrics != nil {
+		mux.Handle("GET /metrics", d.Metrics)
+	}
 	if d.UI != nil {
 		mux.Handle("/", d.UI) // the UI handler answers 404 for unknown /api/ paths
 	}

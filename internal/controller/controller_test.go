@@ -569,3 +569,28 @@ func TestAvailableJobRecordsTheQueueTime(t *testing.T) {
 		t.Fatalf("j3 queued at %v, want the controller clock %v", j.QueuedAt, h.now)
 	}
 }
+
+type stageLog struct {
+	mu   sync.Mutex
+	seen map[string]time.Duration
+}
+
+func (s *stageLog) ObserveStage(stage string, d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seen[stage] = d
+}
+
+func TestStageDurationsAreObserved(t *testing.T) {
+	h := newHarness(t, nil)
+	obs := &stageLog{seen: map[string]time.Duration{}}
+	h.c.d.Stages = obs
+	e := h.provision(t, 1)[0]
+	h.now = h.now.Add(7 * time.Second)
+	h.c.AgentEvent(context.Background(), e.ID, ingest.EventHello, time.Now(), nil)
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if d, ok := obs.seen["booting"]; !ok || d < 6*time.Second {
+		t.Fatalf("observed %v; want booting lasting about 7s", obs.seen)
+	}
+}

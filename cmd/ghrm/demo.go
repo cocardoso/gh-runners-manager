@@ -16,8 +16,10 @@ import (
 
 	"github.com/cocardoso/gh-runners-manager/internal/api"
 	"github.com/cocardoso/gh-runners-manager/internal/demo"
+	"github.com/cocardoso/gh-runners-manager/internal/metrics"
 	"github.com/cocardoso/gh-runners-manager/internal/secrets"
 	"github.com/cocardoso/gh-runners-manager/internal/settings"
+	"github.com/cocardoso/gh-runners-manager/internal/version"
 )
 
 // demoCmd serves the API (and UI) backed by a simulated fleet.
@@ -55,6 +57,8 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer d.Close()
+	demoMetrics := metrics.New(d.Store, d.Controller, version.Version)
+	d.Controller.SetStages(demoMetrics) // before the simulation starts
 	go d.Run(ctx)
 
 	signIn, err := demoAuth(ctx, d.Store)
@@ -98,7 +102,7 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ReadHeaderTimeout: 10 * time.Second,
 		Handler: api.New(api.Deps{Store: d.Store, Recorder: d.Recorder, Logs: d.Logs, Controller: d.Controller,
 			Config: d.Config, Capacity: d.Runtime.Capacity, AdminToken: "demo", UI: uiHandler(), Templates: d.Templates, Auth: signIn,
-			Settings: reg, TestCredential: demoTestCredential}),
+			Settings: reg, TestCredential: demoTestCredential, Metrics: demoMetrics.Handler()}),
 	}
 	fmt.Fprintf(stdout, "ghrm demo: serving a simulated fleet on http://%s (sign in as admin / %s; API token: demo)\n", *listen, demoPassword)
 	errc := make(chan error, 1)
