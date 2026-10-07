@@ -115,7 +115,7 @@ type Proxmox struct {
 // Templates configures template builds (spec §8). Builds are disabled until vmid_range is set.
 type Templates struct {
 	VMIDRange        VMIDRange `yaml:"vmid_range"`        // VMIDs for built templates, outside proxmox.vmid_range
-	Storage          string    `yaml:"storage"`           // storage for template archives ("vztmpl"), default local
+	Storage          string    `yaml:"storage"`           // storage for template archives ("vztmpl"), default local; prefer a dedicated one
 	RootFSGB         int       `yaml:"rootfs_gb"`         // template root disk, default 16
 	BuilderDiskGB    int       `yaml:"builder_disk_gb"`   // builder root disk, default 48
 	BuilderCores     int       `yaml:"builder_cores"`     // default 4

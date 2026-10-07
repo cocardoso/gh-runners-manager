@@ -22,9 +22,14 @@ ghrm never uses `root`. Create a dedicated user, role, pool and token on the Pro
     pveum acl modify /nodes/pve --users ghrm@pve --roles GhrmRuntime
     pveum pool modify ghrm --vms 9000          # the template must be in the pool
     pveum user token add ghrm@pve ghrm --privsep 0
-    # Template builds (templates.vmid_range): upload archives to the template storage.
-    pveum role add GhrmTemplates --privs "Datastore.AllocateTemplate Datastore.Audit"
-    pveum acl modify /storage/local --users ghrm@pve --roles GhrmTemplates
+    # Template builds (templates.vmid_range 952-958 here): a dedicated storage for the archives,
+    # so deleting them (Datastore.Allocate) cannot touch anything else, and the runtime role on the
+    # template VMIDs, because Proxmox checks /vms/<vmid> before a new container joins the pool.
+    mkdir -p /var/lib/ghrm-templates
+    pvesm add dir ghrm-tpl --path /var/lib/ghrm-templates --content vztmpl
+    pveum role add GhrmTemplates --privs "Datastore.AllocateTemplate Datastore.Allocate Datastore.Audit"
+    pveum acl modify /storage/ghrm-tpl --users ghrm@pve --roles GhrmTemplates
+    for v in $(seq 952 958); do pveum acl modify /vms/$v --users ghrm@pve --roles GhrmRuntime; done
 
 Store the printed secret in `/etc/ghrm/proxmox-token` (mode `0600`) or export it as `GHRM_PROXMOX_TOKEN_SECRET`.
 

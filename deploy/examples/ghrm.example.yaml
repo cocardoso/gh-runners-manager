@@ -54,7 +54,7 @@ scale_sets:
 # until the first build is active, environments clone proxmox.template_vmid.
 templates:
   vmid_range: {start: 950, end: 958}   # inside the token's pool, outside proxmox.vmid_range
-  storage: local                       # archives ("vztmpl" content)
+  storage: ghrm-tpl                    # dedicated "vztmpl" storage for the archives (see docs/development.md)
   rootfs_gb: 16
   builder_disk_gb: 48
   builder_cores: 4
