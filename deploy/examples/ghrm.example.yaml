@@ -1,0 +1,14 @@
+# Example ghrm configuration. Copy to /etc/ghrm/ghrm.yaml and adjust.
+proxmox:
+  url: https://pve.example.test:8006
+  node: pve
+  token_id: ghrm@pve!ghrm
+  token_secret_file: /etc/ghrm/proxmox-token   # or set GHRM_PROXMOX_TOKEN_SECRET
+  insecure_skip_verify: true                    # only for self-signed certificates
+  template_vmid: 9000                           # must be outside vmid_range
+  pool: ghrm
+  vmid_range:
+    start: 900
+    end: 999
+  thin_pool: data
+  firewall_settle: 12s

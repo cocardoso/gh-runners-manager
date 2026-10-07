@@ -38,3 +38,21 @@ func TestRunNoArgsPrintsUsage(t *testing.T) {
 		t.Fatalf("stderr = %q, want usage", stderr.String())
 	}
 }
+
+func TestSmokeRequiresReadableConfig(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"smoke", "--config", "/nonexistent/ghrm.yaml"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "read config") {
+		t.Fatalf("stderr = %q, want config error", stderr.String())
+	}
+}
+
+func TestSmokeRejectsUnknownFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"smoke", "--bogus"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+}

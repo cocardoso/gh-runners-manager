@@ -16,6 +16,7 @@ const usage = `Usage: ghrm <command> [flags]
 
 Commands:
   version   Print version information
+  smoke     Create, start and destroy one environment to check the runtime
 `
 
 func main() {
@@ -34,6 +35,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "version":
 		fmt.Fprintln(stdout, version.String())
 		return 0
+	case "smoke":
+		return smoke(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
