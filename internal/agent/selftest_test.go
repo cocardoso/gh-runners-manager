@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,7 +20,20 @@ func TestRunSelfTestReportsEveryCheck(t *testing.T) {
 			"pwsh":           filepath.Join(work, "report", "software-report.json") + `|{"NodeType":"HeaderNode","Title":"Ubuntu-Slim"}`,
 		},
 	}
+	scripts := filepath.Join(work, "scripts-root", "scripts")
+	cmd.check = func(line string) error {
+		if strings.HasPrefix(line, "cp ") && !strings.Contains(line, " "+scripts+"/") {
+			return errors.New("cp target outside the scripts directory: " + line)
+		}
+		if strings.HasPrefix(line, "cp ") {
+			if _, err := os.Stat(scripts); err != nil {
+				return errors.New("the scripts directory does not exist")
+			}
+		}
+		return nil
+	}
 	opts := SelfTestOptions{
+		ScriptsDir:   scripts,
 		Work:         work,
 		RunnerDir:    "/home/runner/actions-runner",
 		BlockedAddrs: []string{"10.1.1.1:443", "10.1.1.6:8006"},

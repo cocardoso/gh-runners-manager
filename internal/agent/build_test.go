@@ -30,6 +30,7 @@ type fakeCommander struct {
 	outputs map[string]string // command prefix -> output line
 	export  []byte            // stdout of "docker export"
 	files   map[string]string // files to create when a command runs: prefix -> path|content
+	check   func(line string) error
 }
 
 func (f *fakeCommander) line(name string, args []string) string {
@@ -51,6 +52,12 @@ func (f *fakeCommander) Run(_ context.Context, _ string, name string, args []str
 			p, content, _ := strings.Cut(spec, "|")
 			_ = os.MkdirAll(filepath.Dir(p), 0o755)
 			_ = os.WriteFile(p, []byte(content), 0o644)
+		}
+	}
+	if f.check != nil {
+		if err := f.check(l); err != nil {
+			out(err.Error())
+			return err
 		}
 	}
 	if f.failOn != "" && strings.Contains(l, f.failOn) {

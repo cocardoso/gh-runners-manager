@@ -20,6 +20,8 @@ type SelfTestOptions struct {
 	RunnerDir    string
 	BlockedAddrs []string // host:port that must be unreachable (LAN, hypervisor)
 	ProbeURL     string   // HTTPS URL that must be reachable (default https://api.github.com)
+	// ScriptsDir is where the report scripts are mounted in GitHub's tooling (default /scripts).
+	ScriptsDir string
 	Lookup       func(ctx context.Context, host string) error
 	HTTPGet      func(ctx context.Context, url string) error
 	Dial         func(ctx context.Context, addr string) error
@@ -28,6 +30,9 @@ type SelfTestOptions struct {
 func (o *SelfTestOptions) defaults() {
 	if o.ProbeURL == "" {
 		o.ProbeURL = "https://api.github.com"
+	}
+	if o.ScriptsDir == "" {
+		o.ScriptsDir = "/scripts"
 	}
 	if o.Lookup == nil {
 		o.Lookup = func(ctx context.Context, host string) error {
@@ -143,16 +148,19 @@ func RunSelfTest(ctx context.Context, c *Client, cmd Commander, o SelfTestOption
 			return err
 		}
 		// generate-software-report.sh runs this script inside the image with these two mounts.
+		if err := os.MkdirAll(o.ScriptsDir, 0o755); err != nil {
+			return err
+		}
 		for src, dst := range map[string]string{
-			filepath.Join(recipe, "images", "ubuntu-slim", "scripts", "docs-gen"): "/scripts/docs-gen",
-			filepath.Join(recipe, "helpers", "software-report-base"):              "/scripts/software-report-base",
+			filepath.Join(recipe, "images", "ubuntu-slim", "scripts", "docs-gen"): filepath.Join(o.ScriptsDir, "docs-gen"),
+			filepath.Join(recipe, "helpers", "software-report-base"):              filepath.Join(o.ScriptsDir, "software-report-base"),
 		} {
 			if err := cmd.Run(ctx, o.Work, "cp", []string{"-a", "-T", src, dst}, log); err != nil {
 				return err
 			}
 		}
 		out := filepath.Join(o.Work, "report")
-		if err := cmd.Run(ctx, o.Work, "pwsh", []string{"/scripts/docs-gen/Generate-SoftwareReport.ps1", "-OutputDirectory", out}, log); err != nil {
+		if err := cmd.Run(ctx, o.Work, "pwsh", []string{filepath.Join(o.ScriptsDir, "docs-gen", "Generate-SoftwareReport.ps1"), "-OutputDirectory", out}, log); err != nil {
 			return err
 		}
 		b, err := os.ReadFile(filepath.Join(out, "software-report.json"))
