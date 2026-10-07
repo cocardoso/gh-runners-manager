@@ -83,3 +83,11 @@ jobs:
         with:
           name: e2e-traces
           path: web/test-results
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t ghrm:ci .
+      - run: docker run --rm ghrm:ci version
+      - run: docker compose -f deploy/docker/compose.yaml config -q

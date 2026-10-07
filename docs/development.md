@@ -76,6 +76,10 @@ Useful API calls:
     curl -N 'http://<ghrm>:8080/api/v1/events/stream'
     curl -N 'http://<ghrm>:8080/api/v1/environments/<id>/logs/job?follow=true'
 
+## Docker
+
+`docker build -t ghrm .` builds the control plane image (the web UI embedded, plus `ghrm-agent` for template builds; distroless, non-root). `deploy/docker/compose.yaml` runs it against a remote Proxmox host: put `ghrm.yaml` next to it with `data_dir: /var/lib/ghrm`, `listen: 0.0.0.0:8080`, `ingest.listen: 0.0.0.0:8443`, and an `ingest.advertise_url` that job environments can reach (allow it in the job security group), then store the secrets with `docker compose run --rm ghrm secret set proxmox/token-secret` and start it with `docker compose up -d`.
+
 ## Web UI
 
 The UI lives in `web/` (Vite, React, TypeScript, Tailwind CSS v4 and Kumo). `make web` builds it into `web/dist`, which `web/embed.go` embeds into the `ghrm` binary; the API serves it for every non-API path, with an SPA fallback and long cache headers for hashed assets.
