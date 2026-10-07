@@ -34,6 +34,8 @@ The UI is embedded in the `ghrm` binary and follows the Cloudflare dashboard pat
 | ![Scale sets](docs/images/scale-sets-light.png) | ![Live logs](docs/images/live-logs-dark.png) |
 | **Templates** | **Template fidelity report** |
 | ![Templates](docs/images/templates-light.png) | ![Template fidelity](docs/images/template-fidelity-light.png) |
+| **Settings: GitHub credentials** | **Sign-in** |
+| ![Settings](docs/images/settings-light.png) | ![Sign-in](docs/images/sign-in-dark.png) |
 
 Dark versions of every screenshot are in [docs/images](docs/images).
 
