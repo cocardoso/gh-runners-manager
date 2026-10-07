@@ -96,4 +96,6 @@ With `templates.vmid_range` set, ghrm builds templates itself (spec §8): a buil
 - Change any file in `template/layer` together with `layer.Version`; a new version triggers a rebuild.
 - A build needs about 10 GB of free space in the builder (`templates.builder_disk_gb`, default 48) and room for the archive in the control plane's `data_dir` until it is uploaded.
 - `templates.selftest_blocked` lists `host:port` addresses that answer on the LAN (for example the Proxmox API and SSH); the self-test fails if a job can reach any of them.
+- On LVM-thin, a linked clone's configuration does not name its base volume, so ghrm knows which template an environment uses from its own records (`template_vmid` of each environment); the hypervisor check only helps on ZFS and directory storages. Deleting an LVM-thin template does not break existing clones.
+- A guest that powers itself off is given a few seconds to unmount before it is deleted: deleting it at once can fail half-way after Proxmox has already removed it from the pool, leaving a guest the token can no longer see (remove such a guest as root with `pct destroy <vmid> --purge`).
 

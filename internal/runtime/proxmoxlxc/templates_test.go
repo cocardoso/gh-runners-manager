@@ -200,3 +200,19 @@ func TestCleanupRemovesAnUntaggedTemplateNamedAfterTheVersion(t *testing.T) {
 		t.Fatal("an unrelated guest must stay")
 	}
 }
+
+func TestDestroyLetsASelfStoppedGuestSettle(t *testing.T) {
+	h := newHarness(t, 900, 909)
+	ctx := context.Background()
+	ref, err := h.rt.Create(ctx, spec("selfstop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.sleeps = nil
+	if err := h.rt.Destroy(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.sleeps) != 1 || h.sleeps[0] != destroySettle {
+		t.Fatalf("sleeps = %v, want one settle of %s before deleting a guest that stopped on its own", h.sleeps, destroySettle)
+	}
+}

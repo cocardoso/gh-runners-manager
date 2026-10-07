@@ -22,6 +22,10 @@ const (
 	TagEnvironment = "ghrm-env"
 	idTagPrefix    = "ghrmid-"
 	cleanupTimeout = 2 * time.Minute
+	// destroySettle lets a guest that powered itself off finish unmounting its root disk;
+	// deleting it at once can fail with "filesystem in use" after Proxmox already dropped
+	// it from the pool, leaving a guest the token can no longer see.
+	destroySettle = 5 * time.Second
 	destroyRetries = 3
 )
 
@@ -365,6 +369,11 @@ func (r *Runtime) destroyVMID(ctx context.Context, vmid int, envID string) error
 			if err := r.client.StopLXC(ctx, r.cfg.Node, vmid); err != nil {
 				lastErr = fmt.Errorf("stop %d: %w", vmid, err)
 				continue
+			}
+		} else {
+			_ = r.sleep(ctx, destroySettle) // best effort: an interrupted settle still deletes
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 		}
 		if err := r.client.DeleteLXC(ctx, r.cfg.Node, vmid); err != nil {
