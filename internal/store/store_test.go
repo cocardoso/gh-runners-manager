@@ -262,3 +262,53 @@ func TestSecretsAndMeta(t *testing.T) {
 		t.Fatalf("meta = %q, %v", v, err)
 	}
 }
+
+func TestUsersAndSessions(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	now := time.UnixMilli(time.Now().UnixMilli())
+	if n, _ := s.CountUsers(ctx); n != 0 {
+		t.Fatalf("users = %d", n)
+	}
+	u := User{ID: "u1", Username: "admin", PasswordHash: "h1", CreatedAt: now, PasswordChangedAt: now}
+	if err := s.CreateUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, User{ID: "u2", Username: "admin", PasswordHash: "h"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate username: %v", err)
+	}
+	if got, err := s.GetUserByName(ctx, "admin"); err != nil || got.ID != "u1" || got.PasswordHash != "h1" {
+		t.Fatalf("by name = %+v, %v", got, err)
+	}
+	if _, err := s.GetUserByName(ctx, "nobody"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown user: %v", err)
+	}
+	_ = s.UpdatePassword(ctx, "u1", "h2", now.Add(time.Minute))
+	if got, _ := s.GetUser(ctx, "u1"); got.PasswordHash != "h2" || !got.PasswordChangedAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("after update = %+v", got)
+	}
+	for _, id := range []string{"s1", "s2"} {
+		if err := s.CreateSession(ctx, Session{IDHash: id, UserID: "u1", CSRF: "c-" + id, CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = s.CreateSession(ctx, Session{IDHash: "old", UserID: "u1", CSRF: "c", CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(-time.Second)})
+	if got, err := s.GetSession(ctx, "s1"); err != nil || got.CSRF != "c-s1" || got.UserID != "u1" {
+		t.Fatalf("session = %+v, %v", got, err)
+	}
+	_ = s.TouchSession(ctx, "s1", now.Add(time.Minute), now.Add(2*time.Hour))
+	if got, _ := s.GetSession(ctx, "s1"); !got.ExpiresAt.Equal(now.Add(2 * time.Hour)) {
+		t.Fatalf("touched = %+v", got)
+	}
+	if n, err := s.DeleteExpiredSessions(ctx, now); err != nil || n != 1 {
+		t.Fatalf("expired deleted = %d, %v", n, err)
+	}
+	_ = s.DeleteUserSessions(ctx, "u1", "s1")
+	if _, err := s.GetSession(ctx, "s2"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("other sessions must be gone")
+	}
+	_ = s.DeleteSession(ctx, "s1")
+	if _, err := s.GetSession(ctx, "s1"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("deleted session still there")
+	}
+}
