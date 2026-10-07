@@ -187,3 +187,13 @@ func TestTemplatesDefaultsAndValidation(t *testing.T) {
 		t.Fatal("auto_activate: false must be kept")
 	}
 }
+
+func TestTemplatesCheckIntervalZeroDisables(t *testing.T) {
+	cfg, err := load(t, validYAML+"templates:\n  vmid_range: {start: 1950, end: 1958}\n  check_interval: 0s\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Templates.CheckInterval != 0 {
+		t.Fatalf("check_interval: 0s = %v, want 0 (disabled)", cfg.Templates.CheckInterval.Std())
+	}
+}

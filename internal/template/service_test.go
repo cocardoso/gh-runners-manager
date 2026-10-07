@@ -35,9 +35,13 @@ type fakeEnvs struct {
 	destroyed []string
 	refs      map[string]runtime.Ref
 	failStart bool
+	gate      chan struct{} // when set, StartSpecial waits for it
 }
 
 func (f *fakeEnvs) StartSpecial(ctx context.Context, s controller.SpecialSpec) (string, error) {
+	if f.gate != nil {
+		<-f.gate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failStart {
@@ -447,4 +451,32 @@ func TestCheckerBuildsOnNewReleases(t *testing.T) {
 	if len(list) != 3 || list[0].Trigger != "runner-release" || list[0].RunnerVersion != "2.339.0" {
 		t.Fatalf("after a runner release = %+v", list[0])
 	}
+}
+
+func TestSlowEnvironmentStartDoesNotBlockOtherActions(t *testing.T) {
+	h := newService(t, nil)
+	ctx := context.Background()
+	h.envs.gate = make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = h.s.Build(ctx, "manual")
+	}()
+	time.Sleep(50 * time.Millisecond) // the build is now waiting for its environment
+	boot, _ := h.db.ActiveTemplate(ctx)
+	pinned := make(chan error, 1)
+	go func() { pinned <- h.s.Pin(ctx, boot.ID, true) }()
+	select {
+	case err := <-pinned:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Pin waited for the builder to start")
+	}
+	if _, err := h.s.Build(ctx, "manual"); !errors.Is(err, ErrBuildRunning) {
+		t.Fatalf("a second build while the first starts: %v", err)
+	}
+	close(h.envs.gate)
+	<-done
 }

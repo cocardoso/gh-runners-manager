@@ -146,11 +146,6 @@ func (s *Service) Build(ctx context.Context, trigger string) (store.Template, er
 	if !s.d.Config.Enabled() {
 		return store.Template{}, ErrDisabled
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.Running(ctx) {
-		return store.Template{}, ErrBuildRunning
-	}
 	slim, err := s.d.Releases.LatestSlim(ctx)
 	if err != nil {
 		return store.Template{}, fmt.Errorf("template: resolve the ubuntu-slim release: %w", err)
@@ -161,7 +156,16 @@ func (s *Service) Build(ctx context.Context, trigger string) (store.Template, er
 	}
 	t := store.Template{ID: ids.NewEnvironmentID(), SlimRelease: slim.Version, RunnerVersion: run.Version, LayerVersion: layer.Version,
 		RunnerSHA256: run.SHA256, State: store.TemplateBuilding, Trigger: trigger}
-	if err := s.d.Store.CreateTemplate(ctx, t); err != nil {
+	// The "building" row is the guard against concurrent builds; the lock covers only its creation,
+	// not the slow start of the builder environment.
+	s.mu.Lock()
+	if s.Running(ctx) {
+		s.mu.Unlock()
+		return store.Template{}, ErrBuildRunning
+	}
+	err = s.d.Store.CreateTemplate(ctx, t)
+	s.mu.Unlock()
+	if err != nil {
 		return store.Template{}, err
 	}
 	s.record(ctx, "info", "template.build_started", fmt.Sprintf("building template %s (ubuntu-slim %s, runner %s, layer %s)",
@@ -171,15 +175,23 @@ func (s *Service) Build(ctx context.Context, trigger string) (store.Template, er
 	envID, err := s.d.Environments.StartSpecial(ctx, controller.SpecialSpec{Kind: store.KindBuild, Template: ref, TemplateVMID: vmid,
 		Cores: s.d.Config.BuilderCores, MemoryMB: s.d.Config.BuilderMemoryMB, DiskGB: s.d.Config.BuilderDiskGB,
 		Env: map[string]string{ingest.EnvMode: ingest.ModeBuild}})
-	t.BuildEnvID = envID
-	if uerr := s.d.Store.UpdateTemplate(ctx, t); uerr != nil && err == nil {
-		err = uerr
+	s.mu.Lock()
+	cur, gerr := s.d.Store.GetTemplate(ctx, t.ID)
+	if gerr == nil {
+		cur.BuildEnvID = envID
+		if uerr := s.d.Store.UpdateTemplate(ctx, cur); uerr != nil && err == nil {
+			err = uerr
+		}
+	}
+	if err == nil && gerr == nil && cur.State != store.TemplateBuilding && envID != "" {
+		// Failed (timeout, restart) while the builder was starting: do not leave it behind.
+		_ = s.d.Environments.RequestDestroy(ctx, envID)
 	}
 	if err != nil {
 		s.failLocked(ctx, t.ID, "builder", err.Error())
-		t, _ = s.d.Store.GetTemplate(ctx, t.ID)
-		return t, nil
 	}
+	s.mu.Unlock()
+	t, _ = s.d.Store.GetTemplate(ctx, t.ID)
 	return t, nil
 }
 

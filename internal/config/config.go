@@ -114,27 +114,29 @@ type Proxmox struct {
 
 // Templates configures template builds (spec §8). Builds are disabled until vmid_range is set.
 type Templates struct {
-	VMIDRange       VMIDRange `yaml:"vmid_range"`        // VMIDs for built templates, outside proxmox.vmid_range
-	Storage         string    `yaml:"storage"`           // storage for template archives ("vztmpl"), default local
-	RootFSGB        int       `yaml:"rootfs_gb"`         // template root disk, default 16
-	BuilderDiskGB   int       `yaml:"builder_disk_gb"`   // builder root disk, default 48
-	BuilderCores    int       `yaml:"builder_cores"`     // default 4
-	BuilderMemoryMB int       `yaml:"builder_memory_mb"` // default 8192
-	Keep            int       `yaml:"keep"`              // versions kept for roll-back, default 2
-	CheckInterval   Duration  `yaml:"check_interval"`    // release check, default 24h; 0 disables
-	AutoActivateSet *bool     `yaml:"auto_activate"`     // default true
-	BuildTimeout    Duration  `yaml:"build_timeout"`     // default 90m
-	VerifyTimeout   Duration  `yaml:"verify_timeout"`    // default 20m
-	MaxArchiveBytes int64     `yaml:"max_archive_bytes"` // default 8 GiB
-	AgentPath       string    `yaml:"agent_path"`        // ghrm-agent binary served to builders; default: next to ghrm
-	Nameserver      string    `yaml:"nameserver"`        // template DNS, default 1.1.1.1
-	Bridge          string    `yaml:"bridge"`            // job VNet, default jobnet
-	FirewallGroup   string    `yaml:"firewall_group"`    // security group, default gh-runner
+	VMIDRange        VMIDRange `yaml:"vmid_range"`        // VMIDs for built templates, outside proxmox.vmid_range
+	Storage          string    `yaml:"storage"`           // storage for template archives ("vztmpl"), default local
+	RootFSGB         int       `yaml:"rootfs_gb"`         // template root disk, default 16
+	BuilderDiskGB    int       `yaml:"builder_disk_gb"`   // builder root disk, default 48
+	BuilderCores     int       `yaml:"builder_cores"`     // default 4
+	BuilderMemoryMB  int       `yaml:"builder_memory_mb"` // default 8192
+	Keep             int       `yaml:"keep"`              // versions kept for roll-back, default 2
+	CheckIntervalSet *Duration `yaml:"check_interval"`    // release check, default 24h; 0 disables
+	AutoActivateSet  *bool     `yaml:"auto_activate"`     // default true
+	BuildTimeout     Duration  `yaml:"build_timeout"`     // default 90m
+	VerifyTimeout    Duration  `yaml:"verify_timeout"`    // default 20m
+	MaxArchiveBytes  int64     `yaml:"max_archive_bytes"` // default 8 GiB
+	AgentPath        string    `yaml:"agent_path"`        // ghrm-agent binary served to builders; default: next to ghrm
+	Nameserver       string    `yaml:"nameserver"`        // template DNS, default 1.1.1.1
+	Bridge           string    `yaml:"bridge"`            // job VNet, default jobnet
+	FirewallGroup    string    `yaml:"firewall_group"`    // security group, default gh-runner
 	// SelfTestBlocked lists host:port addresses a job must not reach (LAN gateway, hypervisor).
 	SelfTestBlocked []string `yaml:"selftest_blocked"`
 
 	// AutoActivate is AutoActivateSet with its default applied.
 	AutoActivate bool `yaml:"-"`
+	// CheckInterval is CheckIntervalSet with its default applied (0: no automatic checks).
+	CheckInterval Duration `yaml:"-"`
 }
 
 // Enabled reports whether template builds are configured.
@@ -254,8 +256,9 @@ func (c *Config) applyDefaults() {
 			*d.v = d.def
 		}
 	}
-	if t.CheckInterval == 0 {
-		t.CheckInterval = Duration(24 * time.Hour)
+	t.CheckInterval = Duration(24 * time.Hour)
+	if t.CheckIntervalSet != nil {
+		t.CheckInterval = *t.CheckIntervalSet
 	}
 	if t.BuildTimeout == 0 {
 		t.BuildTimeout = Duration(90 * time.Minute)
