@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/cocardoso/gh-runners-manager/internal/ingest"
@@ -41,9 +42,10 @@ var layerItems = map[string]bool{
 }
 
 // explain says whether a difference is expected, and why: the ghrm layer installs the
-// item, GitHub's image version carries a build suffix, or the version moved within its
-// major release (the recipe installs the latest releases, so a build made after
-// GitHub's picks up newer ones). A missing item never is, nor is a major change.
+// item, GitHub's image version carries a build suffix, or the version is newer (the
+// recipe installs the latest releases, so a build made after GitHub's picks up newer
+// ones). A missing item never is, nor an older version than GitHub's, nor a new major
+// version of a language runtime, the change most likely to break a workflow.
 func explain(kind, name, expected, actual string) (bool, string) {
 	if kind == "missing" {
 		return false, ""
@@ -59,18 +61,40 @@ func explain(kind, name, expected, actual string) (bool, string) {
 		return false, ""
 	case name == "Image Version" && strings.HasPrefix(expected, actual):
 		return true, "GitHub's image version adds a build suffix"
-	case sameMajor(expected, actual):
-		return true, "same major version: built after GitHub's image, the recipe installed a newer release"
+	case compareVersions(actual, expected) <= 0:
+		return false, ""
+	case strings.Contains(name, "Language and Runtime") && !sameMajor(expected, actual):
+		return false, ""
 	}
-	return false, ""
+	return true, "newer release: built after GitHub's image, the recipe installed the latest"
 }
 
-var leadingNumber = regexp.MustCompile(`^(?:\d+:)?\D*?(\d+)`)
+var (
+	leadingNumber = regexp.MustCompile(`^(?:\d+:)?\D*?(\d+)`)
+	numbers       = regexp.MustCompile(`\d+`)
+)
 
 // sameMajor compares the first number of two versions (after a Debian epoch).
 func sameMajor(a, b string) bool {
 	ma, mb := leadingNumber.FindStringSubmatch(a), leadingNumber.FindStringSubmatch(b)
 	return ma != nil && mb != nil && ma[1] == mb[1]
+}
+
+// compareVersions compares the numbers of two versions in order (Debian epoch, then
+// the version's numbers, so 1:9.18.39-0ubuntu0.24.04.7 is newer than ...04.2).
+func compareVersions(a, b string) int {
+	na, nb := numbers.FindAllString(a, -1), numbers.FindAllString(b, -1)
+	for i := 0; i < len(na) && i < len(nb); i++ {
+		x, _ := strconv.Atoi(na[i])
+		y, _ := strconv.Atoi(nb[i])
+		if x != y {
+			if x < y {
+				return -1
+			}
+			return 1
+		}
+	}
+	return len(na) - len(nb)
 }
 
 type reportNode struct {

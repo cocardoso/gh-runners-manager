@@ -84,8 +84,10 @@ func TestExplainedOnlyForLayerItems(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]bool{}
+	reasons := map[string]string{}
 	for _, d := range rep.Differences {
 		got[d.Kind+" "+d.Name] = d.Explained
+		reasons[d.Kind+" "+d.Name] = d.Reason
 	}
 	if got["missing GitHub Actions Runner"] {
 		t.Error("a missing runner is never explained by the layer")
@@ -93,8 +95,8 @@ func TestExplainedOnlyForLayerItems(t *testing.T) {
 	if !got["version Docker Client"] {
 		t.Error("the layer reinstalls the Docker CLI from Docker's repository: a version change is explained")
 	}
-	if got["version Docker Engine API helper"] {
-		t.Error("only exact layer items are explained, not substrings")
+	if reasons["version Docker Engine API helper"] == "installed by the ghrm layer" {
+		t.Error("only exact layer items are explained by the layer, not substrings")
 	}
 }
 
@@ -126,20 +128,32 @@ func TestCompareReportsWithSingleElementArrays(t *testing.T) {
 	}
 }
 
-// A build made days after GitHub's picks up newer patch and minor releases (the recipe
-// installs the latest), so those differences are shown but do not block activation.
-func TestVersionDriftIsExplainedButMajorChangesAreNot(t *testing.T) {
+// A build made days after GitHub's picks up newer releases (the recipe installs the
+// latest), so newer versions are shown but do not block activation; a tool whose first
+// number counts releases (Google Cloud CLI) is no exception. A runtime's new major
+// version and an older version than GitHub's are not explained.
+func TestVersionDriftIsExplainedButRuntimeMajorsAndDowngradesAreNot(t *testing.T) {
 	published := []byte(`{"NodeType":"HeaderNode","Title":"Ubuntu-Slim","Children":[
 	  {"NodeType":"ToolVersionNode","ToolName":"Image Version:","Version":"20260925.9.1"},
 	  {"NodeType":"HeaderNode","Title":"Installed Software","Children":[
-	    {"NodeType":"ToolVersionNode","ToolName":"GitHub CLI","Version":"2.101.0"},
-	    {"NodeType":"ToolVersionNode","ToolName":"Node.js","Version":"24.21.0"},
+	    {"NodeType":"HeaderNode","Title":"Language and Runtime","Children":[
+	      {"NodeType":"ToolVersionNode","ToolName":"Node.js","Version":"24.21.0"},
+	      {"NodeType":"ToolVersionNode","ToolName":"Python","Version":"3.12.3"}]},
+	    {"NodeType":"HeaderNode","Title":"CLI Tools","Children":[
+	      {"NodeType":"ToolVersionNode","ToolName":"GitHub CLI","Version":"2.101.0"},
+	      {"NodeType":"ToolVersionNode","ToolName":"Google Cloud CLI","Version":"586.0.0"},
+	      {"NodeType":"ToolVersionNode","ToolName":"AWS CLI","Version":"2.37.4"}]},
 	    {"NodeType":"TableNode","Headers":"Name|Version","Rows":["sudo|1.9.15p5-3ubuntu5.24.04.3","bind|1:9.18.39-0ubuntu0.24.04.2"]}]}]}`)
 	actual := []byte(`{"NodeType":"HeaderNode","Title":"Ubuntu-Slim","Children":[
 	  {"NodeType":"ToolVersionNode","ToolName":"Image Version:","Version":"20260925.9"},
 	  {"NodeType":"HeaderNode","Title":"Installed Software","Children":[
-	    {"NodeType":"ToolVersionNode","ToolName":"GitHub CLI","Version":"2.102.0"},
-	    {"NodeType":"ToolVersionNode","ToolName":"Node.js","Version":"26.1.0"},
+	    {"NodeType":"HeaderNode","Title":"Language and Runtime","Children":[
+	      {"NodeType":"ToolVersionNode","ToolName":"Node.js","Version":"26.1.0"},
+	      {"NodeType":"ToolVersionNode","ToolName":"Python","Version":"3.12.8"}]},
+	    {"NodeType":"HeaderNode","Title":"CLI Tools","Children":[
+	      {"NodeType":"ToolVersionNode","ToolName":"GitHub CLI","Version":"2.102.0"},
+	      {"NodeType":"ToolVersionNode","ToolName":"Google Cloud CLI","Version":"588.0.0"},
+	      {"NodeType":"ToolVersionNode","ToolName":"AWS CLI","Version":"2.37.1"}]},
 	    {"NodeType":"TableNode","Headers":"Name|Version","Rows":["sudo|1.9.15p5-3ubuntu5.24.04.4","bind|1:9.18.39-0ubuntu0.24.04.7"]}]}]}`)
 	rep, err := CompareReports(published, actual, nil)
 	if err != nil {
@@ -149,15 +163,18 @@ func TestVersionDriftIsExplainedButMajorChangesAreNot(t *testing.T) {
 	for _, d := range rep.Differences {
 		got[d.Name] = d
 	}
-	for _, name := range []string{"Image Version", "Installed Software / GitHub CLI", "Installed Software / sudo", "Installed Software / bind"} {
+	for _, name := range []string{"Image Version", "Installed Software / Language and Runtime / Python", "Installed Software / CLI Tools / GitHub CLI",
+		"Installed Software / CLI Tools / Google Cloud CLI", "Installed Software / sudo", "Installed Software / bind"} {
 		if d := got[name]; !d.Explained || d.Reason == "" {
 			t.Errorf("%s = %+v, want explained with a reason", name, d)
 		}
 	}
-	if d := got["Installed Software / Node.js"]; d.Explained {
-		t.Errorf("a major version change must not be explained: %+v", d)
+	for _, name := range []string{"Installed Software / Language and Runtime / Node.js", "Installed Software / CLI Tools / AWS CLI"} {
+		if d := got[name]; d.Explained {
+			t.Errorf("%s must not be explained: %+v", name, d)
+		}
 	}
-	if rep.Unexpected != 1 {
-		t.Fatalf("unexpected = %d, want 1 (the Node.js major change)", rep.Unexpected)
+	if rep.Unexpected != 2 {
+		t.Fatalf("unexpected = %d, want 2 (the Node.js major change and the older AWS CLI)", rep.Unexpected)
 	}
 }

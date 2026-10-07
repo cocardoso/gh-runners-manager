@@ -352,7 +352,7 @@ Yellow packages are test doubles; `internal/demo` uses the fake runtime to serve
 
 A build clones the **active template** into a builder environment (it already has Docker, systemd and `ghrm-agent`), because the Proxmox API cannot run commands inside a fresh stock container. The very first template comes from `deploy/proxmox/dev-template.sh` (the bootstrap template, `proxmox.template_vmid`). Since the builder runs the active template's agent, which can be older than the control plane, it first replaces itself with the control plane's agent, so fixes to the build take effect in the next build.
 
-The fidelity report compares the template's software report with the one GitHub publishes as an asset of the same `ubuntu-slim` release (the recipe's `ubuntu-slim-Report.json` is not refreshed for every release, so it is only a fallback). The recipe installs the latest releases at build time, so a build made after GitHub's shows newer patch and minor versions: those differences are listed with their reason but do not hold the version back. A missing tool, a major version change, or an extra tool the layer does not install does.
+The fidelity report compares the template's software report with the one GitHub publishes as an asset of the same `ubuntu-slim` release (the recipe's `ubuntu-slim-Report.json` is not refreshed for every release, so it is only a fallback). The recipe installs the latest releases at build time, so a build made after GitHub's shows newer versions: those differences are listed with their reason but do not hold the version back. A missing tool, an older version than GitHub's, a new major version of a language runtime, or an extra tool the layer does not install does.
 
 ```mermaid
 flowchart LR
