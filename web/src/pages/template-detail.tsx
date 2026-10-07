@@ -145,7 +145,7 @@ function FidelityTab({ fid }: { fid: Fidelity }) {
           variant="default"
           icon={<CheckCircleIcon weight="fill" />}
           title="Matches GitHub's software report"
-          description="Every difference is something the ghrm layer adds on purpose."
+          description="Every difference is explained: an item the ghrm layer adds, or a newer release the recipe installed at build time."
         />
       ) : (
         <Banner

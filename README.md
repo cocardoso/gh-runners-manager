@@ -22,6 +22,8 @@ The UI is embedded in the `ghrm` binary and follows the Cloudflare dashboard pat
 | ![Job timeline](docs/images/job-timeline-light.png) | ![Job log](docs/images/job-logs-dark.png) |
 | **Scale sets** | **Live logs** |
 | ![Scale sets](docs/images/scale-sets-light.png) | ![Live logs](docs/images/live-logs-dark.png) |
+| **Templates** | **Template fidelity report** |
+| ![Templates](docs/images/templates-light.png) | ![Template fidelity](docs/images/template-fidelity-light.png) |
 
 Dark versions of every screenshot are in [docs/images](docs/images).
 
