@@ -155,7 +155,7 @@ func (c *Client) Listen(ctx context.Context, scaleSet string, scaleSetID, maxRun
 	defer func() { _ = session.Close(context.WithoutCancel(ctx)) }()
 	var lc listener.Client = session
 	if h, ok := s.(AvailableJobHandler); ok {
-		lc = withAvailableJobs(session, h)
+		lc = withAvailableJobs(session, h, c.logger.With("scale_set", scaleSet))
 	}
 	l, err := listener.New(lc, listener.Config{ScaleSetID: scaleSetID, MaxRunners: maxRunners, Logger: c.logger.With("scale_set", scaleSet)})
 	if err != nil {

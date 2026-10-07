@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/actions/scaleset"
@@ -27,13 +28,14 @@ func (a *availableRecorder) HandleJobAvailable(_ context.Context, j *scaleset.Jo
 	return nil
 }
 
-// GitHub sends a job's queue time only with its "available" message, which the
-// scaleset listener consumes without handing it to the scaler.
+// GitHub sends a job's queue time with its "available" and "assigned" messages, which
+// the scaleset listener consumes without handing them to the scaler.
 func TestAvailableJobsReachTheHandler(t *testing.T) {
 	msg := &scaleset.RunnerScaleSetMessage{JobAvailableMessages: []*scaleset.JobAvailable{
-		{JobMessageBase: scaleset.JobMessageBase{JobID: "j1"}}, {JobMessageBase: scaleset.JobMessageBase{JobID: "j2"}}}}
+		{JobMessageBase: scaleset.JobMessageBase{JobID: "j1"}}},
+		JobAssignedMessages: []*scaleset.JobAssigned{{JobMessageBase: scaleset.JobMessageBase{JobID: "j2"}}}}
 	rec := &availableRecorder{}
-	s := withAvailableJobs(&fakeSession{msg: msg}, rec)
+	s := withAvailableJobs(&fakeSession{msg: msg}, rec, slog.New(slog.DiscardHandler))
 	got, err := s.GetMessage(context.Background(), 0, 1)
 	if err != nil || got != msg {
 		t.Fatalf("message = %v, %v; want it passed through", got, err)
@@ -41,7 +43,7 @@ func TestAvailableJobsReachTheHandler(t *testing.T) {
 	if len(rec.got) != 2 || rec.got[0] != "j1" || rec.got[1] != "j2" {
 		t.Fatalf("handled %v, want [j1 j2]", rec.got)
 	}
-	if _, err := withAvailableJobs(&fakeSession{}, rec).GetMessage(context.Background(), 0, 1); err != nil {
+	if _, err := withAvailableJobs(&fakeSession{}, rec, slog.New(slog.DiscardHandler)).GetMessage(context.Background(), 0, 1); err != nil {
 		t.Fatalf("no message: %v", err)
 	}
 }
