@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, unwrap, type LogEntry } from "@/api/client";
 import { LogBuffer, LogFollower, type FollowState } from "./log-buffer";
 
-export type LogStreamName = "control-plane" | "runtime" | "agent" | "runner" | "job" | "metrics";
+export type LogStreamName = "control-plane" | "runtime" | "agent" | "runner" | "job" | "metrics" | "build" | "selftest";
 export type LogStreamState = "loading" | "paused" | "error" | FollowState;
 
 export interface UseLogStreamOptions {

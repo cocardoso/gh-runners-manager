@@ -152,6 +152,9 @@ export function invalidationKeys(e: ApiEvent): unknown[][] {
     case "controller":
       keys.push(["scale-sets"]);
       break;
+    case "template":
+      keys.push(["templates"], ["environments"]);
+      break;
   }
   return keys;
 }

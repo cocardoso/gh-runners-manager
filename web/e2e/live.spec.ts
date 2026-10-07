@@ -48,3 +48,15 @@ test("the UI reconnects and resumes after the control plane restarts", async ({ 
   const before = await count();
   await expect.poll(count, { timeout: 20_000 }).toBeGreaterThan(before);
 });
+
+test("a template build progresses live to active from the Templates page", async ({ page, demo }) => {
+  await page.addInitScript(() => sessionStorage.setItem("ghrm.adminToken", "demo"));
+  await page.goto(`${demo.url}/templates`);
+  const build = page.getByRole("button", { name: "Build now" });
+  await expect(build).toBeEnabled();
+  await build.click();
+  await expect(page.getByText("Build started")).toBeVisible();
+  const row = page.getByRole("row").filter({ hasText: "Manual" }).first();
+  await expect(row.getByText(/building|creating|verifying|ready|active/)).toBeVisible();
+  await expect(row.getByText("active", { exact: true })).toBeVisible({ timeout: 40_000 });
+});

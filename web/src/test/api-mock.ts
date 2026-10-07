@@ -60,6 +60,7 @@ export function defaultRoutes(): Routes {
     "/api/v1/environments": { environments: [] },
     "/api/v1/scale-sets": { scale_sets: [] },
     "/api/v1/events": { events: [] },
+    "/api/v1/templates": { templates: [], building: false, enabled: false },
     "/api/v1/settings": { version: "dev", admin_actions: false, proxmox: {}, ingest: {}, capacity: {}, scale_sets: [] },
   };
 }

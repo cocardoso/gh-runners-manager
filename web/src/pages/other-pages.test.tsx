@@ -39,12 +39,6 @@ test("settings show the configuration without secrets", async () => {
   expect(screen.getByText("v0.3.0")).toBeInTheDocument();
 });
 
-test("templates explain what is coming", async () => {
-  mockApi({ "/api/v1/settings": settings });
-  renderApp("/templates");
-  expect(await screen.findByText(/950/)).toBeInTheDocument();
-});
-
 test("live logs show the recent events and stream new ones, pausable", async () => {
   mockApi({
     "/api/v1/events": { events: [{ seq: 5, kind: "job.started", level: "info", message: "job started: build", time: "2026-10-07T12:00:00Z", job_id: "j1" }] },

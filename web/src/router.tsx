@@ -7,6 +7,7 @@ import { EnvironmentsPage } from "@/pages/environments";
 import { EnvironmentDetailPage } from "@/pages/environment-detail";
 import { ScaleSetsPage } from "@/pages/scale-sets";
 import { TemplatesPage } from "@/pages/templates";
+import { TemplateDetailPage } from "@/pages/template-detail";
 import { LiveLogsPage } from "@/pages/live-logs";
 import { SettingsPage } from "@/pages/settings";
 import { NotFoundPage } from "@/pages/not-found";
@@ -54,6 +55,7 @@ const routes = [
   createRoute({ getParentRoute: () => rootRoute, path: "/environments/$id", component: EnvironmentDetailPage, validateSearch: detailSearch }),
   createRoute({ getParentRoute: () => rootRoute, path: "/scale-sets", component: ScaleSetsPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/templates", component: TemplatesPage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/templates/$id", component: TemplateDetailPage, validateSearch: detailSearch }),
   createRoute({ getParentRoute: () => rootRoute, path: "/logs", component: LiveLogsPage, validateSearch: listSearch }),
   createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage }),
 ];
