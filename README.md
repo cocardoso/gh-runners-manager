@@ -11,7 +11,9 @@ Ephemeral, isolated GitHub Actions runners on Proxmox LXC: one fresh environment
 - Job environments live on an isolated network that cannot reach your LAN or the hypervisor.
 - A web UI shows queues, environments, jobs and the live logs of every lifecycle stage.
 
-Read the [design document](docs/superpowers/specs/2026-10-07-gh-runners-manager-design.md) for details.
+- [Architecture diagrams](docs/architecture.md): system overview, network isolation, job lifecycle, environment states and implementation status. Kept up to date with every change.
+- [Design document](docs/superpowers/specs/2026-10-07-gh-runners-manager-design.md): the reasoning behind the design.
+- [Development guide](docs/development.md): building, testing and running against a Proxmox host.
 
 ## Development
 
