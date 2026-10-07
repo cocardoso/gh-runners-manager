@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# A fake of the Proxmox VE command-line tools for the installer tests. It keeps its state
+# as plain files in $FAKE_STATE and logs every call to $FAKE_LOG.
+set -u
+cmd=$(basename "$0")
+S=${FAKE_STATE:?}
+echo "$cmd $*" >>"${FAKE_LOG:?}"
+touch "$S/pools" "$S/roles" "$S/users" "$S/tokens" "$S/storages" "$S/zones" "$S/vnets" "$S/subnets" "$S/groups" "$S/guests" "$S/images" "$S/ct_files" "$S/ct_secrets"
+
+list() { # list FILE KEY: a JSON list of {"KEY":"line"}
+  local first=1
+  printf '['
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    [ $first = 1 ] || printf ','
+    printf '{"%s":"%s"}' "$2" "$l"
+    first=0
+  done <"$1"
+  printf ']\n'
+}
+opt() { # opt NAME ARGS...: the value after --NAME
+  local n=$1; shift
+  while [ $# -gt 0 ]; do [ "$1" = "--$n" ] && { echo "$2"; return; }; shift; done
+}
+has() { grep -qxF "$2" "$S/$1"; }
+
+case $cmd in
+id) echo 0 ;;
+hostname) echo pve ;;
+pveversion) echo "${FAKE_PVEVERSION:-pve-manager/9.2.21/0123456789abcdef (running kernel: 7.0.14-pve)}" ;;
+openssl)
+  case $1 in
+    x509) echo "sha256 Fingerprint=AA:BB:CC" ;;
+    rand) echo 0123456789abcdef0123456789abcdef ;;
+  esac ;;
+ip) echo "1.1.1.1 via 192.0.2.1 dev vmbr0 src 192.0.2.6 uid 0" ;;
+curl)
+  out=""
+  prev=""
+  for a in "$@"; do [ "$prev" = -o ] && out=$a; prev=$a; done
+  url=${*: -1}
+  release() { printf '#!/bin/sh\necho "%s %s (abc)"\n' "$1" "${FAKE_RELEASE_VERSION:-v1.0.0}"; }
+  if [ -n "$out" ]; then
+    case $url in
+      *SHA256SUMS)
+        { release ghrm | sha256sum | sed 's/ .*/  ghrm-linux-amd64/'
+          release ghrm-agent | sha256sum | sed 's/ .*/  ghrm-agent-linux-amd64/'
+          echo "0000000000000000000000000000000000000000000000000000000000000000  install.sh"; } >"$out"
+        if [ -n "${FAKE_BAD_SUM:-}" ]; then sed -i.bak '1s/^./f/' "$out"; fi ;;
+      *ghrm-agent-linux-amd64) release ghrm-agent >"$out" ;;
+      *ghrm-linux-amd64) release ghrm >"$out" ;;
+    esac
+  fi ;;
+dpkg) [ -f "$S/dnsmasq" ]; exit $? ;;
+apt-get) [[ " $* " == *" dnsmasq "* ]] && touch "$S/dnsmasq"; exit 0 ;;
+systemctl | sleep | mkdir) exit 0 ;;
+pvesm) [ "$1" = add ] && echo "$3" >>"$S/storages"; exit 0 ;;
+pveam)
+  case $1 in
+    list) sed -n "s|^$2:\(.*\)|$2:\1 100MB|p" "$S/images" ;;
+    available) printf 'system          debian-13-standard_13.1-2_amd64.tar.zst\nsystem          ubuntu-24.04-standard_24.04-2_amd64.tar.zst\n' ;;
+    download) echo "$2:vztmpl/$3" >>"$S/images" ;;
+  esac ;;
+pveum)
+  case "$1 $2" in
+    "pool add") echo "$3" >>"$S/pools" ;;
+    "role add") echo "$3" >>"$S/roles" ;;
+    "user add") echo "$3" >>"$S/users" ;;
+    "user token")
+      case $3 in
+        add) echo "$4 $5" >>"$S/tokens"; echo '{"full-tokenid":"'"$4!$5"'","info":{"privsep":"0"},"value":"secret-123"}' ;;
+        remove) grep -vxF "$4 $5" "$S/tokens" >"$S/tokens.new"; mv "$S/tokens.new" "$S/tokens" ;;
+      esac ;;
+  esac ;;
+pvesh)
+  verb=$1 path=$2; shift 2
+  case "$verb $path" in
+    "get /pools") list "$S/pools" poolid ;;
+    "get /access/roles") list "$S/roles" roleid ;;
+    "get /access/users") list "$S/users" userid ;;
+    "get /access/users/"*/token) u=${path#/access/users/}; u=${u%/token}; sed -n "s|^$u ||p" "$S/tokens" >"$S/.tmp"; list "$S/.tmp" tokenid ;;
+    "get /storage") list "$S/storages" storage ;;
+    "get /cluster/sdn/zones") list "$S/zones" zone ;;
+    "get /cluster/sdn/vnets") list "$S/vnets" vnet ;;
+    "get /cluster/sdn/vnets/"*/subnets) list "$S/subnets" cidr ;;
+    "get /cluster/firewall/options") printf '{"enable":%s,"policy_in":"ACCEPT"}\n' "$(cat "$S/fw_enable" 2>/dev/null || echo 0)" ;;
+    "get /cluster/firewall/groups") list "$S/groups" group ;;
+    "get /cluster/firewall/groups/"*) g=${path##*/}; touch "$S/group_$g"; list "$S/group_$g" dest ;;
+    "get /cluster/resources")
+      first=1; printf '['
+      while read -r vmid tags _; do
+        [ -n "$vmid" ] || continue
+        [ $first = 1 ] || printf ','
+        printf '{"type":"lxc","vmid":%s,"tags":"%s"}' "$vmid" "$tags"; first=0
+      done <"$S/guests"; printf ']\n' ;;
+    "get /cluster/nextid")
+      n=100; while grep -q "^$n " "$S/guests"; do n=$((n + 1)); done; echo $n ;;
+    "create /cluster/sdn/zones") opt zone "$@" >>"$S/zones" ;;
+    "create /cluster/sdn/vnets") opt vnet "$@" >>"$S/vnets" ;;
+    "create /cluster/sdn/vnets/"*/subnets) opt subnet "$@" >>"$S/subnets" ;;
+    "create /cluster/firewall/groups") opt group "$@" >>"$S/groups" ;;
+    "create /cluster/firewall/groups/"*) g=${path##*/}; d=$(opt dest "$@"); [ -n "$d" ] && echo "$d" >>"$S/group_$g" ;;
+    "set /cluster/firewall/options") opt enable "$@" >"$S/fw_enable" ;;
+  esac ;;
+pct)
+  sub=$1 vmid=${2:-}
+  case $sub in
+    status)
+      line=$(grep "^$vmid " "$S/guests") || { echo "Configuration file 'nodes/pve/lxc/$vmid.conf' does not exist" >&2; exit 2; }
+      st=${line##* }; [ "$st" = template ] && st=stopped; echo "status: $st" ;;
+    config) line=$(grep "^$vmid " "$S/guests") || exit 2; read -r _ t st <<<"$line"; echo "tags: $t"; [ "$st" = template ] && echo "template: 1"; exit 0 ;;
+    create) shift 3; echo "$vmid $(opt tags "$@") stopped" >>"$S/guests" ;;
+    start) sed -i.bak "s/^\($vmid [^ ]*\) stopped$/\1 running/" "$S/guests" ;;
+    stop | shutdown) sed -i.bak "s/^\($vmid [^ ]*\) running$/\1 stopped/" "$S/guests" ;;
+    template) sed -i.bak "s/^\($vmid [^ ]*\) [a-z]*$/\1 template/" "$S/guests" ;;
+    destroy) sed -i.bak "/^$vmid /d" "$S/guests" ;;
+    set) t=$(opt tags "${@:3}"); [ -n "$t" ] && sed -i.bak "s/^$vmid [^ ]*/$vmid $t/" "$S/guests" ;;
+    push)
+      echo "$vmid $4" >>"$S/ct_files"
+      [ "$4" = /usr/local/bin/ghrm ] && sh "$3" version >"$S/ct_version_$vmid"
+      if [ "$4" = /etc/ghrm/ghrm.yaml ]; then echo "$vmid $(sed -n 's/^ *template_vmid: *\([0-9]*\).*/\1/p' "$3")" >>"$S/ct_tplvmid"; fi
+      exit 0 ;;
+    exec)
+      shift 3 # pct exec VMID --
+      line="$*"
+      grep -q "^$vmid .* running$" "$S/guests" || { echo "CT $vmid not running" >&2; exit 1; }
+      case $line in
+        "test -x /usr/local/bin/ghrm") has ct_files "$vmid /usr/local/bin/ghrm"; exit $? ;;
+        *template_vmid*) sed -n "s|^$vmid ||p" "$S/ct_tplvmid" 2>/dev/null ;;
+        "test -f "* | "test -s "*) has ct_files "$vmid ${line##* }"; exit $? ;;
+        *"ghrm secret list"*) sed -n "s|^$vmid ||p" "$S/ct_secrets" ;;
+        *"token_secret_file"*) grep -qxF "$vmid token_secret_file" "$S/ct_config" 2>/dev/null; exit $? ;;
+        *"ghrm secret set"*) cat >/dev/null; echo "$vmid ${line##* }" >>"$S/ct_secrets" ;;
+        *"ghrm version") has ct_files "$vmid /usr/local/bin/ghrm" || exit 127; cat "$S/ct_version_$vmid" 2>/dev/null || echo "ghrm v0.0.0 (old)" ;;
+        *"cat /var/lib/ghrm/setup-token") echo setup-token-xyz ;;
+        "bash -s") cat >/dev/null ;;
+        *"ip -4 -o addr"*) echo 192.0.2.20 ;;
+      esac ;;
+  esac ;;
+esac
+exit 0

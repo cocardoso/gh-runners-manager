@@ -18,7 +18,7 @@ const settings = {
 
 test("scale sets show listener status, counts and a runs-on snippet", async () => {
   mockApi({
-    "/api/v1/scale-sets": { scale_sets: [scaleSet({ name: "homelab", desired: 3, live: 1, waiting: "memory_budget" }), scaleSet({ name: "broken", listening: false, listen_error: "401 Bad credentials" })] },
+    "/api/v1/scale-sets": { scale_sets: [scaleSet({ name: "homelab", desired: 3, live: 1, waiting: "memory_budget", source: "file", settings: { url: "https://github.com/octo/app", credential: "personal", labels: ["homelab", "linux"], cores: 2, memory_mb: 4096, max_concurrent: 2 } }), scaleSet({ name: "broken", listening: false, listen_error: "401 Bad credentials" })] },
     "/api/v1/settings": settings,
   });
   renderApp("/scale-sets");

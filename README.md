@@ -11,6 +11,16 @@ Ephemeral, isolated GitHub Actions runners on Proxmox LXC: one fresh environment
 - Job environments live on an isolated network that cannot reach your LAN or the hypervisor.
 - A web UI shows queues, environments, jobs and the live logs of every lifecycle stage.
 
+## Install
+
+On a Proxmox VE 9.1+ host, as root:
+
+    curl -fsSLO https://github.com/cocardoso/gh-runners-manager/releases/latest/download/install.sh
+    bash install.sh --dry-run    # shows what it would create
+    bash install.sh
+
+It creates a dedicated Proxmox user and token, an isolated job network, the control-plane container and a bootstrap template, then prints the web UI address and a one-time setup token. Sign in, add a GitHub credential (a fine-grained PAT) and a scale set, build the first template, and use `runs-on: <scale set>` in your workflows. Running it again upgrades ghrm. See `bash install.sh --help` for the options, and [docs/development.md](docs/development.md) for the manual setup and Docker Compose.
+
 ## Web UI
 
 The UI is embedded in the `ghrm` binary and follows the Cloudflare dashboard patterns, built with [Kumo](https://github.com/cloudflare/kumo). Everything updates live over server-sent events.
@@ -24,6 +34,8 @@ The UI is embedded in the `ghrm` binary and follows the Cloudflare dashboard pat
 | ![Scale sets](docs/images/scale-sets-light.png) | ![Live logs](docs/images/live-logs-dark.png) |
 | **Templates** | **Template fidelity report** |
 | ![Templates](docs/images/templates-light.png) | ![Template fidelity](docs/images/template-fidelity-light.png) |
+| **Settings: GitHub credentials** | **Sign-in** |
+| ![Settings](docs/images/settings-light.png) | ![Sign-in](docs/images/sign-in-dark.png) |
 
 Dark versions of every screenshot are in [docs/images](docs/images).
 

@@ -43,6 +43,13 @@ type Deps struct {
 	Templates TemplateSource
 	// TemplateEvents receives agent events of build and verify environments.
 	TemplateEvents TemplateEvents
+	// Stages, when set, receives how long each environment stayed in a state.
+	Stages StageObserver
+}
+
+// StageObserver records how long environments stay in each state (metrics).
+type StageObserver interface {
+	ObserveStage(stage string, d time.Duration)
 }
 
 // TemplateSource reports the active template: the runtime reference environments clone
@@ -66,6 +73,9 @@ type ScaleSetStatus struct {
 	WaitingSince time.Time
 	Listening    bool
 	ListenError  string
+	// Removed means the scale set was deleted from the settings; it stays listed
+	// until its live environments are gone and gets no new ones.
+	Removed bool
 }
 
 type scaleSetState struct {
@@ -76,6 +86,7 @@ type scaleSetState struct {
 	waiting      string
 	listening    bool
 	listenErr    string
+	removed      bool
 }
 
 // Controller provisions and tears down environments.
@@ -84,6 +95,7 @@ type Controller struct {
 
 	mu         sync.Mutex
 	scaleSets  map[string]*scaleSetState
+	order      []string          // scale set names in settings order, removed ones last
 	destroying map[string]bool   // single-flight destroys
 	retries    map[string]*retry // destroy backoff
 
@@ -102,9 +114,7 @@ func New(d Deps) *Controller {
 	}
 	c := &Controller{d: d, scaleSets: map[string]*scaleSetState{}, destroying: map[string]bool{},
 		retries: map[string]*retry{}, kick: make(chan struct{}, 1)}
-	for _, ss := range d.Config.ScaleSets {
-		c.scaleSets[ss.Name] = &scaleSetState{cfg: ss}
-	}
+	c.UpdateScaleSets(d.Config.ScaleSets)
 	return c
 }
 
@@ -115,6 +125,9 @@ func (c *Controller) now() time.Time { return c.d.Now() }
 func (c *Controller) SetTemplates(src TemplateSource, ev TemplateEvents) {
 	c.d.Templates, c.d.TemplateEvents = src, ev
 }
+
+// SetStages connects the stage-duration observer (metrics). Call it before Run.
+func (c *Controller) SetStages(o StageObserver) { c.d.Stages = o }
 
 // SetScaleSetID records the GitHub ID of a scale set.
 func (c *Controller) SetScaleSetID(name string, id int) {
@@ -148,11 +161,14 @@ func (c *Controller) ScaleSets(ctx context.Context) []ScaleSetStatus {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	out := make([]ScaleSetStatus, 0, len(c.d.Config.ScaleSets))
-	for _, cfg := range c.d.Config.ScaleSets {
-		s := c.scaleSets[cfg.Name]
-		out = append(out, ScaleSetStatus{Name: cfg.Name, GitHubID: s.githubID, Desired: s.desired, Live: live[cfg.Name],
-			Waiting: s.waiting, WaitingSince: s.waitingSince, Listening: s.listening, ListenError: s.listenErr})
+	out := make([]ScaleSetStatus, 0, len(c.order))
+	for _, name := range c.order {
+		s := c.scaleSets[name]
+		if s.removed && live[name] == 0 {
+			continue // drained; Draining forgets it
+		}
+		out = append(out, ScaleSetStatus{Name: name, GitHubID: s.githubID, Desired: s.desired, Live: live[name],
+			Waiting: s.waiting, WaitingSince: s.waitingSince, Listening: s.listening, ListenError: s.listenErr, Removed: s.removed})
 	}
 	return out
 }
@@ -211,14 +227,18 @@ func (c *Controller) log(ctx context.Context, envID, stream, format string, a ..
 // transition moves an environment and records it as an event and a control-plane log line.
 func (c *Controller) transition(ctx context.Context, id string, from []string, to environment.State, mutate func(*store.Environment)) (store.Environment, error) {
 	before := ""
+	var since time.Time
 	e, err := c.d.Store.TransitionEnvironment(ctx, id, from, string(to), func(e *store.Environment) {
-		before = e.State
+		before, since = e.State, e.StateChangedAt
 		if mutate != nil {
 			mutate(e)
 		}
 	})
 	if err != nil {
 		return e, err
+	}
+	if c.d.Stages != nil && !since.IsZero() && before != string(to) {
+		c.d.Stages.ObserveStage(before, c.now().Sub(since))
 	}
 	level := "info"
 	if to == environment.Failed {

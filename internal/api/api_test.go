@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,11 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cocardoso/gh-runners-manager/internal/auth"
 	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
 	"github.com/cocardoso/gh-runners-manager/internal/github"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
+	"github.com/cocardoso/gh-runners-manager/internal/secrets"
+	"github.com/cocardoso/gh-runners-manager/internal/settings"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
 
@@ -39,12 +43,18 @@ func (f *fakeController) RequestDestroy(_ context.Context, id string) error {
 }
 
 type harness struct {
-	srv  *httptest.Server
-	db   *store.Store
-	rec  *events.Recorder
-	logs *logs.Store
-	ctl  *fakeController
+	srv   *httptest.Server
+	db    *store.Store
+	rec   *events.Recorder
+	logs  *logs.Store
+	ctl   *fakeController
+	auth  *auth.Service
+	reg   *settings.Registry
+	token string // the admin token the harness adds to requests without credentials
 }
+
+// harnessToken is the admin token of a harness created without one.
+const harnessToken = "harness-admin-token"
 
 func newHarness(t *testing.T, adminToken string) *harness {
 	t.Helper()
@@ -58,16 +68,42 @@ func newHarnessWith(t *testing.T, adminToken string, mutate func(*Deps)) *harnes
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	h := &harness{db: db, rec: events.NewRecorder(db, events.NewBus(), nil), logs: logs.New(t.TempDir(), db), ctl: &fakeController{}}
+	h := &harness{db: db, rec: events.NewRecorder(db, events.NewBus(), nil), logs: logs.New(t.TempDir(), db), ctl: &fakeController{},
+		auth: &auth.Service{Store: db, SetupToken: "setup-tok", Params: auth.TestParams}}
+	if adminToken == "" {
+		adminToken = harnessToken
+	}
+	h.token = adminToken
 	cfg := &config.Config{Proxmox: config.Proxmox{URL: "https://pve.example.test:8006", TokenSecret: "pve-secret"},
 		GitHub:    config.GitHub{Credentials: []config.Credential{{Name: "c", Token: "token-value"}}},
 		ScaleSets: []config.ScaleSet{{Name: "lab", URL: "https://github.com/o/r", Credential: "c"}}, AdminToken: adminToken}
+	vault, err := secrets.OpenVault(context.Background(), db, filepath.Join(t.TempDir(), "secret.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.reg, err = settings.New(context.Background(), cfg, db, vault); err != nil {
+		t.Fatal(err)
+	}
 	deps := Deps{Store: db, Recorder: h.rec, Logs: h.logs, Controller: h.ctl, AdminToken: adminToken,
-		Config: cfg, GitHubJobs: fakeGitHubJobs{}}
+		Config: cfg, GitHubJobs: fakeGitHubJobs{}, Auth: h.auth, Settings: h.reg,
+		TestCredential: func(_ context.Context, token string) (string, error) {
+			if token == "github_pat_good" {
+				return "octocat", nil
+			}
+			return "", errors.New("Bad credentials")
+		}}
 	if mutate != nil {
 		mutate(&deps)
 	}
-	h.srv = httptest.NewServer(New(deps))
+	api := New(deps)
+	// Requests without credentials get the admin token, so tests of other behavior need
+	// no sign-in; X-Test-No-Auth sends a request exactly as written.
+	h.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Test-No-Auth") == "" && r.Header.Get("Authorization") == "" && r.Header.Get("Cookie") == "" && deps.AdminToken != "" {
+			r.Header.Set("Authorization", "Bearer "+deps.AdminToken)
+		}
+		api.ServeHTTP(w, r)
+	}))
 	t.Cleanup(h.srv.Close)
 	return h
 }
@@ -249,11 +285,7 @@ func post(t *testing.T, url, token string) int {
 	return resp.StatusCode
 }
 
-func TestDestroyRequiresAdminToken(t *testing.T) {
-	disabled := newHarness(t, "")
-	if code := post(t, disabled.srv.URL+"/api/v1/environments/env1/destroy", "x"); code != 403 {
-		t.Fatalf("no admin token configured: %d, want 403", code)
-	}
+func TestDestroyWithTheAdminToken(t *testing.T) {
 	h := newHarness(t, "s3cret")
 	_ = h.db.CreateEnvironment(context.Background(), store.Environment{ID: "env1", ScaleSet: "lab", State: "running"})
 	if code := post(t, h.srv.URL+"/api/v1/environments/env1/destroy", "wrong"); code != 401 {
@@ -266,8 +298,8 @@ func TestDestroyRequiresAdminToken(t *testing.T) {
 		t.Fatalf("destroy not requested: %v", h.ctl.destroyed)
 	}
 	evs, _ := h.db.ListEvents(context.Background(), store.EventFilter{EnvironmentID: "env1"})
-	if len(evs) == 0 || evs[len(evs)-1].Kind != "audit.destroy" {
-		t.Fatalf("want an audit.destroy event, got %+v", evs)
+	if len(evs) == 0 || evs[len(evs)-1].Kind != "audit.destroy" || evs[len(evs)-1].Data["actor"] != "token" {
+		t.Fatalf("want an audit.destroy event by the token, got %+v", evs)
 	}
 }
 

@@ -47,8 +47,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	c.mu.Lock()
 	var demands []scheduler.Demand
 	now := c.now()
-	for _, cfg := range c.d.Config.ScaleSets {
-		s := c.scaleSets[cfg.Name]
+	for _, name := range c.order {
+		s := c.scaleSets[name]
+		if s.removed {
+			continue // drains: no new environments
+		}
+		cfg := s.cfg
 		if s.desired > serving[cfg.Name] {
 			if s.waitingSince.IsZero() {
 				s.waitingSince = now
@@ -134,7 +138,11 @@ func (c *Controller) updateWaiting(ctx context.Context, plan scheduler.Plan) {
 // reconcile counts it) and provisions it in the background.
 func (c *Controller) startProvisioning(ctx context.Context, scaleSet string) error {
 	c.mu.Lock()
-	s := c.scaleSets[scaleSet]
+	s, ok := c.scaleSets[scaleSet]
+	if !ok || s.removed {
+		c.mu.Unlock()
+		return nil // removed after this reconcile planned it
+	}
 	cfg, ghID := s.cfg, s.githubID
 	c.mu.Unlock()
 

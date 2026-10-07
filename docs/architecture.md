@@ -24,10 +24,14 @@ Legend used in the diagrams: **green** = implemented, **grey dashed** = planned 
 | REST API and SSE | `internal/api` | Implemented (M2, paging and heartbeats M3) |
 | `ghrm version`, `smoke`, `serve`, `openapi`, `demo` | `cmd/ghrm` | Implemented (M1–M3) |
 | Simulated fleet for UI work and browser tests | `internal/demo` | Implemented (M3) |
-| Web UI (React, Kumo), embedded in the binary | `web/` | Implemented (M3); template pages in M4, sign-in and editable settings in M5 |
+| Web UI (React, Kumo), embedded in the binary | `web/` | Implemented (M3); template pages (M4); sign-in, account and settings editors (M5) |
 | Template builder (`ubuntu-slim`): build, verify, activate, retain, release checks | `internal/template`, `template/layer` | Implemented (M4); `deploy/proxmox/dev-template.sh` creates the bootstrap template |
 | Agent build and self-test modes | `internal/agent` (`build.go`, `selftest.go`) | Implemented (M4) |
-| UI auth, secrets, installer | `internal/auth`, `internal/secrets`, `deploy/` | Planned (M5) |
+| Sign-in: admin account (argon2id), sessions, CSRF, audit | `internal/auth`, `internal/api/auth.go` | Implemented (M5) |
+| Secrets sealed at rest (AES-256-GCM, separate key file), `ghrm secret` | `internal/secrets` | Implemented (M5) |
+| Editable credentials and scale sets, listener supervisor | `internal/settings`, `cmd/ghrm/supervisor.go` | Implemented (M5) |
+| Prometheus metrics, daily backups | `internal/metrics`, `internal/backup` | Implemented (M5) |
+| Installer, container image, releases | `deploy/proxmox/install.sh`, `Dockerfile`, `deploy/docker`, `.github/workflows/release.yml` | Implemented (M5) |
 
 ## 1. System overview
 
@@ -39,7 +43,11 @@ flowchart LR
     end
 
     subgraph cp["Control plane: ghrm (single Go binary)"]
-        listener["Scale set listener"]
+        settings["Settings: file + UI credentials and scale sets"]
+        vault["Vault: secrets sealed with a separate key file"]
+        auth["Sign-in: account, sessions, CSRF"]
+        metrics["/metrics, daily backups"]
+        listener["Scale set listeners (supervised)"]
         scheduler["Scheduler"]
         runtime["Runtime: proxmox-lxc"]
         reaper["Reaper"]
@@ -86,10 +94,15 @@ flowchart LR
     api --> store
     ui --> api
     operator --> ui
+    api --> auth
+    api --> settings
+    settings --> vault
+    settings -- "start, restart, stop" --> listener
+    metrics --> store
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef planned fill:#f1f3f5,stroke:#868e96,stroke-dasharray:5 5,color:#000
-    class runtime,scheduler,listener,reaper,store,ingest,api,ui,templates done
+    class runtime,scheduler,listener,reaper,store,ingest,api,ui,templates,settings,vault,auth,metrics done
 ```
 
 ## 1a. Web UI data flow
@@ -126,7 +139,55 @@ flowchart LR
 ```
 
 - A fresh page starts the event stream at `after=latest` and reconnects with `after=<last seq>`, so a control-plane restart or a network blip replays what was missed. A connection that stays silent past two heartbeats is treated as stale and replaced; the Live indicator shows `Reconnecting` meanwhile.
-- Destroying an environment is the only mutating action. It needs the admin token, kept in `sessionStorage` until M5 adds sign-in, and a type-the-name confirmation.
+- Every API call needs a signed-in session (or the admin bearer token, for scripts). The shell checks the session first and shows the first-run form or the sign-in form in place of the page; writes send the session's CSRF token, and a 401 shows the sign-in form again.
+- Mutating actions (destroy an environment, build, activate or pin a template, edit credentials and scale sets) are recorded as `audit.*` events with the actor.
+
+## 1b. Sign-in and API access
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant A as API middleware
+    participant S as auth.Service
+    participant D as SQLite
+
+    B->>A: GET /api/v1/auth/session
+    A->>S: needs setup? / session from cookie
+    S->>D: users, sessions (cookie stored as its SHA-256)
+    A-->>B: setup | signed_out | signed_in + CSRF token
+    alt first run
+        B->>A: POST /auth/setup (setup token from data_dir/setup-token)
+        A->>S: create the admin (argon2id), remove the setup token
+    end
+    B->>A: POST /auth/login
+    A->>S: verify (per-address lockout after 5 failures)
+    A-->>B: Set-Cookie ghrm_session (HttpOnly, SameSite=Strict, Secure behind HTTPS)
+    B->>A: POST /api/v1/... + X-CSRF-Token
+    A->>S: session (slides its expiry), CSRF check
+    A->>A: handler; audit.* event with the actor
+    Note over A: scripts send Authorization: Bearer <admin token> instead (no CSRF)
+```
+
+## 1c. Editable settings
+
+Credentials and scale sets come from two places: `ghrm.yaml` (read-only in the UI) and the UI (stored in SQLite; tokens sealed in the vault under `github/<name>`). A change applies without a restart.
+
+```mermaid
+flowchart LR
+    file["ghrm.yaml"] --> reg["settings.Registry"]
+    ui["UI: Settings, Scale sets"] -- "PUT / DELETE (audited)" --> reg
+    reg -- "tokens" --> vault["Vault (AES-256-GCM, key in secret.key 0600)"]
+    reg -- "rows" --> db[("SQLite")]
+    reg -- "change" --> ctl["Controller: add, update, drain removed"]
+    reg -- "change" --> sup["Supervisor: start, restart, stop listeners"]
+    reg -- "current token" --> gh["GitHub client (rebuilt when URL or token change)"]
+
+    classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
+    class file,reg,ui,vault,db,ctl,sup,gh done
+```
+
+A removed scale set drains: its running environments finish, it gets no new ones, and its listener keeps running (with the last GitHub client and token, so job messages and runner removal still work) until the last environment is gone; then it disappears. It stays registered on GitHub (without runners) until deleted there.
 
 ## 2. Network and isolation
 
@@ -314,6 +375,18 @@ flowchart LR
     ghrm --> proxmoxlxc["internal/runtime/proxmoxlxc"]
     ghrm --> demo["internal/demo"]
     ghrm --> template["internal/template"]
+    ghrm --> settingsp["internal/settings"]
+    ghrm --> authp["internal/auth"]
+    ghrm --> metricsp["internal/metrics"]
+    ghrm --> backupp["internal/backup"]
+    settingsp --> secretsp["internal/secrets"]
+    settingsp --> store
+    secretsp --> store
+    authp --> store
+    api --> authp
+    api --> settingsp
+    metricsp --> controller
+    github --> settingsp
     template --> controller
     template --> layer["template/layer"]
     ghrm --> webui["web (embedded UI)"]
@@ -341,7 +414,7 @@ flowchart LR
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef testonly fill:#fff3bf,stroke:#e67700,color:#000
     classDef ext fill:#e7f5ff,stroke:#1971c2,color:#000
-    class ghrm,config,api,controller,ingest,github,proxmoxlxc,scheduler,environment,runtime,store,events,logs,proxmox,agentcmd,agent,ingestproto,demo,webui,template,layer done
+    class ghrm,config,api,controller,ingest,github,proxmoxlxc,scheduler,environment,runtime,store,events,logs,proxmox,agentcmd,agent,ingestproto,demo,webui,template,layer,settingsp,authp,metricsp,backupp,secretsp done
     class runtimetest,proxmoxtest testonly
     class scaleset ext
 ```
@@ -402,3 +475,24 @@ stateDiagram-v2
 A failed build never changes the active template. Only one build runs at a time. The bootstrap template is never deleted.
 
 Retention keeps the active version, the newest `keep - 1` versions that were active before (roll-back targets), the newest version that was never activated (awaiting review), and every pinned version. Other built versions are retired, and deleted once no environment uses them: neither a live environment recorded as cloned from the template nor a linked clone the hypervisor reports.
+
+## 8. Deployment
+
+`deploy/proxmox/install.sh` sets up a Proxmox VE host in one run; every step checks first, so it also resumes and upgrades (`--dry-run` shows what would change).
+
+```mermaid
+flowchart TD
+    pre["Proxmox VE 9.1+ and root"] --> acc["pool ghrm, roles GhrmRuntime and GhrmTemplates,<br/>user ghrm@pve, API token, ACLs"]
+    acc --> stor["template storage ghrm-tpl (dir, vztmpl)"]
+    stor --> net["SDN zone + VNet + subnet (DHCP, SNAT); dnsmasq"]
+    net --> fw["datacenter firewall on; security group:<br/>ingest, DHCP, no inbound, no private ranges"]
+    fw --> cp["control-plane LXC (Debian 13): LAN + job-network NICs"]
+    cp --> bin["ghrm + ghrm-agent from the release (SHA256SUMS),<br/>ghrm.yaml, admin token, token secret into the vault, service"]
+    bin --> tpl["bootstrap template (Ubuntu 24.04, Docker, runner, ghrm-agent)"]
+    tpl --> done(["prints the UI address and the setup token"])
+
+    classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
+    class pre,acc,stor,net,fw,cp,bin,tpl,done done
+```
+
+After the first sign-in, the operator adds a GitHub credential and a scale set and builds the first real template (Templates > Build now); ghrm then rebuilds templates on new releases by itself. The same image runs with Docker Compose (`deploy/docker/compose.yaml`) against a remote Proxmox host. A `v*` tag publishes the binaries, `SHA256SUMS`, the installer and the container image.

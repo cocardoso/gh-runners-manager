@@ -59,7 +59,7 @@ test("the command palette finds a job and opens it", async () => {
 test("the live indicator reflects the shared stream", async () => {
   mockApi();
   renderApp("/");
-  expect(await screen.findByRole("status", { name: "" })).toHaveTextContent("Connecting");
+  expect(await screen.findByText("Connecting")).toBeInTheDocument(); // after the session check
   act(() => FakeEventSource.last().open());
   expect(screen.getByText("Live")).toBeInTheDocument();
   act(() => FakeEventSource.last().fail());

@@ -11,11 +11,13 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/cocardoso/gh-runners-manager/internal/auth"
 	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
 	"github.com/cocardoso/gh-runners-manager/internal/runtime"
+	"github.com/cocardoso/gh-runners-manager/internal/settings"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 	"github.com/cocardoso/gh-runners-manager/internal/version"
 )
@@ -45,6 +47,14 @@ type Deps struct {
 	GitHubJobs GitHubJobs
 	// Templates builds and activates template versions (nil: read-only listing).
 	Templates TemplateService
+	// Auth signs users in; without it only the admin bearer token is accepted.
+	Auth *auth.Service
+	// Settings holds the editable credentials and scale sets (nil: read-only).
+	Settings *settings.Registry
+	// Metrics, when set, serves Prometheus metrics on /metrics (public, like /healthz).
+	Metrics http.Handler
+	// TestCredential checks a GitHub token and returns its login.
+	TestCredential func(ctx context.Context, token string) (string, error)
 }
 
 // Environment is the API view of an environment.
@@ -96,6 +106,10 @@ type ScaleSet struct {
 	WaitingSince time.Time `json:"waiting_since"`
 	Listening    bool      `json:"listening"`
 	ListenError  string    `json:"listen_error,omitempty"`
+	// Removed scale sets are listed while their environments drain.
+	Removed  bool              `json:"removed"`
+	Source   string            `json:"source,omitempty" enum:"file,ui,"`
+	Settings *ScaleSetSettings `json:"settings,omitempty"`
 }
 
 func toEnvironment(e store.Environment) Environment {
@@ -152,8 +166,14 @@ func New(d Deps) http.Handler {
 			}{}
 			out.Body.ScaleSets = []ScaleSet{}
 			for _, s := range d.Controller.ScaleSets(ctx) {
-				out.Body.ScaleSets = append(out.Body.ScaleSets, ScaleSet{Name: s.Name, GitHubID: s.GitHubID, Desired: s.Desired, Live: s.Live,
-					Waiting: s.Waiting, WaitingSince: s.WaitingSince, Listening: s.Listening, ListenError: s.ListenError})
+				v := ScaleSet{Name: s.Name, GitHubID: s.GitHubID, Desired: s.Desired, Live: s.Live,
+					Waiting: s.Waiting, WaitingSince: s.WaitingSince, Listening: s.Listening, ListenError: s.ListenError, Removed: s.Removed}
+				if d.Settings != nil {
+					if ss, ok := d.Settings.ScaleSet(s.Name); ok {
+						v.Source, v.Settings = ss.Source, toScaleSetSettings(ss.ScaleSet)
+					}
+				}
+				out.Body.ScaleSets = append(out.Body.ScaleSets, v)
 			}
 			return out, nil
 		})
@@ -204,13 +224,7 @@ func New(d Deps) http.Handler {
 
 	huma.Register(a, huma.Operation{OperationID: "destroy-environment", Method: http.MethodPost, Path: "/api/v1/environments/{id}/destroy",
 		Summary: "Destroy an environment (admin)", Tags: []string{"environments"}, DefaultStatus: http.StatusAccepted},
-		func(ctx context.Context, in *struct {
-			ID            string `path:"id"`
-			Authorization string `header:"Authorization"`
-		}) (*struct{}, error) {
-			if err := requireAdmin(d, in.Authorization); err != nil {
-				return nil, err
-			}
+		func(ctx context.Context, in *idInput) (*struct{}, error) {
 			e, err := d.Store.GetEnvironment(ctx, in.ID)
 			if errors.Is(err, store.ErrNotFound) {
 				return nil, huma.Error404NotFound("environment not found")
@@ -218,7 +232,7 @@ func New(d Deps) http.Handler {
 			if err != nil {
 				return nil, err
 			}
-			_, _ = d.Recorder.Warn(ctx, "audit.destroy", "destroy requested through the API",
+			audit(ctx, d, "destroy", "destroy requested by "+Actor(ctx),
 				events.Refs{ScaleSet: e.ScaleSet, EnvironmentID: e.ID, JobID: e.JobID}, nil)
 			if err := d.Controller.RequestDestroy(ctx, in.ID); err != nil {
 				return nil, huma.Error409Conflict(err.Error())
@@ -344,6 +358,8 @@ func New(d Deps) http.Handler {
 
 	registerOverview(a, d)
 	registerTemplates(a, d)
+	registerAuth(a, d)
+	registerSettingsEdit(a, d)
 
 	s := &sse{d: d}
 	mux.HandleFunc("GET /api/v1/events/stream", s.events)
@@ -362,12 +378,15 @@ func New(d Deps) http.Handler {
 		}
 		_, _ = w.Write([]byte("ready\n"))
 	})
+	if d.Metrics != nil {
+		mux.Handle("GET /metrics", d.Metrics)
+	}
 	if d.UI != nil {
 		mux.Handle("/", d.UI) // the UI handler answers 404 for unknown /api/ paths
 	}
 
 	// follow=true on the logs endpoint switches to SSE before huma sees the request.
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return authenticate(d, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Query().Get("follow") == "true" && strings.HasPrefix(r.URL.Path, "/api/v1/environments/") {
 			if parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/environments/"), "/"); len(parts) == 3 && parts[1] == "logs" {
 				s.logs(w, r, parts[0], parts[2])
@@ -375,5 +394,5 @@ func New(d Deps) http.Handler {
 			}
 		}
 		mux.ServeHTTP(w, r)
-	})
+	}))
 }

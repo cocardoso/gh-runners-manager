@@ -265,7 +265,6 @@ export function TemplateDetailPage() {
       ) : (
         <BuildTab t={t} />
       )}
-      {admin.dialog}
     </Page>
   );
 }

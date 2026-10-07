@@ -49,48 +49,25 @@ function detailRoutes(destroy: (u: URL) => unknown) {
   };
 }
 
-test("destroying asks for the admin token, then for the name, and sends the token", async () => {
+test("destroying asks for the name and sends the session's CSRF token", async () => {
   const calls = mockApi(detailRoutes(() => new Response(null, { status: 202 })));
   const user = userEvent.setup();
   renderApp("/environments/env-run");
   await clickDestroy(user);
-  await user.type(await screen.findByLabelText("Admin token"), "s3cret");
-  await user.click(screen.getByRole("button", { name: "Continue" }));
   await user.type(await screen.findByRole("textbox", { name: "Type env-run to confirm deletion" }), "env-run");
   await user.click(screen.getByRole("button", { name: "Destroy environment" }));
   await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
   const post = calls.find((c) => c.method === "POST")!;
-  expect(post.headers.get("Authorization")).toBe("Bearer s3cret");
-  expect(sessionStorage.getItem("ghrm.adminToken")).toBe("s3cret");
+  expect(post.headers.get("X-CSRF-Token")).toBe("csrf-1");
   expect(await screen.findByText("Destroy requested")).toBeInTheDocument();
 });
 
-test("a rejected token is forgotten and the error is shown", async () => {
-  sessionStorage.setItem("ghrm.adminToken", "wrong");
-  mockApi(detailRoutes(() => new Response(JSON.stringify({ detail: "invalid admin token" }), { status: 401, headers: { "Content-Type": "application/json" } })));
+test("a refused destroy shows the server's reason", async () => {
+  mockApi(detailRoutes(() => new Response(JSON.stringify({ detail: "environment env-run is destroyed" }), { status: 409, headers: { "Content-Type": "application/json" } })));
   const user = userEvent.setup();
   renderApp("/environments/env-run");
   await clickDestroy(user);
   await user.type(await screen.findByRole("textbox", { name: "Type env-run to confirm deletion" }), "env-run");
   await user.click(screen.getByRole("button", { name: "Destroy environment" }));
-  expect(await screen.findByText(/invalid admin token/)).toBeInTheDocument();
-  expect(sessionStorage.getItem("ghrm.adminToken")).toBeNull();
-});
-
-test("destroy is disabled when the server has no admin token", async () => {
-  mockApi({ ...detailRoutes(() => ({})), "/api/v1/settings": { version: "dev", admin_actions: false, proxmox: {}, ingest: {}, capacity: {}, scale_sets: [] } });
-  renderApp("/environments/env-run");
-  expect(await screen.findByRole("button", { name: "Destroy" })).toBeDisabled();
-});
-
-test("after a rejected token the next attempt asks for a new one", async () => {
-  sessionStorage.setItem("ghrm.adminToken", "wrong");
-  mockApi(detailRoutes(() => new Response(JSON.stringify({ detail: "invalid admin token" }), { status: 401, headers: { "Content-Type": "application/json" } })));
-  const user = userEvent.setup();
-  renderApp("/environments/env-run");
-  await clickDestroy(user);
-  await user.type(await screen.findByRole("textbox", { name: "Type env-run to confirm deletion" }), "env-run");
-  await user.click(screen.getByRole("button", { name: "Destroy environment" }));
-  expect(await screen.findByLabelText("Admin token")).toBeInTheDocument();
-  expect(screen.getByText(/invalid admin token/)).toBeInTheDocument();
+  expect(await screen.findByText(/environment env-run is destroyed/)).toBeInTheDocument();
 });

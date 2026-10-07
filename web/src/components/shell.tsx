@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { Button, LinkProvider, Sidebar, Tooltip, useSidebar } from "@cloudflare/kumo";
-import { Outlet, useRouterState } from "@tanstack/react-router";
-import { ListIcon, MagnifyingGlassIcon, MonitorIcon, MoonIcon, SunIcon } from "@phosphor-icons/react";
+import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { ListIcon, MagnifyingGlassIcon, MonitorIcon, MoonIcon, SunIcon, UserCircleIcon } from "@phosphor-icons/react";
+import { useSession } from "@/api/queries";
+import { LoginPage, SetupPage } from "@/pages/sign-in";
+import { ErrorState, Loading } from "./common";
 import { AppLink } from "./app-link";
 import { GlobalSearch } from "./command-palette";
 import { LiveIndicator } from "./live-indicator";
@@ -37,7 +40,28 @@ function Logo() {
   );
 }
 
+function AccountButton({ username }: { username?: string }) {
+  const navigate = useNavigate();
+  const label = username ? `Account: ${username}` : "Account";
+  return (
+    <Tooltip
+      content={label}
+      render={<Button variant="ghost" shape="square" icon={UserCircleIcon} aria-label={label} onClick={() => void navigate({ to: "/account" })} />}
+    />
+  );
+}
+
+/** Signs the visitor in (or creates the first account) before showing the app. */
 export function Shell() {
+  const session = useSession();
+  if (session.isLoading) return <div className="p-6"><Loading /></div>;
+  if (session.error || !session.data) return <div className="p-6"><ErrorState error={session.error} /></div>;
+  if (session.data.state === "setup") return <SetupPage />;
+  if (session.data.state !== "signed_in") return <LoginPage />;
+  return <AppShell username={session.data.username} />;
+}
+
+function AppShell({ username }: { username?: string }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [searchOpen, setSearchOpen] = useState(false);
   return (
@@ -79,6 +103,7 @@ export function Shell() {
             <div className="ml-auto flex items-center gap-1">
               <LiveIndicator />
               <ThemeToggle />
+              <AccountButton username={username} />
             </div>
           </header>
           <main className="min-w-0 flex-1 p-3 md:p-6">

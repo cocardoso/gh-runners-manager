@@ -114,12 +114,15 @@ func TestLoadErrors(t *testing.T) {
 	}
 }
 
-func TestLoadRequiresSecret(t *testing.T) {
+func TestSecretIsRequiredOnceTheVaultIsConsulted(t *testing.T) {
 	t.Setenv(EnvProxmoxTokenSecret, "")
 	dir := t.TempDir()
 	body := strings.Replace(validYAML, "  token_secret_file: %s\n", "", 1)
-	_, err := Load(writeFile(t, dir, "ghrm.yaml", body))
-	if err == nil || !strings.Contains(err.Error(), "token secret missing") {
+	cfg, err := Load(writeFile(t, dir, "ghrm.yaml", body))
+	if err != nil {
+		t.Fatalf("load = %v; the vault may still hold the secret", err)
+	}
+	if err := cfg.ValidateSecrets(); err == nil || !strings.Contains(err.Error(), "token secret missing") {
 		t.Fatalf("err = %v, want token secret missing", err)
 	}
 }

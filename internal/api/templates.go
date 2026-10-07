@@ -2,15 +2,14 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/cocardoso/gh-runners-manager/internal/events"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 	"github.com/cocardoso/gh-runners-manager/internal/template"
 )
@@ -64,18 +63,6 @@ func (d Deps) toTemplate(ctx context.Context, t store.Template) Template {
 	return out
 }
 
-// requireAdmin checks the bearer admin token of a mutating call.
-func requireAdmin(d Deps, authorization string) error {
-	if d.AdminToken == "" {
-		return huma.Error403Forbidden("mutating calls are disabled: no admin token is configured")
-	}
-	token, _ := strings.CutPrefix(authorization, "Bearer ")
-	if subtle.ConstantTimeCompare([]byte(token), []byte(d.AdminToken)) != 1 {
-		return huma.Error401Unauthorized("invalid admin token")
-	}
-	return nil
-}
-
 func templateError(err error) error {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -125,15 +112,9 @@ func registerTemplates(a huma.API, d Deps) {
 			return &struct{ Body Template }{Body: d.toTemplate(ctx, t)}, nil
 		})
 
-	type adminIn struct {
-		Authorization string `header:"Authorization"`
-	}
 	huma.Register(a, huma.Operation{OperationID: "build-template", Method: http.MethodPost, Path: "/api/v1/templates/build",
 		Summary: "Build a new template version (admin)", Tags: []string{"templates"}, DefaultStatus: http.StatusAccepted},
-		func(ctx context.Context, in *adminIn) (*struct{ Body Template }, error) {
-			if err := requireAdmin(d, in.Authorization); err != nil {
-				return nil, err
-			}
+		func(ctx context.Context, _ *struct{}) (*struct{ Body Template }, error) {
 			if d.Templates == nil {
 				return nil, templateError(template.ErrDisabled)
 			}
@@ -141,25 +122,20 @@ func registerTemplates(a huma.API, d Deps) {
 			if err != nil {
 				return nil, templateError(err)
 			}
+			audit(ctx, d, "template_build", "template build "+t.ID+" requested by "+Actor(ctx), events.Refs{}, map[string]any{"template_id": t.ID})
 			return &struct{ Body Template }{Body: d.toTemplate(ctx, t)}, nil
 		})
 
-	type idAdminIn struct {
-		ID            string `path:"id"`
-		Authorization string `header:"Authorization"`
-	}
 	huma.Register(a, huma.Operation{OperationID: "activate-template", Method: http.MethodPost, Path: "/api/v1/templates/{id}/activate",
 		Summary: "Activate a ready version, or roll back to it (admin)", Tags: []string{"templates"}, DefaultStatus: http.StatusAccepted},
-		func(ctx context.Context, in *idAdminIn) (*struct{}, error) {
-			if err := requireAdmin(d, in.Authorization); err != nil {
-				return nil, err
-			}
+		func(ctx context.Context, in *idIn) (*struct{}, error) {
 			if d.Templates == nil {
 				return nil, templateError(template.ErrDisabled)
 			}
 			if err := d.Templates.Activate(ctx, in.ID); err != nil {
 				return nil, templateError(err)
 			}
+			audit(ctx, d, "template_activate", "template "+in.ID+" activated by "+Actor(ctx), events.Refs{}, map[string]any{"template_id": in.ID})
 			return &struct{}{}, nil
 		})
 	for _, pin := range []bool{true, false} {
@@ -169,16 +145,14 @@ func registerTemplates(a huma.API, d Deps) {
 		}
 		huma.Register(a, huma.Operation{OperationID: name + "-template", Method: http.MethodPost, Path: "/api/v1/templates/{id}/" + name,
 			Summary: "Pin or unpin a version; a pinned version blocks automatic activation (admin)", Tags: []string{"templates"}, DefaultStatus: http.StatusNoContent},
-			func(ctx context.Context, in *idAdminIn) (*struct{}, error) {
-				if err := requireAdmin(d, in.Authorization); err != nil {
-					return nil, err
-				}
+			func(ctx context.Context, in *idIn) (*struct{}, error) {
 				if d.Templates == nil {
 					return nil, templateError(template.ErrDisabled)
 				}
 				if err := d.Templates.Pin(ctx, in.ID, pin); err != nil {
 					return nil, templateError(err)
 				}
+				audit(ctx, d, "template_"+name, "template "+in.ID+" "+name+"ned by "+Actor(ctx), events.Refs{}, map[string]any{"template_id": in.ID})
 				return &struct{}{}, nil
 			})
 	}

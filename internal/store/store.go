@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"time"
 
 	"github.com/pressly/goose/v3"
@@ -56,6 +57,14 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if _, err := provider.Up(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
+	// The database holds sealed secrets and session hashes: owner only, including the
+	// WAL files SQLite creates with the default umask (and files from older versions).
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(p, 0o600); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			_ = db.Close()
+			return nil, fmt.Errorf("store: protect %s: %w", p, err)
+		}
 	}
 	return &Store{db: db}, nil
 }

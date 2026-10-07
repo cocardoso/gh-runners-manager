@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -228,5 +230,133 @@ func TestListEventsNewestAndBefore(t *testing.T) {
 	window, _ := s.ListEvents(ctx, EventFilter{AfterSeq: 1, BeforeSeq: 4})
 	if len(window) != 2 || window[0].Seq != 2 {
 		t.Fatalf("window = %+v; want seq 2, 3", window)
+	}
+}
+
+func TestSecretsAndMeta(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	if _, err := s.GetSecret(ctx, "a"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing secret: %v", err)
+	}
+	if err := s.PutSecret(ctx, "b", []byte{1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.PutSecret(ctx, "a", []byte{3})
+	_ = s.PutSecret(ctx, "a", []byte{4})
+	if got, err := s.GetSecret(ctx, "a"); err != nil || len(got) != 1 || got[0] != 4 {
+		t.Fatalf("a = %v, %v", got, err)
+	}
+	if names, _ := s.ListSecretNames(ctx); strings.Join(names, ",") != "a,b" {
+		t.Fatalf("names = %v", names)
+	}
+	_ = s.DeleteSecret(ctx, "a")
+	if _, err := s.GetSecret(ctx, "a"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("deleted secret still there")
+	}
+	if _, err := s.GetMeta(ctx, "k"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing meta: %v", err)
+	}
+	_ = s.PutMeta(ctx, "k", "v1")
+	_ = s.PutMeta(ctx, "k", "v2")
+	if v, err := s.GetMeta(ctx, "k"); v != "v2" || err != nil {
+		t.Fatalf("meta = %q, %v", v, err)
+	}
+}
+
+func TestUsersAndSessions(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	now := time.UnixMilli(time.Now().UnixMilli())
+	if n, _ := s.CountUsers(ctx); n != 0 {
+		t.Fatalf("users = %d", n)
+	}
+	u := User{ID: "u1", Username: "admin", PasswordHash: "h1", CreatedAt: now, PasswordChangedAt: now}
+	if err := s.CreateUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, User{ID: "u2", Username: "admin", PasswordHash: "h"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate username: %v", err)
+	}
+	if got, err := s.GetUserByName(ctx, "admin"); err != nil || got.ID != "u1" || got.PasswordHash != "h1" {
+		t.Fatalf("by name = %+v, %v", got, err)
+	}
+	if _, err := s.GetUserByName(ctx, "nobody"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown user: %v", err)
+	}
+	_ = s.UpdatePassword(ctx, "u1", "h2", now.Add(time.Minute))
+	if got, _ := s.GetUser(ctx, "u1"); got.PasswordHash != "h2" || !got.PasswordChangedAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("after update = %+v", got)
+	}
+	for _, id := range []string{"s1", "s2"} {
+		if err := s.CreateSession(ctx, Session{IDHash: id, UserID: "u1", CSRF: "c-" + id, CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = s.CreateSession(ctx, Session{IDHash: "old", UserID: "u1", CSRF: "c", CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(-time.Second)})
+	if got, err := s.GetSession(ctx, "s1"); err != nil || got.CSRF != "c-s1" || got.UserID != "u1" {
+		t.Fatalf("session = %+v, %v", got, err)
+	}
+	_ = s.TouchSession(ctx, "s1", now.Add(time.Minute), now.Add(2*time.Hour))
+	if got, _ := s.GetSession(ctx, "s1"); !got.ExpiresAt.Equal(now.Add(2 * time.Hour)) {
+		t.Fatalf("touched = %+v", got)
+	}
+	if n, err := s.DeleteExpiredSessions(ctx, now); err != nil || n != 1 {
+		t.Fatalf("expired deleted = %d, %v", n, err)
+	}
+	_ = s.DeleteUserSessions(ctx, "u1", "s1")
+	if _, err := s.GetSession(ctx, "s2"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("other sessions must be gone")
+	}
+	_ = s.DeleteSession(ctx, "s1")
+	if _, err := s.GetSession(ctx, "s1"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("deleted session still there")
+	}
+}
+
+// The database holds sealed secrets and session hashes: only its owner may read it.
+func TestDatabaseFilesArePrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ghrm.db")
+	s, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.PutMeta(context.Background(), "k", "v") // creates the WAL
+	defer s.Close()
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		st, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		if st.Mode().Perm()&0o077 != 0 {
+			t.Errorf("%s mode = %v, want 0600", filepath.Base(p), st.Mode().Perm())
+		}
+	}
+}
+
+// A credential and its sealed token are written together or not at all.
+func TestCredentialAndSecretAreWrittenTogether(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	if err := s.PutCredentialWithSecret(ctx, "home", "github-pat", "github/home", []byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	if recs, _ := s.ListCredentialRecords(ctx); len(recs) != 1 {
+		t.Fatalf("records = %v", recs)
+	}
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE secrets`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutCredentialWithSecret(ctx, "work", "github-pat", "github/work", []byte{2}); err == nil {
+		t.Fatal("want an error when the secret cannot be stored")
+	}
+	if recs, _ := s.ListCredentialRecords(ctx); len(recs) != 1 {
+		t.Fatalf("records = %v; the failed credential must not be recorded", recs)
+	}
+	if err := s.DeleteCredentialWithSecret(ctx, "home", "github/home"); err == nil {
+		t.Fatal("want an error when the secret cannot be deleted")
+	}
+	if recs, _ := s.ListCredentialRecords(ctx); len(recs) != 1 {
+		t.Fatal("the record must stay when its secret could not be deleted")
 	}
 }

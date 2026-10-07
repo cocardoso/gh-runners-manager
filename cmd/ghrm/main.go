@@ -20,6 +20,7 @@ Commands:
   serve     Run the control plane
   demo      Serve the API and UI backed by a simulated fleet
   openapi   Print the API's OpenAPI document
+  secret    Manage the secrets sealed in the database (set, delete, list)
 `
 
 func main() {
@@ -46,6 +47,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return serve(ctx, args[1:], stdout, stderr)
 	case "smoke":
 		return smoke(ctx, args[1:], stdout, stderr)
+	case "secret":
+		return secretCmd(ctx, args[1:], os.Stdin, stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

@@ -3,11 +3,13 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -20,15 +22,18 @@ const EnvProxmoxTokenSecret = "GHRM_PROXMOX_TOKEN_SECRET"
 
 // Config is the root of the ghrm configuration file.
 type Config struct {
-	DataDir        string     `yaml:"data_dir"`
-	Listen         string     `yaml:"listen"`
-	AdminTokenFile string     `yaml:"admin_token_file"`
-	Proxmox        Proxmox    `yaml:"proxmox"`
-	Ingest         Ingest     `yaml:"ingest"`
-	GitHub         GitHub     `yaml:"github"`
-	Capacity       Capacity   `yaml:"capacity"`
-	ScaleSets      []ScaleSet `yaml:"scale_sets"`
-	Templates      Templates  `yaml:"templates"`
+	DataDir        string `yaml:"data_dir"`
+	Listen         string `yaml:"listen"`
+	AdminTokenFile string `yaml:"admin_token_file"`
+	// SecretKeyFile holds the key that seals secrets in the database (default <data_dir>/secret.key).
+	SecretKeyFile string     `yaml:"secret_key_file"`
+	Proxmox       Proxmox    `yaml:"proxmox"`
+	Ingest        Ingest     `yaml:"ingest"`
+	GitHub        GitHub     `yaml:"github"`
+	Capacity      Capacity   `yaml:"capacity"`
+	ScaleSets     []ScaleSet `yaml:"scale_sets"`
+	Templates     Templates  `yaml:"templates"`
+	Backup        Backup     `yaml:"backup"`
 
 	// AdminToken is read from AdminTokenFile; empty disables mutating API calls.
 	AdminToken string `yaml:"-"`
@@ -72,6 +77,43 @@ type ScaleSet struct {
 	Cores                int      `yaml:"cores"`
 	MemoryMB             int      `yaml:"memory_mb"`
 	KeepOnFailureMinutes int      `yaml:"keep_on_failure_minutes"`
+}
+
+// ApplyDefaults fills the unset sizes of a scale set.
+func (s *ScaleSet) ApplyDefaults() {
+	if s.RunnerGroup == "" {
+		s.RunnerGroup = "default"
+	}
+	if s.MaxConcurrent == 0 {
+		s.MaxConcurrent = 2
+	}
+	if s.Cores == 0 {
+		s.Cores = 2
+	}
+	if s.MemoryMB == 0 {
+		s.MemoryMB = 4096
+	}
+}
+
+// ValidName reports whether name is a valid scale set (or credential) name.
+func ValidName(name string) bool { return scaleSetNameRe.MatchString(name) }
+
+// Validate checks one scale set; credentialExists says whether a credential name is known.
+func (s ScaleSet) Validate(credentialExists func(string) bool) error {
+	var errs []error
+	if !scaleSetNameRe.MatchString(s.Name) {
+		errs = append(errs, fmt.Errorf("scale set name %q must match %s", s.Name, scaleSetNameRe))
+	}
+	if _, _, err := s.OwnerRepo(); err != nil {
+		errs = append(errs, err)
+	}
+	if !credentialExists(s.Credential) {
+		errs = append(errs, fmt.Errorf("scale set %s: unknown credential %q", s.Name, s.Credential))
+	}
+	if s.MaxConcurrent < 1 || s.Cores < 1 || s.MemoryMB < 256 {
+		errs = append(errs, fmt.Errorf("scale set %s: max_concurrent, cores and memory_mb must be positive (memory at least 256)", s.Name))
+	}
+	return errors.Join(errs...)
 }
 
 // OwnerRepo splits the scale set URL. repo is empty for organization scale sets.
@@ -168,8 +210,9 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 // Std returns the value as a time.Duration.
 func (d Duration) Std() time.Duration { return time.Duration(d) }
 
-// Load reads, defaults, resolves secrets for and validates the configuration at path.
-func Load(path string) (*Config, error) {
+// Read parses the configuration at path and applies defaults, without validating it or
+// resolving secrets (commands that manage the secrets themselves use it).
+func Read(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
@@ -181,6 +224,30 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	cfg.applyDefaults()
+	return cfg, nil
+}
+
+// Backup configures the daily database copy (spec §12.3).
+type Backup struct {
+	Dir  string `yaml:"dir"`  // default <data_dir>/backups
+	Keep int    `yaml:"keep"` // copies kept, default 7
+	Hour *int   `yaml:"hour"` // local hour of the copy, default 3
+}
+
+// AtHour returns the configured hour, 3 when unset.
+func (b Backup) AtHour() int {
+	if b.Hour == nil {
+		return 3
+	}
+	return *b.Hour
+}
+
+// Load reads, defaults, resolves secrets for and validates the configuration at path.
+func Load(path string) (*Config, error) {
+	cfg, err := Read(path)
+	if err != nil {
+		return nil, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -197,6 +264,15 @@ func (c *Config) applyDefaults() {
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:8080"
 	}
+	if c.SecretKeyFile == "" {
+		c.SecretKeyFile = filepath.Join(c.DataDir, "secret.key")
+	}
+	if c.Backup.Dir == "" {
+		c.Backup.Dir = filepath.Join(c.DataDir, "backups")
+	}
+	if c.Backup.Keep == 0 {
+		c.Backup.Keep = 7
+	}
 	cp := &c.Capacity
 	if cp.MaxEnvironments == 0 {
 		cp.MaxEnvironments = 4
@@ -211,19 +287,7 @@ func (c *Config) applyDefaults() {
 		cp.MaxDiskPercent = 85
 	}
 	for i := range c.ScaleSets {
-		ss := &c.ScaleSets[i]
-		if ss.RunnerGroup == "" {
-			ss.RunnerGroup = "default"
-		}
-		if ss.MaxConcurrent == 0 {
-			ss.MaxConcurrent = 2
-		}
-		if ss.Cores == 0 {
-			ss.Cores = 2
-		}
-		if ss.MemoryMB == 0 {
-			ss.MemoryMB = 4096
-		}
+		c.ScaleSets[i].ApplyDefaults()
 	}
 	p := &c.Proxmox
 	if p.VMIDRange == (VMIDRange{}) {
@@ -275,8 +339,7 @@ func (c *Config) applyDefaults() {
 func (c *Config) resolveSecrets() error {
 	for i := range c.GitHub.Credentials {
 		cr := &c.GitHub.Credentials[i]
-		env := "GHRM_GITHUB_TOKEN_" + strings.ToUpper(strings.ReplaceAll(cr.Name, "-", "_"))
-		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+		if v := strings.TrimSpace(os.Getenv(credentialEnv(cr.Name))); v != "" {
 			cr.Token = v
 			continue
 		}
@@ -301,7 +364,7 @@ func (c *Config) resolveSecrets() error {
 		return nil
 	}
 	if p.TokenSecretFile == "" {
-		return errors.New("proxmox: token secret missing: set proxmox.token_secret_file or " + EnvProxmoxTokenSecret)
+		return nil // the vault may hold it (ResolveVaultSecrets)
 	}
 	raw, err := os.ReadFile(p.TokenSecretFile)
 	if err != nil {
@@ -312,6 +375,56 @@ func (c *Config) resolveSecrets() error {
 		return fmt.Errorf("proxmox: token_secret_file %s is empty", p.TokenSecretFile)
 	}
 	return nil
+}
+
+// Vault names of the secrets the configuration can take from the database.
+const (
+	VaultProxmoxTokenSecret = "proxmox/token-secret"
+	VaultGitHubPrefix       = "github/"
+)
+
+// ResolveVaultSecrets fills the secrets that neither an environment variable nor a
+// file supplied from the vault (get), which `ghrm secret set` and the UI write.
+func (c *Config) ResolveVaultSecrets(ctx context.Context, get func(ctx context.Context, name string) (string, bool, error)) error {
+	if c.Proxmox.TokenSecret == "" {
+		v, _, err := get(ctx, VaultProxmoxTokenSecret)
+		if err != nil {
+			return err
+		}
+		c.Proxmox.TokenSecret = strings.TrimSpace(v)
+	}
+	for i := range c.GitHub.Credentials {
+		cr := &c.GitHub.Credentials[i]
+		if cr.Token != "" {
+			continue
+		}
+		v, _, err := get(ctx, VaultGitHubPrefix+cr.Name)
+		if err != nil {
+			return err
+		}
+		cr.Token = strings.TrimSpace(v)
+	}
+	return nil
+}
+
+// ValidateSecrets checks, after ResolveVaultSecrets, that every secret has a value.
+func (c *Config) ValidateSecrets() error {
+	var errs []error
+	if c.Proxmox.TokenSecret == "" {
+		errs = append(errs, fmt.Errorf("proxmox: token secret missing: set proxmox.token_secret_file, %s, or run \"ghrm secret set %s\"",
+			EnvProxmoxTokenSecret, VaultProxmoxTokenSecret))
+	}
+	for _, cr := range c.GitHub.Credentials {
+		if cr.Token == "" {
+			errs = append(errs, fmt.Errorf("github credential %s has no token: set token_file, %s, or run \"ghrm secret set %s%s\"",
+				cr.Name, credentialEnv(cr.Name), VaultGitHubPrefix, cr.Name))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func credentialEnv(name string) string {
+	return "GHRM_GITHUB_TOKEN_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 }
 
 var (
@@ -335,31 +448,16 @@ func (c *Config) ValidateServe() error {
 			errs = append(errs, errors.New("github.credentials: name is required"))
 			continue
 		}
-		if cr.Token == "" {
-			errs = append(errs, fmt.Errorf("github credential %s has no token (token_file or GHRM_GITHUB_TOKEN_%s)", cr.Name, strings.ToUpper(strings.ReplaceAll(cr.Name, "-", "_"))))
-		}
 		creds[cr.Name] = true
-	}
-	if len(c.ScaleSets) == 0 {
-		errs = append(errs, errors.New("scale_sets: at least one scale set is required"))
 	}
 	seen := map[string]bool{}
 	for _, ss := range c.ScaleSets {
-		if !scaleSetNameRe.MatchString(ss.Name) {
-			errs = append(errs, fmt.Errorf("scale set name %q must match %s", ss.Name, scaleSetNameRe))
-		}
 		if seen[ss.Name] {
 			errs = append(errs, fmt.Errorf("scale set name %q is duplicated", ss.Name))
 		}
 		seen[ss.Name] = true
-		if _, _, err := ss.OwnerRepo(); err != nil {
+		if err := ss.Validate(func(name string) bool { return creds[name] }); err != nil {
 			errs = append(errs, err)
-		}
-		if !creds[ss.Credential] {
-			errs = append(errs, fmt.Errorf("scale set %s: unknown credential %q", ss.Name, ss.Credential))
-		}
-		if ss.MaxConcurrent < 1 || ss.Cores < 1 || ss.MemoryMB < 256 {
-			errs = append(errs, fmt.Errorf("scale set %s: max_concurrent, cores and memory_mb must be positive (memory at least 256)", ss.Name))
 		}
 	}
 	return errors.Join(errs...)

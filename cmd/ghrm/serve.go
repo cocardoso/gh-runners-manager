@@ -17,14 +17,18 @@ import (
 	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/api"
+	"github.com/cocardoso/gh-runners-manager/internal/backup"
 	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
 	"github.com/cocardoso/gh-runners-manager/internal/github"
 	"github.com/cocardoso/gh-runners-manager/internal/ingest"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
+	"github.com/cocardoso/gh-runners-manager/internal/metrics"
 	"github.com/cocardoso/gh-runners-manager/internal/proxmox"
 	"github.com/cocardoso/gh-runners-manager/internal/runtime/proxmoxlxc"
+	"github.com/cocardoso/gh-runners-manager/internal/secrets"
+	"github.com/cocardoso/gh-runners-manager/internal/settings"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 	"github.com/cocardoso/gh-runners-manager/internal/template"
 	"github.com/cocardoso/gh-runners-manager/internal/version"
@@ -79,6 +83,16 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 	defer db.Close()
+	vault, err := secrets.OpenVault(ctx, db, cfg.SecretKeyFile)
+	if err != nil {
+		return err
+	}
+	if err := cfg.ResolveVaultSecrets(ctx, vault.Get); err != nil {
+		return err
+	}
+	if err := cfg.ValidateSecrets(); err != nil {
+		return err
+	}
 
 	advertise, _ := url.Parse(cfg.Ingest.AdvertiseURL)
 	cert, fingerprint, err := ingest.LoadOrCreateCert(filepath.Join(cfg.DataDir, "tls"), []string{advertise.Hostname()})
@@ -107,8 +121,16 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		_, _ = rec.Warn(wctx, "proxmox.task_warnings",
 			fmt.Sprintf("Proxmox %s of %d finished with warnings; check the host for leftovers", w.Type, w.VMID), refs, data)
 	}
+	signIn, err := newAuth(ctx, db, cfg.DataDir, logger)
+	if err != nil {
+		return err
+	}
 	logStore := logs.New(filepath.Join(cfg.DataDir, "logs"), db)
-	gh := github.New(cfg, logger)
+	reg, err := settings.New(ctx, cfg, db, vault)
+	if err != nil {
+		return err
+	}
+	gh := github.New(reg, logger)
 	ctl := controller.New(controller.Deps{Store: db, Recorder: rec, Runtime: rt, GitHub: gh, Logs: logStore, Config: cfg,
 		IngestURL: cfg.Ingest.AdvertiseURL, IngestFingerprint: fingerprint})
 	tpl := template.NewService(template.Deps{Store: db, Recorder: rec, Logs: logStore, Runtime: rt, Environments: ctl,
@@ -118,25 +140,62 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	}
 	tpl.Recover(ctx)
 	ctl.SetTemplates(tpl, tpl)
+	mtr := metrics.New(db, ctl, version.Version)
+	ctl.SetStages(mtr)
 
 	_, _ = rec.Info(ctx, "control_plane.started", "ghrm "+version.Version+" started", events.Refs{},
-		map[string]any{"ingest_fingerprint": fingerprint, "scale_sets": len(cfg.ScaleSets)})
+		map[string]any{"ingest_fingerprint": fingerprint, "scale_sets": len(reg.ScaleSets())})
 	logger.Info("starting", "version", version.Version, "listen", cfg.Listen, "ingest", cfg.Ingest.Listen, "ingest_fingerprint", fingerprint)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var wg sync.WaitGroup
-	for _, ss := range cfg.ScaleSets {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			listenLoop(ctx, ss, gh, ctl, db, rec, logger)
-		}()
+	// Scale sets come from the file and the UI; listeners follow every change.
+	sup := newSupervisor(func(ctx context.Context, ss config.ScaleSet) { listenLoop(ctx, ss, gh, ctl, db, rec, logger) })
+	// Removed scale sets keep their listener while they drain (job messages, runner
+	// removal); a periodic pass stops it once they are empty.
+	applyScaleSets := func() {
+		list := reg.ScaleSetConfigs()
+		ctl.UpdateScaleSets(list)
+		sup.Reconcile(ctx, append(list, ctl.Draining(ctx)...))
 	}
+	applyScaleSets()
+	changes, unsubscribe := reg.Subscribe()
+	defer unsubscribe()
+	drainTick := time.NewTicker(30 * time.Second)
+	defer drainTick.Stop()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-changes:
+				applyScaleSets()
+			case <-drainTick.C:
+				applyScaleSets()
+			}
+		}
+	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		ctl.Run(ctx)
+	}()
+	bk := &backup.Backup{Store: db, Dir: cfg.Backup.Dir, Keep: cfg.Backup.Keep, Hour: cfg.Backup.AtHour(),
+		Done: func(path string, err error) {
+			if err != nil {
+				logger.Error("database backup failed", "error", err)
+				_, _ = rec.Error(context.WithoutCancel(ctx), "backup.failed", "database backup failed: "+err.Error(), events.Refs{}, nil)
+				return
+			}
+			_, _ = rec.Info(context.WithoutCancel(ctx), "backup.done", "database copied to "+path, events.Refs{}, map[string]any{"path": path})
+		}}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		bk.Run(ctx)
 	}()
 	if cfg.Templates.Enabled() {
 		wg.Add(1)
@@ -160,7 +219,8 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		BaseContext: func(net.Listener) context.Context { return baseCtx },
 		Addr:        cfg.Listen,
 		Handler: api.New(api.Deps{Store: db, Recorder: rec, Logs: logStore, Controller: ctl, AdminToken: cfg.AdminToken,
-			Config: cfg, Capacity: rt.Capacity, GitHubJobs: gh, UI: uiHandler(), Templates: tpl,
+			Config: cfg, Capacity: rt.Capacity, GitHubJobs: gh, UI: uiHandler(), Templates: tpl, Auth: signIn,
+			Settings: reg, TestCredential: (&github.REST{}).User, Metrics: mtr.Handler(),
 			Ready: func(ctx context.Context) error { _, err := rt.Capacity(ctx); return err }}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -182,7 +242,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	_ = ingestSrv.Shutdown(sctx)
 	// Bounded: systemd stops waiting at TimeoutStopSec. Unfinished provisioning is
 	// adopted or cleaned up at the next start.
-	if !waitOrTimeout(func() { wg.Wait(); ctl.Wait(); tpl.Wait() }, 25*time.Second) {
+	if !waitOrTimeout(func() { wg.Wait(); sup.Wait(); ctl.Wait(); tpl.Wait() }, 25*time.Second) {
 		logger.Warn("shutdown timed out waiting for background work")
 	}
 	return serveErr

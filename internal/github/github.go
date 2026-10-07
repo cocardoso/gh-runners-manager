@@ -3,6 +3,8 @@ package github
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,42 +16,62 @@ import (
 	"github.com/actions/scaleset/listener"
 
 	"github.com/cocardoso/gh-runners-manager/internal/config"
+	"github.com/cocardoso/gh-runners-manager/internal/settings"
 	"github.com/cocardoso/gh-runners-manager/internal/version"
 )
 
+// CredentialSource gives the current scale sets and credentials (settings.Registry).
+type CredentialSource interface {
+	ScaleSet(name string) (settings.ScaleSet, bool)
+	Credential(name string) (settings.Credential, bool)
+}
+
 // Client talks to GitHub's Runner Scale Set API, one scaleset.Client per scale set.
 type Client struct {
-	cfg    *config.Config
+	src    CredentialSource
 	logger *slog.Logger
 
 	mu      sync.Mutex
-	clients map[string]*scaleset.Client
+	clients map[string]cachedClient
+}
+
+// cachedClient is reused while the scale set's URL and token stay the same; a removed
+// scale set keeps its last one while it drains.
+type cachedClient struct {
+	key    string
+	client *scaleset.Client
+	cfg    config.ScaleSet
+	token  string
 }
 
 // New returns a Client.
-func New(cfg *config.Config, logger *slog.Logger) *Client {
-	return &Client{cfg: cfg, logger: logger, clients: map[string]*scaleset.Client{}}
+func New(src CredentialSource, logger *slog.Logger) *Client {
+	return &Client{src: src, logger: logger, clients: map[string]cachedClient{}}
 }
 
 func (c *Client) client(name string) (*scaleset.Client, config.ScaleSet, error) {
-	var ss config.ScaleSet
-	found := false
-	for _, s := range c.cfg.ScaleSets {
-		if s.Name == name {
-			ss, found = s, true
+	s, ok := c.src.ScaleSet(name)
+	if !ok {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if cc, ok := c.clients[name]; ok {
+			return cc.client, cc.cfg, nil // removed, still draining
 		}
+		return nil, config.ScaleSet{}, fmt.Errorf("github: unknown scale set %q", name)
 	}
-	if !found {
-		return nil, ss, fmt.Errorf("github: unknown scale set %q", name)
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if cl, ok := c.clients[name]; ok {
-		return cl, ss, nil
-	}
-	cred, ok := c.cfg.Credential(ss.Credential)
+	ss := s.ScaleSet
+	cred, ok := c.src.Credential(ss.Credential)
 	if !ok {
 		return nil, ss, fmt.Errorf("github: scale set %s: unknown credential %q", name, ss.Credential)
+	}
+	sum := sha256.Sum256([]byte(ss.URL + "\x00" + cred.Token))
+	key := hex.EncodeToString(sum[:])
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cc, ok := c.clients[name]; ok && cc.key == key {
+		cc.cfg = ss
+		c.clients[name] = cc
+		return cc.client, ss, nil
 	}
 	cl, err := scaleset.NewClientWithPersonalAccessToken(scaleset.NewClientWithPersonalAccessTokenConfig{
 		GitHubConfigURL:     ss.URL,
@@ -60,8 +82,20 @@ func (c *Client) client(name string) (*scaleset.Client, config.ScaleSet, error) 
 	if err != nil {
 		return nil, ss, fmt.Errorf("github: scale set %s: %w", name, err)
 	}
-	c.clients[name] = cl
+	c.clients[name] = cachedClient{key: key, client: cl, cfg: ss, token: cred.Token}
 	return cl, ss, nil
+}
+
+// token is the scale set's current token, or the last one of a removed scale set.
+func (c *Client) token(name string) string {
+	if ss, ok := c.src.ScaleSet(name); ok {
+		if cred, ok := c.src.Credential(ss.Credential); ok {
+			return cred.Token
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.clients[name].token
 }
 
 // EnsureScaleSet finds the scale set by name in its runner group, creating it when missing.

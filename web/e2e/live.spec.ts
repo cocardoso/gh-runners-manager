@@ -50,7 +50,6 @@ test("the UI reconnects and resumes after the control plane restarts", async ({ 
 });
 
 test("a template build progresses live to active from the Templates page", async ({ page, demo }) => {
-  await page.addInitScript(() => sessionStorage.setItem("ghrm.adminToken", "demo"));
   await page.goto(`${demo.url}/templates`);
   const build = page.getByRole("button", { name: "Build now" });
   await expect(build).toBeEnabled();

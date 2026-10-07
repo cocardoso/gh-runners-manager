@@ -1,0 +1,20 @@
+# Runs the control plane in Docker against a remote Proxmox host (spec §12.2).
+# Put ghrm.yaml next to this file (start from deploy/examples/ghrm.example.yaml) with
+# data_dir: /var/lib/ghrm, listen: 0.0.0.0:8080 and ingest.listen: 0.0.0.0:8443, and set
+# ingest.advertise_url to this Docker host's address on the job network's route
+# (the security group's ingest exception must allow it). Secrets go into the vault:
+#   docker compose run --rm ghrm secret set proxmox/token-secret
+services:
+  ghrm:
+    image: ghcr.io/cocardoso/gh-runners-manager:latest
+    build:
+      context: ../..
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - ./ghrm.yaml:/etc/ghrm/ghrm.yaml:ro
+      - ghrm-data:/var/lib/ghrm
+volumes:
+  ghrm-data:

@@ -1,77 +1,54 @@
 import { useState } from "react";
-import { Button, Tooltip, useKumoToastManager } from "@cloudflare/kumo";
-import { TokenDialog } from "./admin-action";
+import { Button, useKumoToastManager } from "@cloudflare/kumo";
 import { TrashIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, unwrap } from "@/api/client";
-import { useSettings } from "@/api/queries";
+import { api, unwrap } from "@/api/client";
 import { DeleteResource } from "@/blocks/delete-resource/delete-resource";
-import { getAdminToken, setAdminToken } from "@/lib/admin-token";
 
-/** The destroy action: admin token (once per tab), then type-the-name confirmation. */
+/** The destroy action, behind a type-the-name confirmation. */
 export function DestroyEnvironment({ id, disabled }: { id: string; disabled?: boolean }) {
-  const settings = useSettings();
   const qc = useQueryClient();
   const toast = useKumoToastManager();
-  const [step, setStep] = useState<"idle" | "token" | "confirm">("idle");
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-
-  const allowed = settings.data?.admin_actions === true;
-  const start = () => {
-    setError(undefined);
-    setStep(getAdminToken() ? "confirm" : "token");
-  };
   const destroy = async () => {
     setBusy(true);
     setError(undefined);
     try {
-      unwrap(
-        await api.POST("/api/v1/environments/{id}/destroy", {
-          params: { path: { id }, header: { Authorization: `Bearer ${getAdminToken() ?? ""}` } },
-        }),
-      );
-      setStep("idle");
+      unwrap(await api.POST("/api/v1/environments/{id}/destroy", { params: { path: { id } } }));
+      setOpen(false);
       toast.add({ title: "Destroy requested", description: `${id} is being destroyed.`, variant: "success" });
       void qc.invalidateQueries({ queryKey: ["environment", id] });
       void qc.invalidateQueries({ queryKey: ["environments"] });
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        setAdminToken(null);
-        setStep("token");
-      }
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
-
-  const button = (
-    <Button variant="secondary-destructive" icon={TrashIcon} disabled={disabled || !allowed} onClick={start}>
-      Destroy
-    </Button>
-  );
   return (
     <>
-      {allowed ? button : <Tooltip content="Start the control plane with an admin token to enable this action." render={<span>{button}</span>} />}
-      <TokenDialog
-        open={step === "token"}
-        error={error}
-        onCancel={() => setStep("idle")}
-        onToken={(t) => {
-          setAdminToken(t);
-          setStep("confirm");
+      <Button
+        variant="secondary-destructive"
+        icon={TrashIcon}
+        disabled={disabled}
+        onClick={() => {
+          setError(undefined);
+          setOpen(true);
         }}
-      />
+      >
+        Destroy
+      </Button>
       <DeleteResource
-        open={step === "confirm"}
-        onOpenChange={(o) => !o && setStep("idle")}
+        open={open}
+        onOpenChange={setOpen}
         resourceType="Environment"
         resourceName={id}
         onDelete={destroy}
         isDeleting={busy}
         deleteButtonText="Destroy environment"
-        errorMessage={step === "confirm" ? error : undefined}
+        errorMessage={error}
       />
     </>
   );
