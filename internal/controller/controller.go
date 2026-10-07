@@ -162,18 +162,14 @@ func (c *Controller) ScaleSets(ctx context.Context) []ScaleSetStatus {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make([]ScaleSetStatus, 0, len(c.order))
-	keep := c.order[:0]
 	for _, name := range c.order {
 		s := c.scaleSets[name]
 		if s.removed && live[name] == 0 {
-			delete(c.scaleSets, name) // drained
-			continue
+			continue // drained; Draining forgets it
 		}
-		keep = append(keep, name)
 		out = append(out, ScaleSetStatus{Name: name, GitHubID: s.githubID, Desired: s.desired, Live: live[name],
 			Waiting: s.waiting, WaitingSince: s.waitingSince, Listening: s.listening, ListenError: s.listenErr, Removed: s.removed})
 	}
-	c.order = keep
 	return out
 }
 

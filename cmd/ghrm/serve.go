@@ -152,14 +152,18 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	var wg sync.WaitGroup
 	// Scale sets come from the file and the UI; listeners follow every change.
 	sup := newSupervisor(func(ctx context.Context, ss config.ScaleSet) { listenLoop(ctx, ss, gh, ctl, db, rec, logger) })
+	// Removed scale sets keep their listener while they drain (job messages, runner
+	// removal); a periodic pass stops it once they are empty.
 	applyScaleSets := func() {
 		list := reg.ScaleSetConfigs()
 		ctl.UpdateScaleSets(list)
-		sup.Reconcile(ctx, list)
+		sup.Reconcile(ctx, append(list, ctl.Draining(ctx)...))
 	}
 	applyScaleSets()
 	changes, unsubscribe := reg.Subscribe()
 	defer unsubscribe()
+	drainTick := time.NewTicker(30 * time.Second)
+	defer drainTick.Stop()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -168,6 +172,8 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 			case <-ctx.Done():
 				return
 			case <-changes:
+				applyScaleSets()
+			case <-drainTick.C:
 				applyScaleSets()
 			}
 		}

@@ -68,3 +68,26 @@ func TestUserReportsTheLogin(t *testing.T) {
 		t.Fatal("bad token must fail")
 	}
 }
+
+// A removed scale set drains: its listener and runner removal keep working with the
+// client and token it last had.
+func TestRemovedScaleSetKeepsItsLastClient(t *testing.T) {
+	src := &fakeSource{
+		sets:  map[string]settings.ScaleSet{"lab": {ScaleSet: config.ScaleSet{Name: "lab", URL: "https://github.com/o/r", Credential: "c"}}},
+		creds: map[string]settings.Credential{"c": {Name: "c", Token: "t1"}},
+	}
+	c := New(src, slog.New(slog.DiscardHandler))
+	a, _, err := c.client("lab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(src.sets, "lab")
+	delete(src.creds, "c")
+	b, ss, err := c.client("lab")
+	if err != nil || b != a || ss.URL != "https://github.com/o/r" {
+		t.Fatalf("after removal: %v %v %+v; want the last client", b == a, err, ss)
+	}
+	if tok := c.token("lab"); tok != "t1" {
+		t.Fatalf("token = %q, want the last one", tok)
+	}
+}

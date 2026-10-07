@@ -135,12 +135,7 @@ func (r *REST) JobDetails(ctx context.Context, token, repo string, runID int64, 
 
 // JobDetails looks a job up with the credential of its scale set.
 func (c *Client) JobDetails(ctx context.Context, scaleSet, repo string, runID int64, runnerName string) (JobDetails, error) {
-	var token string
-	if ss, ok := c.src.ScaleSet(scaleSet); ok {
-		if cred, ok := c.src.Credential(ss.Credential); ok {
-			token = cred.Token
-		}
-	}
+	token := c.token(scaleSet)
 	if token == "" {
 		return JobDetails{Reason: "no credential is configured for scale set " + scaleSet, Steps: []Step{}}, nil
 	}

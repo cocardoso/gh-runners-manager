@@ -35,10 +35,13 @@ type Client struct {
 	clients map[string]cachedClient
 }
 
-// cachedClient is reused while the scale set's URL and token stay the same.
+// cachedClient is reused while the scale set's URL and token stay the same; a removed
+// scale set keeps its last one while it drains.
 type cachedClient struct {
 	key    string
 	client *scaleset.Client
+	cfg    config.ScaleSet
+	token  string
 }
 
 // New returns a Client.
@@ -49,6 +52,11 @@ func New(src CredentialSource, logger *slog.Logger) *Client {
 func (c *Client) client(name string) (*scaleset.Client, config.ScaleSet, error) {
 	s, ok := c.src.ScaleSet(name)
 	if !ok {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if cc, ok := c.clients[name]; ok {
+			return cc.client, cc.cfg, nil // removed, still draining
+		}
 		return nil, config.ScaleSet{}, fmt.Errorf("github: unknown scale set %q", name)
 	}
 	ss := s.ScaleSet
@@ -61,6 +69,8 @@ func (c *Client) client(name string) (*scaleset.Client, config.ScaleSet, error) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if cc, ok := c.clients[name]; ok && cc.key == key {
+		cc.cfg = ss
+		c.clients[name] = cc
 		return cc.client, ss, nil
 	}
 	cl, err := scaleset.NewClientWithPersonalAccessToken(scaleset.NewClientWithPersonalAccessTokenConfig{
@@ -72,8 +82,20 @@ func (c *Client) client(name string) (*scaleset.Client, config.ScaleSet, error) 
 	if err != nil {
 		return nil, ss, fmt.Errorf("github: scale set %s: %w", name, err)
 	}
-	c.clients[name] = cachedClient{key: key, client: cl}
+	c.clients[name] = cachedClient{key: key, client: cl, cfg: ss, token: cred.Token}
 	return cl, ss, nil
+}
+
+// token is the scale set's current token, or the last one of a removed scale set.
+func (c *Client) token(name string) string {
+	if ss, ok := c.src.ScaleSet(name); ok {
+		if cred, ok := c.src.Credential(ss.Credential); ok {
+			return cred.Token
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.clients[name].token
 }
 
 // EnsureScaleSet finds the scale set by name in its runner group, creating it when missing.

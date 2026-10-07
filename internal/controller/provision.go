@@ -138,7 +138,11 @@ func (c *Controller) updateWaiting(ctx context.Context, plan scheduler.Plan) {
 // reconcile counts it) and provisions it in the background.
 func (c *Controller) startProvisioning(ctx context.Context, scaleSet string) error {
 	c.mu.Lock()
-	s := c.scaleSets[scaleSet]
+	s, ok := c.scaleSets[scaleSet]
+	if !ok || s.removed {
+		c.mu.Unlock()
+		return nil // removed after this reconcile planned it
+	}
 	cfg, ghID := s.cfg, s.githubID
 	c.mu.Unlock()
 

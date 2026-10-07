@@ -79,3 +79,47 @@ func TestRemovedScaleSetDrains(t *testing.T) {
 		t.Fatalf("re-added = %+v", sets)
 	}
 }
+
+// A reconcile that planned an environment before the scale set was removed (or even
+// pruned) must neither crash nor create it.
+func TestProvisioningSkipsARemovedScaleSet(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	h.c.UpdateScaleSets(nil)
+	if err := h.c.startProvisioning(ctx, "lab"); err != nil {
+		t.Fatal(err)
+	}
+	h.c.mu.Lock()
+	delete(h.c.scaleSets, "lab")
+	h.c.order = nil
+	h.c.mu.Unlock()
+	if err := h.c.startProvisioning(ctx, "lab"); err != nil {
+		t.Fatal(err)
+	}
+	h.c.Wait()
+	if n := len(h.envs(t)); n != 0 {
+		t.Fatalf("environments = %d, want none for a removed scale set", n)
+	}
+}
+
+// Draining scale sets keep their settings (the listener stays up, so job messages and
+// runner removal still work) until their last environment is gone.
+func TestDrainingKeepsRemovedScaleSetsUntilEmpty(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	e := h.provision(t, 1)[0]
+	h.c.UpdateScaleSets(nil)
+	_ = h.c.ScaleSets(ctx) // a UI poll must not forget it
+	d := h.c.Draining(ctx)
+	if len(d) != 1 || d[0].Name != "lab" || d[0].URL == "" {
+		t.Fatalf("draining = %+v; want lab with its settings", d)
+	}
+	h.c.Fail(ctx, e.ID, "test", context.Canceled)
+	h.c.Teardown(ctx)
+	if d := h.c.Draining(ctx); len(d) != 0 {
+		t.Fatalf("draining = %+v; want none once empty", d)
+	}
+	if s := h.c.ScaleSets(ctx); len(s) != 0 {
+		t.Fatalf("scale sets = %+v", s)
+	}
+}
