@@ -42,7 +42,7 @@ test("history settings are saved and a cleanup previews what it deletes", async 
 
   await card.getByRole("button", { name: /Clean up now/ }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText(/Nothing to delete|environment/)).toBeVisible();
+  await expect(dialog.getByRole("status")).toHaveText(/Nothing to delete|environment/);
   await dialog.getByRole("button", { name: "Cancel" }).click();
   expect(errors).toEqual([]);
 });

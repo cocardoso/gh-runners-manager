@@ -78,7 +78,9 @@ function CleanupDialog({ days, onClose }: { days: number; onClose: () => void })
           onChange={(e) => setDate(e.target.value)}
           description="Finished environments with their jobs and logs, events, and failed or deleted template records. Running environments and the templates in use are kept. A failed build whose record is deleted may build the same version again at the next check."
         />
-        <p className="text-sm">{preview ? describeCounts(preview) : "Counting…"}</p>
+        <p role="status" className="text-sm">
+          {preview ? describeCounts(preview) : "Counting…"}
+        </p>
         {(error ?? previewQuery.error) && <Banner variant="error" title={error ?? String(previewQuery.error)} />}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>
