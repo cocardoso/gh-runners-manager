@@ -19,6 +19,7 @@ type SelfTestOptions struct {
 	Work         string
 	RunnerDir    string
 	BlockedAddrs []string // host:port that must be unreachable (LAN, hypervisor)
+	Mirrors      []string // host:port of the registry cache that must be reachable
 	ProbeURL     string   // HTTPS URL that must be reachable (default https://api.github.com)
 	// ScriptsDir is where the report scripts are mounted in GitHub's tooling (default /scripts).
 	ScriptsDir string
@@ -133,6 +134,12 @@ func RunSelfTest(ctx context.Context, c *Client, cmd Commander, o SelfTestOption
 				return fmt.Errorf("%s is reachable from a job environment", addr)
 			}
 			return nil
+		})
+	}
+	for _, addr := range o.Mirrors {
+		check("registry cache "+addr, func(ctx context.Context) error {
+			// Any HTTP answer from the registry API root means the mirror is reachable.
+			return o.HTTPGet(ctx, "http://"+addr+"/v2/")
 		})
 	}
 	check("runner binary", run(o.RunnerDir, filepath.Join(o.RunnerDir, "bin", "Runner.Listener"), "--version"))

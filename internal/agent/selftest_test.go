@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cocardoso/gh-runners-manager/internal/ingest"
 )
 
 func TestRunSelfTestReportsEveryCheck(t *testing.T) {
@@ -77,5 +79,45 @@ func TestRunSelfTestReportsEveryCheck(t *testing.T) {
 	defer fi.mu.Unlock()
 	if fi.report == nil || len(fi.report.Checks) != len(rep.Checks) {
 		t.Fatal("the report was not posted")
+	}
+}
+
+// A template that points at the cache checks, from a job's point of view, that every
+// mirror port answers.
+func TestSelfTestChecksTheCache(t *testing.T) {
+	c := newBuildClient(t, &fakeIngest{})
+	var asked []string
+	opts := SelfTestOptions{Work: t.TempDir(), RunnerDir: "/r", Mirrors: []string{"10.50.0.3:5000", "10.50.0.3:5002"},
+		Lookup: func(context.Context, string) error { return nil },
+		HTTPGet: func(_ context.Context, url string) error {
+			asked = append(asked, url)
+			if strings.Contains(url, ":5002") {
+				return errors.New("connection refused")
+			}
+			return nil
+		},
+		Dial: func(context.Context, string) error { return errors.New("blocked") }}
+	rep, _ := RunSelfTest(context.Background(), c, &fakeCommander{}, opts)
+	got := map[string]ingest.Check{}
+	for _, ck := range rep.Checks {
+		got[ck.Name] = ck
+	}
+	if ck := got["registry cache 10.50.0.3:5000"]; !ck.OK {
+		t.Errorf("reachable mirror = %+v", ck)
+	}
+	if ck := got["registry cache 10.50.0.3:5002"]; ck.OK || !strings.Contains(ck.Detail, "connection refused") {
+		t.Errorf("unreachable mirror = %+v", ck)
+	}
+	if !strings.Contains(strings.Join(asked, " "), "http://10.50.0.3:5000/v2/") {
+		t.Errorf("asked %v", asked)
+	}
+}
+
+func TestBootstrapReadsTheMirrors(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "environ")
+	_ = os.WriteFile(p, []byte("GHRM_INGEST_URL=https://x\x00GHRM_INGEST_TOKEN=t\x00GHRM_INGEST_FINGERPRINT=AA\x00GHRM_MODE=selftest\x00GHRM_SELFTEST_MIRRORS=10.50.0.3:5000,10.50.0.3:5001\x00"), 0o600)
+	b, ok, err := LoadBootstrap(p)
+	if err != nil || !ok || strings.Join(b.Mirrors, ",") != "10.50.0.3:5000,10.50.0.3:5001" {
+		t.Fatalf("bootstrap = %+v %v %v", b, ok, err)
 	}
 }

@@ -467,7 +467,10 @@ func (s *Service) createAndVerify(ctx context.Context, id string) {
 	s.record(ctx, "info", "template.created", fmt.Sprintf("template %s created as %s; verifying", id, ref.ID), t, map[string]any{"ref": ref.ID})
 	envID, err := s.d.Environments.StartSpecial(ctx, controller.SpecialSpec{Kind: store.KindVerify,
 		Template: s.d.Runtime.TemplateEnvironmentRef(ref), TemplateVMID: t.VMID, Cores: 2, MemoryMB: 4096,
-		Env:       map[string]string{ingest.EnvMode: ingest.ModeSelfTest, ingest.EnvSelfTestBlocked: strings.Join(s.d.Config.SelfTestBlocked, ",")},
+		Env: map[string]string{ingest.EnvMode: ingest.ModeSelfTest,
+			// The cache's metrics and exporter ports must stay closed to jobs; its mirrors must answer.
+			ingest.EnvSelfTestBlocked: strings.Join(append(append([]string{}, s.d.Config.SelfTestBlocked...), s.d.Cache.PrivateAddrs()...), ","),
+			ingest.EnvSelfTestMirrors: strings.Join(s.d.Cache.MirrorAddrs(), ",")},
 		OnCreated: func(envID string) { s.recordEnv(ctx, id, envID, true) }})
 	_ = envID
 	if err != nil {

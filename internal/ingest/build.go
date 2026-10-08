@@ -26,6 +26,9 @@ const (
 	ModeSelfTest = "selftest"
 	// EnvSelfTestBlocked lists addresses (comma separated) that must be unreachable from a job.
 	EnvSelfTestBlocked = "GHRM_SELFTEST_BLOCKED"
+	// EnvSelfTestMirrors lists the registry cache's mirror addresses (comma separated)
+	// a job must reach.
+	EnvSelfTestMirrors = "GHRM_SELFTEST_MIRRORS"
 )
 
 // Build agent events.

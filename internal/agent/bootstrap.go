@@ -23,6 +23,8 @@ type Bootstrap struct {
 	Mode string
 	// Blocked lists host:port addresses the self-test must find unreachable.
 	Blocked []string
+	// Mirrors lists the registry cache's host:port addresses the self-test must reach.
+	Mirrors []string
 }
 
 // ParseEnviron splits a NUL-separated environment block.
@@ -55,6 +57,11 @@ func LoadBootstrap(path string) (Bootstrap, bool, error) {
 	for _, a := range strings.Split(env[ingest.EnvSelfTestBlocked], ",") {
 		if a = strings.TrimSpace(a); a != "" {
 			b.Blocked = append(b.Blocked, a)
+		}
+	}
+	for _, a := range strings.Split(env[ingest.EnvSelfTestMirrors], ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			b.Mirrors = append(b.Mirrors, a)
 		}
 	}
 	if b.JITConfig == "" && b.Mode == "" {

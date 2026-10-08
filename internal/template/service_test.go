@@ -729,3 +729,20 @@ func TestBuildSpecCarriesTheCacheMirrors(t *testing.T) {
 		t.Fatalf("spec = %+v, %v", spec, err)
 	}
 }
+
+func TestVerifyEnvironmentGetsTheCache(t *testing.T) {
+	h := newService(t, nil)
+	h.s.d.Cache = testCache()
+	tpl, err := h.s.Build(context.Background(), "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.buildToVerifyFrom(t, tpl)
+	v := h.envs.started[1]
+	if v.Env[ingest.EnvSelfTestMirrors] != "10.50.0.3:5000,10.50.0.3:5001,10.50.0.3:5002,10.50.0.3:5003" {
+		t.Fatalf("mirrors env = %q", v.Env[ingest.EnvSelfTestMirrors])
+	}
+	if b := v.Env[ingest.EnvSelfTestBlocked]; !strings.Contains(b, "10.1.1.1:443") || !strings.Contains(b, "10.50.0.3:5100") || !strings.Contains(b, "10.50.0.3:5199") {
+		t.Fatalf("blocked env = %q; want the configured addresses and the cache's private ports", b)
+	}
+}
