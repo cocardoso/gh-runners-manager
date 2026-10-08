@@ -2,7 +2,7 @@
 
 Ephemeral, isolated GitHub Actions runners on Proxmox LXC: one fresh environment per job, destroyed when the job ends, with a real-time web UI.
 
-> **Status:** early development. Not ready for production use.
+> **Status:** v0.x, running in the author's homelab. Expect breaking changes before 1.0.
 
 ## How it works
 
@@ -42,8 +42,8 @@ Dark versions of every screenshot are in [docs/images](docs/images).
 
 ## Documentation
 
-- [Architecture diagrams](docs/architecture.md): system overview, network isolation, job lifecycle, environment states and implementation status. Kept up to date with every change.
-- [Design document](docs/superpowers/specs/2026-10-07-gh-runners-manager-design.md): the reasoning behind the design.
+- [Architecture diagrams](docs/architecture.md): system overview, network isolation, job lifecycle, environment states and components. Kept up to date with every change.
+- [Design document](docs/design.md): the reasoning behind the design.
 - [Development guide](docs/development.md): building, testing and running against a Proxmox host.
 
 ## Development

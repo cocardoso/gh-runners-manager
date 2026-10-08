@@ -13,6 +13,8 @@
 
 `deploy/proxmox/install.sh` does everything below in one run (as root on the host): the pool, roles, user and token, the template storage, the job network and its security group, the control-plane container with ghrm, and a bootstrap template. It checks every step first, so running it again resumes or upgrades; `--dry-run` shows what would change and `--help` lists the options (VMIDs, bridges, subnet, storages, release). It ends with the web UI address and the one-time setup token for the admin account. Its tests (`bash deploy/proxmox/test/run.sh`) run it against fake Proxmox tools. Release binaries carry signed build provenance: `gh attestation verify ghrm-linux-amd64 --repo cocardoso/gh-runners-manager`.
 
+Releasing: push a `vX.Y.Z` tag from `main`. The release workflow publishes the binaries, `install.sh`, `SHA256SUMS` and the container image (`ghcr.io/cocardoso/gh-runners-manager`). To upgrade a host, run the release's installer again (`bash install.sh`, or `--version vX.Y.Z` for a given release): it replaces ghrm and the agents and keeps the configuration and data; ghrm rebuilds the job template when the agent changed.
+
 The sections below describe the same setup by hand.
 
 ## Scoped Proxmox API token
@@ -120,7 +122,7 @@ The UI lives in `web/` (Vite, React, TypeScript, Tailwind CSS v4 and Kumo). `mak
 
 With `templates.vmid_range` set, ghrm builds templates itself (spec §8): a builder environment, cloned from the active template, builds GitHub's official `ubuntu-slim` image unmodified, then the ghrm layer in `template/layer`; the control plane uploads the root filesystem to Proxmox, creates and converts the template, and verifies a clone (Docker, buildx, compose, DNS, HTTPS, blocked addresses, the runner binary and the software report).
 
-- The first template is the bootstrap template (`proxmox.template_vmid`), made by the installer (or, from an existing runner template, with `deploy/proxmox/dev-template.sh`). Its `ghrm-agent` must support the build mode, so recreate it with the current agent when upgrading from M3.
+- The first template is the bootstrap template (`proxmox.template_vmid`), made by the installer.
 - `ghrm-agent` must sit next to the `ghrm` binary (or set `templates.agent_path`): builders receive it with the layer.
 - Change any file in `template/layer` together with `layer.Version`; a new version triggers a rebuild.
 - A build needs about 10 GB of free space in the builder (`templates.builder_disk_gb`, default 48) and room for the archive in the control plane's `data_dir` until it is uploaded.

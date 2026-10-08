@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// CachePrune keeps the registry cache under its disk budget (M6). The registry's proxy
+// CachePrune keeps the registry cache under its disk budget. The registry's proxy
 // expires content by age only; when the cache is above HighPercent of the budget,
 // CachePrune deletes the least recently used repositories, one at a time, and runs the
 // registry's garbage collection for that instance, until usage is below LowPercent.

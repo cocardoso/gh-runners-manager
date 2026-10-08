@@ -51,7 +51,7 @@ type Deps struct {
 	Environments Environments
 	Releases     Releases
 	Config       config.Templates
-	// Cache is the registry cache job templates pull through (M6); disabled when empty.
+	// Cache is the registry cache job templates pull through; disabled when empty.
 	Cache config.Cache
 	// BootstrapVMID is proxmox.template_vmid, the template used until the first build is active.
 	BootstrapVMID int

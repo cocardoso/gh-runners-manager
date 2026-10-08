@@ -1,6 +1,6 @@
 #!/bin/bash
 # Usage: mirrors.sh <root> <origin=host:port,...>
-# Points job environments at the registry cache on the job network (M6), so images are
+# Points job environments at the registry cache on the job network, so images are
 # pulled through it without any workflow change: the Docker daemon (registry-mirrors,
 # Docker Hub only), containerd's hosts.toml (the other registries) and BuildKit's default
 # configuration for buildx builders. The cache is plain HTTP inside the isolated job

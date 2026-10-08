@@ -96,5 +96,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - run: shellcheck -S warning deploy/proxmox/install.sh deploy/proxmox/test/run.sh deploy/proxmox/test/fakebin/fake-pve deploy/proxmox/dev-template.sh
+      - run: shellcheck -S warning deploy/proxmox/install.sh deploy/proxmox/test/run.sh deploy/proxmox/test/fakebin/fake-pve
       - run: bash deploy/proxmox/test/run.sh

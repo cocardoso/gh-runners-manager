@@ -58,7 +58,7 @@ func TestDockerfileFollowsTheLayerRules(t *testing.T) {
 		"docker-ce",          // Docker Engine (the slim image has only the CLI)
 		"systemd-sysv",       // systemd as init
 		"NOPASSWD",           // passwordless sudo for the runner user
-		"LANG=C.UTF-8",       // locale (spike finding)
+		"LANG=C.UTF-8",       // locale
 		"machine-id",         // unique per clone
 		"ssh_host_",          // unique per clone
 		"/run/.containerenv", // the slim build marks itself as a container

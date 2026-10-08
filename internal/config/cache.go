@@ -12,7 +12,7 @@ import (
 // CacheOrigins are the registries the cache mirrors, in a fixed order.
 var CacheOrigins = []string{"docker.io", "ghcr.io", "mcr.microsoft.com", "quay.io"}
 
-// Cache is the pull-through registry cache on the job network (M6). An empty address
+// Cache is the pull-through registry cache on the job network. An empty address
 // means no cache: templates are built without mirror settings.
 type Cache struct {
 	Address      string         `yaml:"address"`
