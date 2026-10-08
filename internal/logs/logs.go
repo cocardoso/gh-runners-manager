@@ -50,11 +50,12 @@ type Store struct {
 	mu       sync.Mutex
 	locks    map[string]*sync.Mutex
 	notifies map[string]chan struct{}
+	removed  map[string]bool // environments deleted from history: late lines are dropped
 }
 
 // New returns a Store rooted at dir.
 func New(dir string, db *store.Store) *Store {
-	return &Store{dir: dir, db: db, locks: map[string]*sync.Mutex{}, notifies: map[string]chan struct{}{}}
+	return &Store{dir: dir, db: db, locks: map[string]*sync.Mutex{}, notifies: map[string]chan struct{}{}, removed: map[string]bool{}}
 }
 
 func validate(envID, stream string) error {
@@ -118,6 +119,12 @@ func (s *Store) Append(ctx context.Context, envID, stream string, lines []Line) 
 	key := envID + "/" + stream
 	unlock := s.lock(key)
 	defer unlock()
+	s.mu.Lock()
+	gone := s.removed[envID]
+	s.mu.Unlock()
+	if gone {
+		return 0, nil
+	}
 
 	meta, err := s.db.GetLogStream(ctx, envID, stream)
 	if errors.Is(err, store.ErrNotFound) {
@@ -379,6 +386,16 @@ func (s *Store) Follow(ctx context.Context, envID, stream string, offset int64) 
 // RemoveEnvironment deletes the log files of an environment (a missing directory is fine).
 func (s *Store) RemoveEnvironment(envID string) error {
 	if err := validate(envID, Streams[0]); err != nil {
+		return err
+	}
+	// Hold every stream's lock: an append in flight finishes first, later ones are dropped.
+	for _, stream := range Streams {
+		defer s.lock(envID + "/" + stream)()
+	}
+	s.mu.Lock()
+	s.removed[envID] = true
+	s.mu.Unlock()
+	if err := s.db.DeleteLogStreams(context.Background(), envID); err != nil {
 		return err
 	}
 	return os.RemoveAll(filepath.Join(s.dir, envID))

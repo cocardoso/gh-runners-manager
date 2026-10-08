@@ -138,12 +138,13 @@ describe("invalidationKeys", () => {
   });
 
   test("history deletions refresh every list they can shrink", () => {
-    const lists = [["templates"], ["environments"], ["jobs"], ["stats"]];
+    const lists = [["templates"], ["environments"], ["jobs"], ["stats"], ["job"], ["environment"]];
     expect(invalidationKeys(ev(1, "retention.cleaned"))).toEqual(expect.arrayContaining(lists));
     for (const kind of ["audit.history_cleanup", "audit.template_delete", "audit.environment_delete"]) {
       expect(invalidationKeys(ev(1, kind))).toEqual(expect.arrayContaining(lists));
     }
     expect(invalidationKeys(ev(1, "audit.history_settings"))).toEqual(expect.arrayContaining([["history-settings"]]));
+    expect(invalidationKeys(ev(1, "retention.cleaned"))).not.toEqual(expect.arrayContaining([["events"]])); // no query uses that key
   });
 
   test("unknown kinds refresh only the overview", () => {

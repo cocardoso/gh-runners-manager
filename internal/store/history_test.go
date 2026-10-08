@@ -165,3 +165,49 @@ func TestDeleteTemplateRecord(t *testing.T) {
 		t.Fatalf("unknown: %v", err)
 	}
 }
+
+func TestDeleteEnvironmentHistoryKeepsItsAuditTrail(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	seedEnv(t, s, "done", "destroyed", KindJob, hRecent)
+	seedEvent(t, s, "environment.state", "done", hRecent)
+	seedEvent(t, s, "audit.destroy", "done", hRecent)
+	if err := s.DeleteEnvironmentHistory(ctx, "done"); err != nil {
+		t.Fatal(err)
+	}
+	evs, _ := s.ListEvents(ctx, EventFilter{EnvironmentID: "done"})
+	if len(evs) != 1 || evs[0].Kind != "audit.destroy" {
+		t.Fatalf("events left = %+v; only the audit event stays (who destroyed it)", evs)
+	}
+}
+
+func TestDeleteHistoryKeepsTheTimelineOfLiveWork(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	seedEnv(t, s, "running", "running", KindJob, hOld)
+	seedEvent(t, s, "environment.state", "running", hOld)
+	seedEnv(t, s, "build-of-active", "destroyed", KindBuild, hOld)
+	seedTemplate(t, s, "tpl-active", TemplateReady, "build-of-active", hOld)
+	seedEvent(t, s, "template.build", "build-of-active", hOld)
+	seedEvent(t, s, "scaleset.demand", "", hOld)
+	got, _, err := s.DeleteHistory(ctx, hNow, hAudit)
+	if err != nil || got.Events != 1 {
+		t.Fatalf("deleted %+v, %v; only the unrelated old event goes", got, err)
+	}
+	for _, env := range []string{"running", "build-of-active"} {
+		if evs, _ := s.ListEvents(ctx, EventFilter{EnvironmentID: env}); len(evs) != 1 {
+			t.Errorf("%s lost its timeline", env)
+		}
+	}
+}
+
+func TestDeleteHistoryKeepsJobsOfKeptEnvironments(t *testing.T) {
+	// A job that finished before the cut-off, in an environment destroyed after it.
+	s := openTemp(t)
+	ctx := context.Background()
+	seedEnv(t, s, "env", "destroyed", KindJob, hRecent)
+	seedJob(t, s, "job", "env", hOld)
+	if got, _, err := s.DeleteHistory(ctx, hCutoff, hAudit); err != nil || got.Jobs != 0 {
+		t.Fatalf("deleted %+v, %v; the environment's page would link to a missing job", got, err)
+	}
+}

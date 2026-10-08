@@ -4,9 +4,9 @@ package retention
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/events"
@@ -42,6 +42,10 @@ type Retention struct {
 	// Hour is the local hour of the daily sweep (it runs at half past).
 	Hour int
 	Now  func() time.Time
+	// VacuumMin is how many deleted rows trigger compacting the database (0: 1000).
+	VacuumMin int
+
+	vacuum func(context.Context) error // tests replace the store's VACUUM
 }
 
 func (r *Retention) now() time.Time {
@@ -51,23 +55,29 @@ func (r *Retention) now() time.Time {
 	return time.Now()
 }
 
+// metaKey holds the settings as one JSON record, so a change is written at once.
+const metaKey = "history.settings"
+
+// Settings returns the saved settings; a missing or out-of-range value takes its default.
 func (r *Retention) Settings(ctx context.Context) (Settings, error) {
-	s := Defaults
-	for key, dst := range map[string]any{"history.mode": &s.Mode, "history.days": &s.Days, "history.audit_days": &s.AuditDays} {
-		v, err := r.Store.GetMeta(ctx, key)
-		if errors.Is(err, store.ErrNotFound) {
-			continue
-		} else if err != nil {
-			return s, err
-		}
-		switch p := dst.(type) {
-		case *string:
-			*p = v
-		case *int:
-			if n, err := strconv.Atoi(v); err == nil {
-				*p = n
-			}
-		}
+	v, err := r.Store.GetMeta(ctx, metaKey)
+	if errors.Is(err, store.ErrNotFound) {
+		return Defaults, nil
+	} else if err != nil {
+		return Defaults, err
+	}
+	var s Settings
+	if json.Unmarshal([]byte(v), &s) != nil {
+		return Defaults, nil
+	}
+	if s.Mode != ModeAutomatic && s.Mode != ModeManual {
+		s.Mode = Defaults.Mode
+	}
+	if s.Days < 1 || s.Days > 365 {
+		s.Days = Defaults.Days
+	}
+	if s.AuditDays < s.Days || s.AuditDays > 3650 {
+		s.AuditDays = max(Defaults.AuditDays, s.Days)
 	}
 	return s, nil
 }
@@ -88,12 +98,11 @@ func (r *Retention) PutSettings(ctx context.Context, s Settings) error {
 	if err := s.validate(); err != nil {
 		return err
 	}
-	for key, v := range map[string]string{"history.mode": s.Mode, "history.days": strconv.Itoa(s.Days), "history.audit_days": strconv.Itoa(s.AuditDays)} {
-		if err := r.Store.PutMeta(ctx, key, v); err != nil {
-			return err
-		}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return err
 	}
-	return nil
+	return r.Store.PutMeta(ctx, metaKey, string(b))
 }
 
 // Cutoffs are the configured history and audit cut-offs from now.
@@ -114,22 +123,42 @@ func (r *Retention) Preview(ctx context.Context, before, auditBefore time.Time) 
 	return r.Store.CountHistory(ctx, before, clamp(before, auditBefore))
 }
 
-// Clean deletes the history, the log files of the deleted environments, and compacts
-// the database when anything went.
+// ErrPartial means the history was deleted, but some log directories could not be
+// removed or the database could not be compacted.
+var ErrPartial = errors.New("retention: history deleted, but cleaning up after it failed")
+
+// defaultVacuumMin is how many deleted rows make compacting the database worth it.
+const defaultVacuumMin = 1000
+
+// Clean deletes the history, then (best effort) the log files of the deleted
+// environments, and compacts the database after large deletions.
 func (r *Retention) Clean(ctx context.Context, before, auditBefore time.Time) (store.HistoryCounts, error) {
 	c, envs, err := r.Store.DeleteHistory(ctx, before, clamp(before, auditBefore))
 	if err != nil {
 		return c, err
 	}
+	var errs []error
 	for _, id := range envs {
 		if err := r.Logs.RemoveEnvironment(id); err != nil {
-			return c, err
+			errs = append(errs, err)
 		}
 	}
-	if c != (store.HistoryCounts{}) {
-		if err := r.Store.Vacuum(ctx); err != nil {
-			return c, err
+	minRows := r.VacuumMin
+	if minRows <= 0 {
+		minRows = defaultVacuumMin
+	}
+	if c.Environments+c.Jobs+c.Events+c.AuditEvents+c.Templates >= minRows {
+		vacuum := r.vacuum
+		if vacuum == nil {
+			vacuum = r.Store.Vacuum
 		}
+		// Not tied to the request: a closed browser must not stop it half-way.
+		if err := vacuum(context.WithoutCancel(ctx)); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return c, fmt.Errorf("%w: %w", ErrPartial, errors.Join(errs...))
 	}
 	return c, nil
 }
@@ -144,17 +173,24 @@ func (r *Retention) Sweep(ctx context.Context) (store.HistoryCounts, bool, error
 	before, audit, _ := r.Cutoffs(ctx)
 	c, err := r.Clean(ctx, before, audit)
 	if r.Recorder != nil {
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrPartial) {
 			_, _ = r.Recorder.Error(ctx, "retention.failed", "history cleanup failed: "+err.Error(), events.Refs{}, nil)
 		} else {
-			_, _ = r.Recorder.Info(ctx, "retention.cleaned", fmt.Sprintf("history cleaned: %d environments, %d jobs, %d events, %d audit events, %d templates",
-				c.Environments, c.Jobs, c.Events, c.AuditEvents, c.Templates), events.Refs{}, map[string]any{"counts": c})
+			_, _ = r.Recorder.Info(ctx, "retention.cleaned", "history cleaned: "+Describe(c), events.Refs{}, map[string]any{"counts": c})
+			if err != nil {
+				_, _ = r.Recorder.Warn(ctx, "retention.incomplete", err.Error(), events.Refs{}, nil)
+			}
 		}
 	}
 	return c, true, err
 }
 
 func (r *Retention) runOnce(ctx context.Context) { _, _, _ = r.Sweep(ctx) }
+
+// Describe says how much a cleanup deleted.
+func Describe(c store.HistoryCounts) string {
+	return fmt.Sprintf("%d environments, %d jobs, %d events, %d audit events, %d templates", c.Environments, c.Jobs, c.Events, c.AuditEvents, c.Templates)
+}
 
 // nextRun is the next half past hour (local to now), strictly after now.
 func nextRun(now time.Time, hour int) time.Time {

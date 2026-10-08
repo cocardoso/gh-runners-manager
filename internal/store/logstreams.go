@@ -64,3 +64,9 @@ func (s *Store) ListLogStreams(ctx context.Context, envID string) ([]LogStream, 
 	}
 	return out, rows.Err()
 }
+
+// DeleteLogStreams removes the stream records of an environment.
+func (s *Store) DeleteLogStreams(ctx context.Context, envID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM log_streams WHERE environment_id = ?`, envID)
+	return err
+}

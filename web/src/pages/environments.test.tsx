@@ -100,3 +100,14 @@ test("a running environment offers no Delete from history", async () => {
   expect(await screen.findByRole("button", { name: "Destroy" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Delete from history" })).not.toBeInTheDocument();
 });
+
+test("without admin actions a destroyed environment offers no Delete from history", async () => {
+  mockApi({
+    "/api/v1/environments/env-old": env({ id: "env-old", state: "destroyed" }),
+    "/api/v1/settings": { version: "dev", admin_actions: false, proxmox: {}, ingest: {}, capacity: {}, scale_sets: [] },
+    "/api/v1/environments/env-old/logs/control-plane": { entries: [], next: 0 },
+  });
+  renderApp("/environments/env-old");
+  await screen.findByRole("heading", { name: "env-old" });
+  expect(screen.queryByRole("button", { name: "Delete from history" })).not.toBeInTheDocument();
+});

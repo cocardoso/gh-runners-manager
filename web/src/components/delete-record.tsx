@@ -35,7 +35,7 @@ export function DeleteRecord({ kind, id }: { kind: keyof typeof kinds; id: strin
       else unwrap(await api.DELETE("/api/v1/environments/{id}", { params: { path: { id } } }));
       setOpen(false);
       toast.add({ title: "Record deleted", description: id, variant: "success" });
-      for (const key of ["templates", "template", "environments", "environment", "jobs", "events", "overview"]) void qc.invalidateQueries({ queryKey: [key] });
+      for (const key of ["templates", "template", "environments", "environment", "jobs", "job", "stats", "overview"]) void qc.invalidateQueries({ queryKey: [key] });
       void navigate({ to: k.back });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

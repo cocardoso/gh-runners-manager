@@ -55,7 +55,7 @@ Deleting a failed template record also removes the guard that waits a day before
   - `GET /api/v1/history/settings`, `PUT /api/v1/history/settings` (audited `history_settings`).
   - `POST /api/v1/history/cleanup` with `{before, audit_before?, dry_run}` → counts (`dry_run` counts only; a real run is audited `history_cleanup` with the counts). `before` must be in the past. `audit_before` defaults to `now − audit days`, and never later than `before`.
   - `DELETE /api/v1/templates/{id}` (audited `template_delete`), `DELETE /api/v1/environments/{id}` (audited `environment_delete`): 404 unknown, 409 not deletable, with the reason.
-  - Deletions publish events so open pages refresh (`retention.*`, `template.deleted_record`, `environment.deleted_record`).
+  - Deletions publish events so open pages refresh: the sweep's `retention.cleaned` / `retention.incomplete` / `retention.failed`, and the audit events `audit.history_cleanup`, `audit.template_delete`, `audit.environment_delete`.
 - **UI**:
   - Settings: a **History** card — mode (automatic/manual), days, audit days, Save; **Clean up now…** dialog with a date (default: today − days), a preview of the counts (dry run), and a confirm button that shows the result.
   - Templates (list row and detail): **Delete** on `failed`/`deleted` records, with a confirmation.

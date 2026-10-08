@@ -132,7 +132,7 @@ export class EventStream {
 }
 
 // The lists a history deletion can shrink.
-const historyLists = [["templates"], ["environments"], ["jobs"], ["stats"], ["events"]];
+const historyLists = [["templates"], ["environments"], ["jobs"], ["stats"], ["job"], ["environment"]];
 
 /** The query keys an event makes stale. Unknown kinds only refresh the overview. */
 export function invalidationKeys(e: ApiEvent): unknown[][] {

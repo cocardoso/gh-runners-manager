@@ -227,3 +227,23 @@ func TestRemoveEnvironmentDeletesItsLogs(t *testing.T) {
 		t.Fatal("an invalid id must be refused")
 	}
 }
+
+func TestLateLinesForARemovedEnvironmentAreDropped(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if err := s.Write(ctx, "env1", "runner", "first", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveEnvironment("env1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Append(ctx, "env1", "runner", []Line{{Seq: 9, Text: "late"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(s.dir, "env1")); !os.IsNotExist(err) {
+		t.Fatal("a late append recreated the deleted logs")
+	}
+	if streams, _ := s.db.ListLogStreams(ctx, "env1"); len(streams) != 0 {
+		t.Fatal("a late append recreated the stream's row")
+	}
+}

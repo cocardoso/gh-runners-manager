@@ -118,3 +118,19 @@ func hasEvent(t *testing.T, db *store.Store, kind string) bool {
 	}
 	return false
 }
+
+func TestAPartialCleanupIsAuditedAndReportsAWarning(t *testing.T) {
+	h := historyHarness(t)
+	ctx := context.Background()
+	tok := map[string]string{"Authorization": "Bearer " + harnessToken}
+	old := time.Now().Add(-40 * 24 * time.Hour)
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "bad id", ScaleSet: "ss", State: "destroyed", CreatedAt: old, UpdatedAt: old, StateChangedAt: old})
+	before := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	code, b := h.callCode(t, "POST", "/api/v1/history/cleanup", map[string]any{"before": before}, tok)
+	if code != 200 || !strings.Contains(string(b), `"environments":1`) || !strings.Contains(string(b), `"warning":`) {
+		t.Fatalf("%d %s; the rows are gone, so the answer says so, with a warning", code, b)
+	}
+	if !hasEvent(t, h.db, "audit.history_cleanup") {
+		t.Fatal("a committed deletion must be audited")
+	}
+}

@@ -3,7 +3,7 @@ import { Empty, LayerCard, Link } from "@cloudflare/kumo";
 import { QuestionIcon } from "@phosphor-icons/react";
 import { useParams, useSearch } from "@tanstack/react-router";
 import { ApiError } from "@/api/client";
-import { useEnvironment, useJob, useJobEvents } from "@/api/queries";
+import { useEnvironment, useJob, useJobEvents, useSettings } from "@/api/queries";
 import { ErrorState, Loading, Page, useNow } from "@/components/common";
 import { DeleteRecord } from "@/components/delete-record";
 import { DestroyEnvironment } from "@/components/destroy-environment";
@@ -25,6 +25,7 @@ export function EnvironmentDetailPage() {
   const { tab = "timeline" } = useSearch({ strict: false }) as DetailSearch;
   const now = useNow();
   const environment = useEnvironment(id);
+  const settings = useSettings();
   const jobId = environment.data?.job_id || undefined;
   const job = useJob(jobId ?? "");
   const events = useJobEvents(undefined, id);
@@ -60,7 +61,7 @@ export function EnvironmentDetailPage() {
         <>
           <EnvironmentStateBadge state={e.state} />
           {e.state === "destroyed" ? (
-            <DeleteRecord kind="environment" id={e.id} />
+            settings.data?.admin_actions === true && <DeleteRecord kind="environment" id={e.id} />
           ) : (
             <DestroyEnvironment id={e.id} disabled={e.state === "destroying"} />
           )}

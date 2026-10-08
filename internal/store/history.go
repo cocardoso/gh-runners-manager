@@ -24,7 +24,15 @@ const keptTemplateEnvs = `SELECT build_env_id FROM templates WHERE state NOT IN 
 
 const oldEnvs = `SELECT id FROM environments WHERE state = 'destroyed' AND state_changed_at < ?1 AND id NOT IN (` + keptTemplateEnvs + `)`
 
-const oldJobs = `SELECT id FROM jobs WHERE (finished_at != 0 AND finished_at < ?1) OR (environment_id != '' AND environment_id IN (` + oldEnvs + `))`
+// A finished job goes with its environment; a job without one (or whose environment is
+// already gone) goes by its own age.
+const oldJobs = `SELECT id FROM jobs WHERE (finished_at != 0 AND finished_at < ?1 AND (environment_id = '' OR environment_id NOT IN (SELECT id FROM environments)))
+	OR (environment_id != '' AND environment_id IN (` + oldEnvs + `))`
+
+// Old events, except audit events and the timelines of work that is kept (environments
+// not destroyed yet, and the build and verify environments of kept templates).
+const oldEvents = `SELECT seq FROM events WHERE ts < ?1 AND kind NOT LIKE 'audit.%' AND (environment_id = ''
+	OR (environment_id NOT IN (SELECT id FROM environments WHERE state != 'destroyed') AND environment_id NOT IN (` + keptTemplateEnvs + `)))`
 
 // querier is *sql.DB or *sql.Tx.
 type querier interface {
@@ -42,7 +50,7 @@ func countHistory(ctx context.Context, q querier, before, auditBefore int64) (Hi
 	}{
 		{&c.Environments, `SELECT COUNT(*) FROM (` + oldEnvs + `)`, []any{before}},
 		{&c.Jobs, `SELECT COUNT(*) FROM (` + oldJobs + `)`, []any{before}},
-		{&c.Events, `SELECT COUNT(*) FROM events WHERE ts < ? AND kind NOT LIKE 'audit.%'`, []any{before}},
+		{&c.Events, `SELECT COUNT(*) FROM (` + oldEvents + `)`, []any{before}},
 		{&c.AuditEvents, `SELECT COUNT(*) FROM events WHERE ts < ? AND kind LIKE 'audit.%'`, []any{auditBefore}},
 		{&c.Templates, `SELECT COUNT(*) FROM templates WHERE state IN ('failed','deleted') AND updated_at < ?`, []any{before}},
 	} {
@@ -91,7 +99,7 @@ func (s *Store) DeleteHistory(ctx context.Context, before, auditBefore time.Time
 		args []any
 	}{
 		{`DELETE FROM jobs WHERE id IN (` + oldJobs + `)`, []any{b}},
-		{`DELETE FROM events WHERE ts < ? AND kind NOT LIKE 'audit.%'`, []any{b}},
+		{`DELETE FROM events WHERE seq IN (` + oldEvents + `)`, []any{b}},
 		{`DELETE FROM events WHERE ts < ? AND kind LIKE 'audit.%'`, []any{a}},
 		{`DELETE FROM log_streams WHERE environment_id IN (` + oldEnvs + `)`, []any{b}},
 		{`DELETE FROM environments WHERE id IN (` + oldEnvs + `)`, []any{b}},
@@ -131,7 +139,7 @@ func (s *Store) DeleteEnvironmentHistory(ctx context.Context, id string) error {
 	}
 	for _, q := range []string{
 		`DELETE FROM jobs WHERE environment_id = ?`,
-		`DELETE FROM events WHERE environment_id = ?`,
+		`DELETE FROM events WHERE environment_id = ? AND kind NOT LIKE 'audit.%'`, // who did what stays
 		`DELETE FROM log_streams WHERE environment_id = ?`,
 		`DELETE FROM environments WHERE id = ?`,
 	} {

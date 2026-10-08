@@ -570,6 +570,25 @@ export interface components {
             /** @description Only count */
             dry_run?: boolean;
         };
+        CleanupResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CleanupResult.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            audit_events: number;
+            /** Format: int64 */
+            environments: number;
+            /** Format: int64 */
+            events: number;
+            /** Format: int64 */
+            jobs: number;
+            /** Format: int64 */
+            templates: number;
+            warning?: string;
+        };
         CredentialView: {
             name: string;
             /** @enum {string} */
@@ -676,24 +695,6 @@ export interface components {
             seq: number;
             /** Format: date-time */
             time: string;
-        };
-        HistoryCounts: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/HistoryCounts.json
-             */
-            readonly $schema?: string;
-            /** Format: int64 */
-            audit_events: number;
-            /** Format: int64 */
-            environments: number;
-            /** Format: int64 */
-            events: number;
-            /** Format: int64 */
-            jobs: number;
-            /** Format: int64 */
-            templates: number;
         };
         HistorySettings: {
             /**
@@ -1618,7 +1619,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HistoryCounts"];
+                    "application/json": components["schemas"]["CleanupResult"];
                 };
             };
             /** @description Error */

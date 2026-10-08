@@ -9,7 +9,7 @@ import { useAdminAction } from "@/components/admin-action";
 import { ErrorState, Loading } from "@/components/common";
 
 type Settings = components["schemas"]["HistorySettings"];
-type Counts = components["schemas"]["HistoryCounts"];
+type Counts = components["schemas"]["CleanupResult"];
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -28,8 +28,10 @@ export function describeCounts(c: Counts) {
   return total === 0 ? "Nothing to delete" : parts.join(", ");
 }
 
-function dateInput(t: Date) {
-  return t.toISOString().slice(0, 10);
+/** The browser's calendar day of t, as an input[type=date] value. */
+export function dateInput(t: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
 }
 
 function CleanupDialog({ days, onClose }: { days: number; onClose: () => void }) {
@@ -51,8 +53,12 @@ function CleanupDialog({ days, onClose }: { days: number; onClose: () => void })
     setError(undefined);
     try {
       const done = unwrap(await api.POST("/api/v1/history/cleanup", { body: { before } }));
-      toast.add({ title: "History deleted", description: describeCounts(done), variant: "success" });
-      for (const key of ["templates", "template", "environments", "environment", "jobs", "events", "overview"]) void qc.invalidateQueries({ queryKey: [key] });
+      toast.add({
+        title: "History deleted",
+        description: done.warning ? `${describeCounts(done)}. ${done.warning}` : describeCounts(done),
+        variant: done.warning ? "warning" : "success",
+      });
+      for (const key of ["templates", "template", "environments", "environment", "jobs", "job", "stats", "overview"]) void qc.invalidateQueries({ queryKey: [key] });
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -70,7 +76,7 @@ function CleanupDialog({ days, onClose }: { days: number; onClose: () => void })
           value={date}
           max={dateInput(new Date())}
           onChange={(e) => setDate(e.target.value)}
-          description="Finished environments with their jobs and logs, events, and failed or deleted template records. Running environments and the templates in use are kept."
+          description="Finished environments with their jobs and logs, events, and failed or deleted template records. Running environments and the templates in use are kept. A failed build whose record is deleted may build the same version again at the next check."
         />
         <p className="text-sm">{preview ? describeCounts(preview) : "Counting…"}</p>
         {(error ?? previewQuery.error) && <Banner variant="error" title={error ?? String(previewQuery.error)} />}

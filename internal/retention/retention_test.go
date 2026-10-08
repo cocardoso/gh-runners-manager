@@ -157,3 +157,78 @@ func TestNextRunIsHalfPastTheHour(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestSettingsAreOneRecordAndBadStoredValuesFallBack(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	want := Settings{Mode: ModeManual, Days: 7, AuditDays: 90}
+	if err := h.r.PutSettings(ctx, want); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := h.db.GetMeta(ctx, metaKey); err != nil || v == "" {
+		t.Fatalf("settings record = %q, %v; written at once, as one record", v, err)
+	}
+	for stored, want := range map[string]Settings{
+		`{"mode":"sometimes","days":0,"audit_days":5}`: Defaults,
+		`{"mode":"manual","days":-3,"audit_days":400}`: {Mode: ModeManual, Days: 30, AuditDays: 400},
+		`{"mode":"manual","days":60,"audit_days":30}`:  {Mode: ModeManual, Days: 60, AuditDays: 365},
+		`not json`: Defaults,
+	} {
+		_ = h.db.PutMeta(ctx, metaKey, stored)
+		if got, err := h.r.Settings(ctx); err != nil || got != want {
+			t.Errorf("stored %s: got %+v, %v; want %+v", stored, got, err, want)
+		}
+	}
+}
+
+func TestCleanAfterTheCommitIsBestEffort(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.oldDestroyedEnv(t, "env1")
+	at := h.now.Add(-40 * 24 * time.Hour)
+	// An id the log store refuses: its directory cannot be removed.
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "bad id", ScaleSet: "ss", State: "destroyed", CreatedAt: at, UpdatedAt: at, StateChangedAt: at})
+	before, audit, _ := h.r.Cutoffs(ctx)
+	c, err := h.r.Clean(ctx, before, audit)
+	if !errors.Is(err, ErrPartial) || c.Environments != 2 {
+		t.Fatalf("clean = %+v, %v; want both rows deleted and ErrPartial", c, err)
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "env1")); !os.IsNotExist(err) {
+		t.Fatal("one failure stopped the removal of the other directories")
+	}
+}
+
+func TestVacuumOnlyAfterLargeDeletions(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	vacuums := 0
+	h.r.vacuum = func(context.Context) error { vacuums++; return nil }
+	h.oldDestroyedEnv(t, "env1")
+	before, audit, _ := h.r.Cutoffs(ctx)
+	if _, err := h.r.Clean(ctx, before, audit); err != nil || vacuums != 0 {
+		t.Fatalf("vacuums = %d, %v; a small cleanup does not rewrite the database", vacuums, err)
+	}
+	h.r.VacuumMin = 1
+	h.oldDestroyedEnv(t, "env2")
+	if _, err := h.r.Clean(ctx, before, audit); err != nil || vacuums != 1 {
+		t.Fatalf("vacuums = %d, %v", vacuums, err)
+	}
+}
+
+func TestSweepReportsAPartialCleanup(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	at := h.now.Add(-40 * 24 * time.Hour)
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "bad id", ScaleSet: "ss", State: "destroyed", CreatedAt: at, UpdatedAt: at, StateChangedAt: at})
+	if _, ran, err := h.r.Sweep(ctx); !ran || !errors.Is(err, ErrPartial) {
+		t.Fatalf("ran=%v err=%v", ran, err)
+	}
+	kinds := map[string]bool{}
+	evs, _ := h.db.ListEvents(ctx, store.EventFilter{})
+	for _, e := range evs {
+		kinds[e.Kind] = true
+	}
+	if !kinds["retention.cleaned"] || !kinds["retention.incomplete"] || kinds["retention.failed"] {
+		t.Fatalf("events = %v; the deletion happened (cleaned) and the leftovers are a warning", kinds)
+	}
+}

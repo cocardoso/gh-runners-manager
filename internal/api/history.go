@@ -18,6 +18,13 @@ import (
 // HistorySettings says whether history is cleaned every day and how long it is kept.
 type HistorySettings retention.Settings
 
+// CleanupResult is how much history a cleanup deleted (or would delete), with a warning
+// when the rows went but their log files or the compaction did not.
+type CleanupResult struct {
+	store.HistoryCounts
+	Warning string `json:"warning,omitempty"`
+}
+
 // registerHistory adds the history settings, cleanup and record deletion endpoints.
 func registerHistory(a huma.API, d Deps) {
 	tags := []string{"history"}
@@ -56,7 +63,7 @@ func registerHistory(a huma.API, d Deps) {
 	}
 	huma.Register(a, huma.Operation{OperationID: "cleanup-history", Method: http.MethodPost, Path: "/api/v1/history/cleanup",
 		Summary: "Delete (or count) history older than a date", Tags: tags},
-		func(ctx context.Context, in *cleanupIn) (*struct{ Body store.HistoryCounts }, error) {
+		func(ctx context.Context, in *cleanupIn) (*struct{ Body CleanupResult }, error) {
 			if d.History == nil {
 				return nil, unavailable()
 			}
@@ -72,15 +79,20 @@ func registerHistory(a huma.API, d Deps) {
 			}
 			if in.Body.DryRun {
 				c, err := d.History.Preview(ctx, in.Body.Before, audit0)
-				return &struct{ Body store.HistoryCounts }{c}, err
+				return &struct{ Body CleanupResult }{CleanupResult{HistoryCounts: c}}, err
 			}
 			c, err := d.History.Clean(ctx, in.Body.Before, audit0)
-			if err != nil {
+			if err != nil && !errors.Is(err, retention.ErrPartial) {
 				return nil, err
 			}
-			audit(ctx, d, "history_cleanup", fmt.Sprintf("history before %s deleted by %s: %d environments, %d jobs, %d events, %d audit events, %d templates",
-				in.Body.Before.UTC().Format(time.DateOnly), Actor(ctx), c.Environments, c.Jobs, c.Events, c.AuditEvents, c.Templates), events.Refs{}, map[string]any{"counts": c})
-			return &struct{ Body store.HistoryCounts }{c}, nil
+			// The rows are gone once Clean gets past the delete: say so, and audit it.
+			out := CleanupResult{HistoryCounts: c}
+			if err != nil {
+				out.Warning = err.Error()
+			}
+			audit(ctx, d, "history_cleanup", fmt.Sprintf("history before %s deleted by %s: %s", in.Body.Before.Format(time.RFC3339), Actor(ctx), retention.Describe(c)),
+				events.Refs{}, map[string]any{"counts": c, "before": in.Body.Before})
+			return &struct{ Body CleanupResult }{out}, nil
 		})
 	type idPath struct {
 		ID string `path:"id"`
