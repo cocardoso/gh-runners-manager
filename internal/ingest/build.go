@@ -53,6 +53,9 @@ type BuildSpec struct {
 	// AgentSHA256 is the control plane's ghrm-agent; a builder running another
 	// agent updates itself first (it is a clone of the active template).
 	AgentSHA256 string `json:"agent_sha256,omitempty"`
+	// CacheMirrors points the template at the registry cache ("origin=host:port,...";
+	// empty: no cache).
+	CacheMirrors string `json:"cache_mirrors,omitempty"`
 }
 
 // Check is one self-test result.

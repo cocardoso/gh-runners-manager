@@ -103,7 +103,7 @@ func (f *fakeIngest) handler(t *testing.T) http.Handler {
 	})
 	mux.HandleFunc("GET "+ingest.BuildSpecPath, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(ingest.BuildSpec{TemplateID: "tpl1", SlimTag: "ubuntu-slim/20261005.17", RunnerVersion: "2.338.0",
-			RunnerSHA256: strings.Repeat("c", 64), LayerVersion: "1", AgentSHA256: f.agentSHA})
+			RunnerSHA256: strings.Repeat("c", 64), LayerVersion: "1", AgentSHA256: f.agentSHA, CacheMirrors: "docker.io=10.50.0.3:5000"})
 	})
 	mux.HandleFunc("GET "+ingest.BuildAgentPath, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(f.agent)
@@ -184,7 +184,7 @@ func TestRunBuildBuildsTheOfficialRecipeThenTheLayer(t *testing.T) {
 	for _, want := range []string{
 		"git clone --depth 1 --branch ubuntu-slim/20261005.17 https://github.com/actions/runner-images " + filepath.Join(work, "runner-images"),
 		"docker build --progress=plain --build-arg IMAGE_VERSION=20261005.17 -t ghrm-slim:tpl1 " + filepath.Join(work, "runner-images", "images", "ubuntu-slim"),
-		"docker build --progress=plain --build-arg BASE=ghrm-slim:tpl1 --build-arg RUNNER_VERSION=2.338.0 --build-arg RUNNER_SHA256=" + strings.Repeat("c", 64) + " --build-arg LAYER_VERSION=1 -t ghrm-tpl:tpl1 " + filepath.Join(work, "layer"),
+		"docker build --progress=plain --build-arg BASE=ghrm-slim:tpl1 --build-arg RUNNER_VERSION=2.338.0 --build-arg RUNNER_SHA256=" + strings.Repeat("c", 64) + " --build-arg LAYER_VERSION=1 --build-arg CACHE_MIRRORS=docker.io=10.50.0.3:5000 -t ghrm-tpl:tpl1 " + filepath.Join(work, "layer"),
 		"docker create --name ghrm-export-tpl1 ghrm-tpl:tpl1",
 		"docker export ghrm-export-tpl1",
 	} {

@@ -696,3 +696,36 @@ func TestRecordedCloneKeepsATemplateInUse(t *testing.T) {
 		t.Fatal("a recorded live clone must keep the template in use")
 	}
 }
+
+func testCache() config.Cache {
+	return config.Cache{Address: "10.50.0.3",
+		Ports:        map[string]int{"docker.io": 5000, "ghcr.io": 5001, "mcr.microsoft.com": 5002, "quay.io": 5003},
+		MetricsPorts: map[string]int{"docker.io": 5100, "ghcr.io": 5101, "mcr.microsoft.com": 5102, "quay.io": 5103}, ExporterPort: 5199}
+}
+
+// Turning the cache on, off or moving it must rebuild the templates (their mirror files change).
+func TestCacheChangesTheLayerVersion(t *testing.T) {
+	h := newService(t, nil)
+	without := h.s.layerVersion()
+	h.s.d.Cache = testCache()
+	with := h.s.layerVersion()
+	moved := testCache()
+	moved.Address = "10.50.0.4"
+	h.s.d.Cache = moved
+	if without == with || with == h.s.layerVersion() || !strings.HasPrefix(with, layerVersionPrefix()) {
+		t.Fatalf("versions %q / %q / %q; want three different ones", without, with, h.s.layerVersion())
+	}
+}
+
+func TestBuildSpecCarriesTheCacheMirrors(t *testing.T) {
+	h := newService(t, nil)
+	h.s.d.Cache = testCache()
+	tpl, err := h.s.Build(context.Background(), "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := h.s.BuildSpec(context.Background(), tpl.BuildEnvID)
+	if err != nil || spec.CacheMirrors != testCache().Mirrors() {
+		t.Fatalf("spec = %+v, %v", spec, err)
+	}
+}

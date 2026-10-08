@@ -134,7 +134,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	ctl := controller.New(controller.Deps{Store: db, Recorder: rec, Runtime: rt, GitHub: gh, Logs: logStore, Config: cfg,
 		IngestURL: cfg.Ingest.AdvertiseURL, IngestFingerprint: fingerprint})
 	tpl := template.NewService(template.Deps{Store: db, Recorder: rec, Logs: logStore, Runtime: rt, Environments: ctl,
-		Releases: template.NewGitHubReleases("", "", nil), Config: cfg.Templates, BootstrapVMID: p.TemplateVMID, DataDir: cfg.DataDir})
+		Releases: template.NewGitHubReleases("", "", nil), Config: cfg.Templates, Cache: cfg.Cache, BootstrapVMID: p.TemplateVMID, DataDir: cfg.DataDir})
 	if err := tpl.EnsureBootstrap(ctx); err != nil {
 		return err
 	}

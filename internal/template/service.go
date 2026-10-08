@@ -51,6 +51,8 @@ type Deps struct {
 	Environments Environments
 	Releases     Releases
 	Config       config.Templates
+	// Cache is the registry cache job templates pull through (M6); disabled when empty.
+	Cache config.Cache
 	// BootstrapVMID is proxmox.template_vmid, the template used until the first build is active.
 	BootstrapVMID int
 	DataDir       string
@@ -188,6 +190,10 @@ func (s *Service) layerVersion() string {
 	if err != nil {
 		return layer.Version
 	}
+	if m := s.d.Cache.Mirrors(); m != "" { // the cache's settings are part of the layer
+		h := sha256.Sum256([]byte(sum + "\n" + m))
+		sum = hex.EncodeToString(h[:])
+	}
 	return layerVersionPrefix() + sum[:12]
 }
 
@@ -282,7 +288,7 @@ func (s *Service) BuildSpec(ctx context.Context, envID string) (ingest.BuildSpec
 		return ingest.BuildSpec{}, ingest.ErrWrongKind
 	}
 	spec := ingest.BuildSpec{TemplateID: t.ID, SlimTag: slimPrefix + t.SlimRelease, RunnerVersion: t.RunnerVersion,
-		RunnerSHA256: t.RunnerSHA256, LayerVersion: t.LayerVersion}
+		RunnerSHA256: t.RunnerSHA256, LayerVersion: t.LayerVersion, CacheMirrors: s.d.Cache.Mirrors()}
 	if t.BuildEnvID == envID {
 		spec.AgentSHA256, _ = s.agentSHA256()
 	}
