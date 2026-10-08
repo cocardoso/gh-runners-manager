@@ -1,7 +1,7 @@
 import type { ApiEvent, Environment, Job } from "@/api/client";
 import { isSet } from "./format";
 import { tr } from "@/i18n";
-import { stateLabel } from "@/components/status-badge";
+import { stateLabel } from "@/i18n/labels";
 
 export type StageStatus = "done" | "current" | "failed";
 

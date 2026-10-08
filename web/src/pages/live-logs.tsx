@@ -7,7 +7,7 @@ import { api, unwrap, type ApiEvent } from "@/api/client";
 import { Page } from "@/components/common";
 import { ListToolbar } from "@/components/list-toolbar";
 import { LevelBadge } from "@/components/status-badge";
-import { currentLocale, tr, useT } from "@/i18n";
+import { currentFormatLocale, tr, useT } from "@/i18n";
 import { formatNumber } from "@/lib/format";
 import { useLiveEvents } from "@/lib/live";
 import type { ListSearch } from "@/router";
@@ -32,7 +32,7 @@ function Row({ e }: { e: ApiEvent }) {
   return (
     <div role="listitem" className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-kumo-line px-3 py-1.5 text-sm sm:flex-nowrap">
       <time className="shrink-0 font-mono text-xs text-kumo-subtle tabular-nums" dateTime={e.time}>
-        {new Date(e.time).toLocaleTimeString(currentLocale(), { hour12: false })}
+        {new Date(e.time).toLocaleTimeString(currentFormatLocale(), { hour12: false })}
       </time>
       <span className="shrink-0">
         <LevelBadge level={e.level} />
@@ -151,7 +151,7 @@ export function LiveLogsPage() {
         onClear={() => void navigate({ to: "/logs", search: {}, replace: true })}
       >
         <span className="text-sm text-kumo-subtle" aria-live="polite">
-          {paused ? t("environments.liveLogs.paused", { n: formatNumber(pending) }) : t("environments.liveLogs.count", { count: filtered.length, n: formatNumber(filtered.length) })}
+          {paused ? t("environments.liveLogs.paused", { count: pending, n: formatNumber(pending) }) : t("environments.liveLogs.count", { count: filtered.length, n: formatNumber(filtered.length) })}
         </span>
       </ListToolbar>
       {error && <p className="text-sm text-kumo-danger">{error}</p>}

@@ -1,10 +1,10 @@
 import * as echarts from "echarts";
 import { ChartPalette, TimeseriesChart } from "@cloudflare/kumo";
 import { useIsDark } from "@/lib/theme";
-import { currentLocale, useT } from "@/i18n";
+import { currentFormatLocale, useT } from "@/i18n";
 import type { ResourcesChartProps } from "./resources-chart";
 
-const time = (v: number) => new Date(v).toLocaleTimeString(currentLocale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const time = (v: number) => new Date(v).toLocaleTimeString(currentFormatLocale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 export default function ResourcesChartImpl({ cpu, memoryMB, memoryLimitMB }: ResourcesChartProps) {
   const dark = useIsDark();

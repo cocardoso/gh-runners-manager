@@ -1,28 +1,16 @@
-import type { ReactNode } from "react";
+import { withNode } from "@/i18n/nodes";
 import { Badge, LayerCard, Meter, Table } from "@cloudflare/kumo";
 import { useCache } from "@/api/queries";
 import { useT } from "@/i18n";
-import { formatNumber, formatPercent } from "@/lib/format";
+import { formatNumber, formatPercent, formatGB } from "@/lib/format";
 import { ErrorState, Loading, RelativeTime } from "./common";
 
-const gb = (bytes: number) => `${formatNumber(Math.round(bytes / 1024 ** 3))} GB`;
 
 function ratio(hits: number, misses: number) {
   const total = hits + misses;
   return total > 0 ? formatPercent(hits / total) : "—";
 }
 
-/** Puts node where {time} is in a translated text. */
-function withTime(text: string, node: ReactNode) {
-  const [before, after = ""] = text.split("{time}");
-  return (
-    <>
-      {before}
-      {node}
-      {after}
-    </>
-  );
-}
 
 /** The registry cache on the job network: whether each origin answers, how often images come from it, and its disk. */
 // checked is false until the control plane has checked the cache once (Go's zero time).
@@ -69,10 +57,10 @@ export function CacheCard() {
                   <span className="text-kumo-subtle">
                     {!cache.data.up && cache.data.down_since ? (
                       <>
-                        {withTime(t("settings.cache.downSince"), <RelativeTime value={cache.data.down_since} />)}{" "}
+                        {withNode(t("settings.cache.downSince"), "{time}", <RelativeTime value={cache.data.down_since} />)}{" "}
                       </>
                     ) : null}
-                    {withTime(t("settings.cache.checked"), <RelativeTime value={cache.data.checked_at} />)}
+                    {withNode(t("settings.cache.checked"), "{time}", <RelativeTime value={cache.data.checked_at} />)}
                   </span>
                 )}
               </div>
@@ -81,7 +69,7 @@ export function CacheCard() {
                   label={t("settings.cache.disk")}
                   value={cache.data.disk_used_bytes}
                   max={cache.data.disk_budget_bytes}
-                  customValue={t("settings.cache.diskValue", { used: gb(cache.data.disk_used_bytes), budget: gb(cache.data.disk_budget_bytes) })}
+                  customValue={t("settings.cache.diskValue", { used: formatGB(cache.data.disk_used_bytes), budget: formatGB(cache.data.disk_budget_bytes) })}
                 />
               )}
               <Table aria-label={t("settings.cache.origins")}>

@@ -23,7 +23,9 @@ export function EnvironmentPanel({ environment: e, jobLink = true }: { environme
       <LayerCard.Primary className="p-0">
         <dl>
           <Row label={t("overview.environment.id")}>
-            <InlineCopyText variant="mono">{e.id}</InlineCopyText>
+            <InlineCopyText variant="mono" labels={{ copyAction: t("shell.copy.action"), copied: t("shell.copy.copied") }}>
+              {e.id}
+            </InlineCopyText>
           </Row>
           <Row label={t("overview.environment.state")}>
             <EnvironmentStateBadge state={e.state} />

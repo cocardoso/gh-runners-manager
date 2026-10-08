@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useHistorySettings } from "@/api/queries";
+import { formatNumber } from "@/lib/format";
 import { useAdminAction } from "@/components/admin-action";
 import { ErrorState, Loading } from "@/components/common";
 import { tr, useT } from "@/i18n";
@@ -18,11 +19,11 @@ const DAY = 24 * 60 * 60 * 1000;
 export function describeCounts(c: Counts) {
   if (countTotal(c) === 0) return tr("settings.history.nothing");
   return [
-    tr("settings.history.environments", { count: c.environments }),
-    tr("settings.history.jobs", { count: c.jobs }),
-    tr("settings.history.events", { count: c.events }),
-    tr("settings.history.auditEvents", { count: c.audit_events }),
-    tr("settings.history.templateRecords", { count: c.templates }),
+    tr("settings.history.environments", { count: c.environments, n: formatNumber(c.environments) }),
+    tr("settings.history.jobs", { count: c.jobs, n: formatNumber(c.jobs) }),
+    tr("settings.history.events", { count: c.events, n: formatNumber(c.events) }),
+    tr("settings.history.auditEvents", { count: c.audit_events, n: formatNumber(c.audit_events) }),
+    tr("settings.history.templateRecords", { count: c.templates, n: formatNumber(c.templates) }),
   ].join(", ");
 }
 

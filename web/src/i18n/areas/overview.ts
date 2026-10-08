@@ -19,7 +19,7 @@ const en = {
     memoryCommitted: "Memory committed",
     hostMemory: "Host memory in use",
     disk: "Disk (thin pool)",
-    diskValue: "{percent}% (limit {limit}%)",
+    diskValue: "{percent} (limit {limit})",
   },
   now: {
     title: "Now",
@@ -74,7 +74,7 @@ const en = {
       title: "No job matches these filters",
       description: "Change or clear the filters to see more jobs.",
     },
-    pending: "{count} new — move the pointer away to show them",
+    pending: { one: "{n} new — move the pointer away to show it", other: "{n} new — move the pointer away to show them" },
     count: { one: "{n} job", other: "{n} jobs" },
     countCapped: {
       one: "{n} job (only the newest {limit} matching jobs are loaded)",
@@ -162,7 +162,7 @@ export const overview: Record<Locale, typeof en> = {
       memoryCommitted: "Memória reservada",
       hostMemory: "Memória do host em uso",
       disk: "Disco (thin pool)",
-      diskValue: "{percent}% (limite {limit}%)",
+      diskValue: "{percent} (limite {limit})",
     },
     now: {
       title: "Agora",
@@ -172,8 +172,8 @@ export const overview: Record<Locale, typeof en> = {
     },
     fresh: {
       title: "Nenhum job ainda",
-      listening: "O control plane está escutando. Aponte um job de workflow para um scale set e ele vai rodar em um ambiente novo.",
-      configure: "Configure um scale set no ghrm.yaml, reinicie o control plane e aponte um job de workflow para ele.",
+      listening: "O plano de controle está escutando. Aponte um job de workflow para um scale set e ele vai rodar em um ambiente novo.",
+      configure: "Configure um scale set no ghrm.yaml, reinicie o plano de controle e aponte um job de workflow para ele.",
     },
     chart: {
       title: "Jobs por hora",
@@ -217,7 +217,7 @@ export const overview: Record<Locale, typeof en> = {
         title: "Nenhum job corresponde a estes filtros",
         description: "Altere ou limpe os filtros para ver mais jobs.",
       },
-      pending: "{count} novos — afaste o ponteiro para exibi-los",
+      pending: { one: "{n} novo — afaste o ponteiro para exibi-lo", other: "{n} novos — afaste o ponteiro para exibi-los" },
       count: { one: "{n} job", other: "{n} jobs" },
       countCapped: {
         one: "{n} job (só os {limit} jobs correspondentes mais recentes são carregados)",
@@ -302,7 +302,7 @@ export const overview: Record<Locale, typeof en> = {
       memoryCommitted: "Memoria reservada",
       hostMemory: "Memoria del host en uso",
       disk: "Disco (thin pool)",
-      diskValue: "{percent} % (límite {limit} %)",
+      diskValue: "{percent} (límite {limit})",
     },
     now: {
       title: "Ahora",
@@ -312,13 +312,13 @@ export const overview: Record<Locale, typeof en> = {
     },
     fresh: {
       title: "Aún no hay jobs",
-      listening: "El control plane está escuchando. Dirige un job de un workflow a un scale set y se ejecutará en un entorno nuevo.",
-      configure: "Configura un scale set en ghrm.yaml, reinicia el control plane y luego dirige un job de un workflow a él.",
+      listening: "El plano de control está escuchando. Dirige un job de un workflow a un scale set y se ejecutará en un entorno nuevo.",
+      configure: "Configura un scale set en ghrm.yaml, reinicia el plano de control y luego dirige un job de un workflow a él.",
     },
     chart: {
       title: "Jobs por hora",
       empty: "Ningún job terminó en las últimas 24 horas.",
-      succeeded: "Correcto",
+      succeeded: "Exitoso",
       failed: "Falló",
       canceled: "Cancelado",
       other: "Otro",
@@ -339,7 +339,7 @@ export const overview: Record<Locale, typeof en> = {
       status: {
         running: "En ejecución",
         assigned: "En espera",
-        succeeded: "Correcto",
+        succeeded: "Exitoso",
         failed: "Falló",
         canceled: "Cancelado",
       },
@@ -357,7 +357,7 @@ export const overview: Record<Locale, typeof en> = {
         title: "Ningún job coincide con estos filtros",
         description: "Cambia o borra los filtros para ver más jobs.",
       },
-      pending: "{count} nuevos — aparta el puntero para mostrarlos",
+      pending: { one: "{n} nuevo — aparta el puntero para mostrarlo", other: "{n} nuevos — aparta el puntero para mostrarlos" },
       count: { one: "{n} job", other: "{n} jobs" },
       countCapped: {
         one: "{n} job (solo se cargan los {limit} jobs coincidentes más recientes)",
@@ -442,7 +442,7 @@ export const overview: Record<Locale, typeof en> = {
       memoryCommitted: "Mémoire réservée",
       hostMemory: "Mémoire de l'hôte utilisée",
       disk: "Disque (thin pool)",
-      diskValue: "{percent} % (limite {limit} %)",
+      diskValue: "{percent} (limite {limit})",
     },
     now: {
       title: "Maintenant",
@@ -452,8 +452,8 @@ export const overview: Record<Locale, typeof en> = {
     },
     fresh: {
       title: "Aucun job pour l'instant",
-      listening: "Le control plane est à l'écoute. Dirigez un job de workflow vers un scale set et il s'exécutera dans un nouvel environnement.",
-      configure: "Configurez un scale set dans ghrm.yaml, redémarrez le control plane, puis dirigez un job de workflow vers lui.",
+      listening: "Le plan de contrôle est à l'écoute. Dirigez un job de workflow vers un scale set et il s'exécutera dans un nouvel environnement.",
+      configure: "Configurez un scale set dans ghrm.yaml, redémarrez le plan de contrôle, puis dirigez un job de workflow vers lui.",
     },
     chart: {
       title: "Jobs par heure",
@@ -497,7 +497,7 @@ export const overview: Record<Locale, typeof en> = {
         title: "Aucun job ne correspond à ces filtres",
         description: "Modifiez ou effacez les filtres pour voir plus de jobs.",
       },
-      pending: "{count} nouveaux — éloignez le pointeur pour les afficher",
+      pending: { one: "{n} nouveau — éloignez le pointeur pour l'afficher", other: "{n} nouveaux — éloignez le pointeur pour les afficher" },
       count: { one: "{n} job", other: "{n} jobs" },
       countCapped: {
         one: "{n} job (seuls les {limit} jobs correspondants les plus récents sont chargés)",
@@ -540,7 +540,7 @@ export const overview: Record<Locale, typeof en> = {
       cpuTitle: "CPU (% d'un cœur)",
       cpuDescription: "Utilisation du CPU par l'environnement au fil du temps.",
       memory: "Mémoire",
-      memoryTitle: "Mémoire (MB)",
+      memoryTitle: "Mémoire (Mo)",
       memoryDescription: "Mémoire utilisée par l'environnement au fil du temps.",
       limit: "Limite",
     },
@@ -549,7 +549,7 @@ export const overview: Record<Locale, typeof en> = {
       id: "ID",
       state: "État",
       failure: "Échec",
-      failureAt: "à l'étape {stage} : {reason}",
+      failureAt: "à l'étape {stage} : {reason}",
       noReason: "aucune raison enregistrée",
       scaleSet: "Scale set",
       runtimeRef: "Référence du runtime",
@@ -582,7 +582,7 @@ export const overview: Record<Locale, typeof en> = {
       memoryCommitted: "Memoria riservata",
       hostMemory: "Memoria dell'host in uso",
       disk: "Disco (thin pool)",
-      diskValue: "{percent}% (limite {limit}%)",
+      diskValue: "{percent} (limite {limit})",
     },
     now: {
       title: "Adesso",
@@ -592,8 +592,8 @@ export const overview: Record<Locale, typeof en> = {
     },
     fresh: {
       title: "Ancora nessun job",
-      listening: "Il control plane è in ascolto. Indirizza un job di un workflow a uno scale set e verrà eseguito in un ambiente nuovo.",
-      configure: "Configura uno scale set in ghrm.yaml, riavvia il control plane, poi indirizzaci un job di un workflow.",
+      listening: "Il piano di controllo è in ascolto. Indirizza un job di un workflow a uno scale set e verrà eseguito in un ambiente nuovo.",
+      configure: "Configura uno scale set in ghrm.yaml, riavvia il piano di controllo, poi indirizzaci un job di un workflow.",
     },
     chart: {
       title: "Job all'ora",
@@ -605,7 +605,7 @@ export const overview: Record<Locale, typeof en> = {
       description: "Job terminati all'ora nelle ultime 24 ore, per risultato.",
     },
     jobs: {
-      title: "Jobs",
+      title: "Job",
       description: "Ogni job che GitHub ha assegnato a uno scale set, aggiornato in tempo reale.",
       search: "Cerca job",
       columns: {
@@ -637,7 +637,7 @@ export const overview: Record<Locale, typeof en> = {
         title: "Nessun job corrisponde a questi filtri",
         description: "Modifica o cancella i filtri per vedere più job.",
       },
-      pending: "{count} nuovi — sposta il puntatore per mostrarli",
+      pending: { one: "{n} nuovo — sposta il puntatore per mostrarlo", other: "{n} nuovi — sposta il puntatore per mostrarli" },
       count: { one: "{n} job", other: "{n} job" },
       countCapped: {
         one: "{n} job (vengono caricati solo i {limit} job corrispondenti più recenti)",

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, type ReactNode } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Dialog, DialogRoot, DialogTitle, DialogClose, Input, Button, cn, Banner } from "@cloudflare/kumo";
 import {
   CheckIcon,
@@ -6,19 +6,9 @@ import {
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
+import { withNode } from "@/i18n/nodes";
 import { tr } from "@/i18n";
 
-/** Places a node where {name} sits in a translated sentence. */
-function around(text: string, node: ReactNode): ReactNode {
-  const [before, after = ""] = text.split("{name}");
-  return (
-    <>
-      {before}
-      {node}
-      {after}
-    </>
-  );
-}
 
 export const KUMO_DELETE_RESOURCE_VARIANTS = {
   size: {
@@ -141,8 +131,9 @@ export function DeleteResource({
               </Banner>
             )}
             <p className="max-w-prose text-base text-pretty text-kumo-subtle">
-              {around(
+              {withNode(
                 tr("shell.deleteResource.warning", { type: resourceType.toLowerCase() }),
+                "{name}",
                 <span className="font-medium text-kumo-default">
                   {resourceName}
                 </span>,
@@ -153,8 +144,9 @@ export function DeleteResource({
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-1.5 text-base">
               <span>
-                {around(
+                {withNode(
                   tr("shell.deleteResource.typeToConfirm"),
+                  "{name}",
                   <button
                     className="group inline rounded-md bg-kumo-tint px-2 py-1 font-mono text-sm font-semibold hover:cursor-pointer hover:bg-kumo-fill"
                     onClick={handleCopy}

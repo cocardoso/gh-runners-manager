@@ -1,6 +1,7 @@
 import { Badge } from "@cloudflare/kumo";
-import { tr, type Key } from "@/i18n";
-import { en } from "@/i18n/en";
+import { stateLabel } from "@/i18n/labels";
+
+export { stateLabel };
 
 export type Tone = "success" | "error" | "warning" | "info" | "neutral";
 
@@ -38,9 +39,6 @@ export function toneFor(kind: keyof typeof tones, value: string | undefined): To
 }
 
 /** A state, status, result or level in the language in use; values the UI does not know show raw. */
-export function stateLabel(value: string): string {
-  return Object.hasOwn(en.shell.state, value) ? tr(`shell.state.${value}` as Key) : value;
-}
 
 function ToneBadge({ tone, children }: { tone: Tone; children: string }) {
   return (

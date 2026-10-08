@@ -5,7 +5,7 @@ import { useEnvironments, useJobStats, useJobs, useOverview, useScaleSets } from
 import { ErrorState, Loading, Page, RelativeTime, Truncate } from "@/components/common";
 import { EnvironmentStateBadge } from "@/components/status-badge";
 import { JobsChart } from "@/components/jobs-chart";
-import { formatDuration, formatMB, formatPercent } from "@/lib/format";
+import { formatDuration, formatMB, formatPercent, formatNumber } from "@/lib/format";
 import { useT } from "@/i18n";
 
 const ACTIVE = new Set(["pending", "provisioning", "booting", "connected", "idle", "running", "completing", "destroying", "failed"]);
@@ -54,7 +54,7 @@ function Capacity({ c }: { c: Overview["capacity"] }) {
           label={t("overview.capacity.environments")}
           value={c.environments_live}
           max={Math.max(c.environments_max, 1)}
-          customValue={`${c.environments_live} / ${c.environments_max}`}
+          customValue={`${formatNumber(c.environments_live)} / ${formatNumber(c.environments_max)}`}
         />
         <Meter
           label={t("overview.capacity.memoryCommitted")}
@@ -74,7 +74,7 @@ function Capacity({ c }: { c: Overview["capacity"] }) {
           label={t("overview.capacity.disk")}
           value={c.disk_percent}
           max={100}
-          customValue={t("overview.capacity.diskValue", { percent: Math.round(c.disk_percent), limit: Math.round(c.disk_max_percent) })}
+          customValue={t("overview.capacity.diskValue", { percent: formatPercent(c.disk_percent / 100), limit: formatPercent(c.disk_max_percent / 100) })}
         />
       </LayerCard.Primary>
     </LayerCard>
@@ -162,10 +162,10 @@ export function OverviewPage() {
       <Grid variant="1-2-4up" gap="base">
         <Kpi
           label={t("overview.kpis.runningJobs")}
-          value={String(k.running_jobs)}
+          value={formatNumber(k.running_jobs)}
           hint={k.waiting_demand > 0 ? t("overview.kpis.waitingDemand", { count: k.waiting_demand }) : t("overview.kpis.noDemand")}
         />
-        <Kpi label={t("overview.kpis.jobs24h")} value={String(k.jobs_24h)} />
+        <Kpi label={t("overview.kpis.jobs24h")} value={formatNumber(k.jobs_24h)} />
         <Kpi label={t("overview.kpis.successRate24h")} value={k.jobs_24h > 0 ? formatPercent(k.success_rate_24h) : "—"} />
         <Kpi
           label={t("overview.kpis.medianQueue24h")}

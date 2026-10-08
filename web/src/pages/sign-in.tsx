@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
+import { withNode } from "@/i18n/nodes";
 import { Banner, Button, Input, LayerCard, SensitiveInput } from "@cloudflare/kumo";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "@/api/client";
@@ -10,17 +11,6 @@ export const MIN_PASSWORD = 12;
 
 const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^auth: /, "") : String(e));
 
-/** Puts node where placeholder is in a translated text. */
-function withNode(text: string, placeholder: string, node: ReactNode): ReactNode {
-  const [before, after = ""] = text.split(placeholder);
-  return (
-    <>
-      {before}
-      {node}
-      {after}
-    </>
-  );
-}
 
 function Centered({ title, description, children }: { title: string; description: ReactNode; children: ReactNode }) {
   return (

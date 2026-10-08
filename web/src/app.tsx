@@ -4,7 +4,7 @@ import { RouterProvider, type RouterHistory } from "@tanstack/react-router";
 import { Toasty, TooltipProvider } from "@cloudflare/kumo";
 import { LiveProvider } from "@/lib/live";
 import { onUnauthorized } from "@/api/auth-state";
-import { I18nProvider, type Locale } from "@/i18n";
+import { I18nProvider, I18nRemount, type Locale } from "@/i18n";
 import { createAppRouter } from "./router";
 
 export function newQueryClient() {
@@ -45,7 +45,9 @@ export function App({
         <LiveProvider createEventSource={createEventSource}>
           <TooltipProvider>
             <Toasty>
-              <RouterProvider router={router} />
+              <I18nRemount>
+                <RouterProvider router={router} />
+              </I18nRemount>
             </Toasty>
           </TooltipProvider>
         </LiveProvider>

@@ -91,7 +91,7 @@ function AppShell({ username }: { username?: string }) {
             </Sidebar.Group>
           </Sidebar.Content>
           <Sidebar.Footer>
-            <Sidebar.Trigger />
+            <Sidebar.Trigger aria-label={t("shell.sidebar.toggle")} />
           </Sidebar.Footer>
         </Sidebar>
         <div className="flex min-w-0 flex-1 flex-col bg-kumo-canvas">

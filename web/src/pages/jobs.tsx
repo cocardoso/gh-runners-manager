@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Empty, LayerCard, Link, Pagination, Table } from "@cloudflare/kumo";
+import { Empty, LayerCard, Link, Table } from "@cloudflare/kumo";
 import { BriefcaseIcon, FunnelSimpleIcon } from "@phosphor-icons/react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { Job } from "@/api/client";
@@ -8,6 +8,7 @@ import { ErrorState, Loading, Page, RelativeTime, Truncate, useNow } from "@/com
 import { JobStatusBadge } from "@/components/status-badge";
 import { ListToolbar } from "@/components/list-toolbar";
 import { durationBetween, formatDuration, formatNumber, isSet } from "@/lib/format";
+import { AppPagination } from "@/components/app-pagination";
 import { useT, type Key } from "@/i18n";
 import { useFrozenOrder } from "@/lib/frozen-order";
 import type { ListSearch } from "@/router";
@@ -132,14 +133,14 @@ export function JobsPage() {
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-kumo-line px-3 py-2">
           <span className="text-sm text-kumo-subtle" aria-live="polite">
             {pending > 0
-              ? t("overview.jobs.pending", { count: pending })
+              ? t("overview.jobs.pending", { count: pending, n: formatNumber(pending) })
               : t(all.length >= LIST_LIMIT ? "overview.jobs.countCapped" : "overview.jobs.count", {
                   count: filtered.length,
                   n: formatNumber(filtered.length),
                   limit: formatNumber(LIST_LIMIT),
                 })}
           </span>
-          <Pagination page={page} setPage={(p) => set({ page: p > 1 ? p : undefined })} perPage={PER_PAGE} totalCount={filtered.length} />
+          <AppPagination page={page} setPage={(p) => set({ page: p > 1 ? p : undefined })} perPage={PER_PAGE} totalCount={filtered.length} />
         </div>
       </>
     );

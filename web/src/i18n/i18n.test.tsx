@@ -1,5 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
-import { detectLocale, I18nProvider, translate, useI18n } from "./index";
+import { currentLocale, detectLocale, formatLocale, I18nProvider, I18nRemount, translate, useI18n } from "./index";
 import { en } from "./en";
 import { formatRelative } from "@/lib/format";
 
@@ -72,11 +72,37 @@ test("text formatted outside React follows a language switch", () => {
   localStorage.clear();
   render(
     <I18nProvider initial="en">
-      <Plain />
+      <I18nRemount>
+        <Plain />
+      </I18nRemount>
       <Switch />
     </I18nProvider>,
   );
   expect(screen.getByTestId("plain")).toHaveTextContent("5 min. ago");
   act(() => screen.getByRole("button", { name: "switch" }).click());
   expect(screen.getByTestId("plain")).toHaveTextContent("há 5 min.");
+});
+
+test("Brazilian Portuguese says zero in the plural", () => {
+  const pt = { items: { one: "{count} ambiente", other: "{count} ambientes" } };
+  expect(translate(pt as never, pt as never, "pt-BR", "items" as never, { count: 0 })).toBe("0 ambientes");
+  expect(translate(pt as never, pt as never, "pt-BR", "items" as never, { count: 1 })).toBe("1 ambiente");
+});
+
+test("numbers and dates use the browser's region of the chosen language", () => {
+  expect(formatLocale("es", ["es-MX", "en"])).toBe("es-MX");
+  expect(formatLocale("en", ["en-GB"])).toBe("en-GB");
+  expect(formatLocale("pt-BR", ["pt-PT"])).toBe("pt-PT");
+  expect(formatLocale("fr", ["de-DE", "en-US"])).toBe("fr");
+});
+
+test("unmounting the provider forgets its language", () => {
+  const { unmount } = render(
+    <I18nProvider initial="it">
+      <span />
+    </I18nProvider>,
+  );
+  expect(currentLocale()).toBe("it");
+  unmount();
+  expect(currentLocale()).toBe("en");
 });

@@ -4,7 +4,8 @@ const now = new Date("2026-10-07T12:00:00Z");
 const plain = (s: string) => s.replace(/\s/g, " "); // Intl uses narrow no-break spaces
 
 test("formatRelative", () => {
-  expect(formatRelative("2026-10-07T11:59:55Z", "en", now)).toBe("now");
+  expect(formatRelative("2026-10-07T11:59:55Z", "en", now)).toBe("just now");
+  expect(formatRelative("2026-10-07T12:00:10Z", "en", now)).toBe("just now"); // a clock ahead of ours
   expect(formatRelative("2026-10-07T11:59:00Z", "en", now)).toBe("1 min. ago");
   expect(formatRelative("2026-10-07T09:00:00Z", "en", now)).toBe("3 hr. ago");
   expect(formatRelative("2026-10-05T12:00:00Z", "en", now)).toBe("2 days ago");
@@ -46,6 +47,8 @@ test("formatMB", () => {
   expect(formatMB(8192, "en")).toBe("8 GB");
   expect(formatMB(24_576 + 512, "en")).toBe("24.5 GB");
   expect(formatMB(24_576 + 512, "pt-BR")).toBe("24,5 GB");
+  expect(formatMB(24_576 + 512, "es-MX")).toBe("24.5 GB");
+  expect(plain(formatMB(512, "fr"))).toBe("512 Mo");
 });
 
 test("formatPercent and formatAbsolute follow the language", () => {

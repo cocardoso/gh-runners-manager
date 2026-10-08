@@ -4,7 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { BriefcaseIcon, CubeIcon, StackIcon, ArrowRightIcon } from "@phosphor-icons/react";
 import { useEnvironments, useJobs, useScaleSets } from "@/api/queries";
 import { navItems } from "./nav";
-import { stateLabel } from "./status-badge";
+import { stateLabel } from "@/i18n/labels";
 import { useT } from "@/i18n";
 
 export interface PaletteItem {

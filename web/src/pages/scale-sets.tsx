@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { withNode } from "@/i18n/nodes";
 import { Badge, Banner, Button, ClipboardText, Empty, Grid, LayerCard, Link, Meter, useKumoToastManager } from "@cloudflare/kumo";
 import { PencilSimpleIcon, PlusIcon, StackIcon, TrashIcon, WarningIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -56,7 +57,7 @@ function ScaleSetCard({ s, onEdit, onRemove }: { s: ScaleSet; onEdit: () => void
               variant="alert"
               icon={<WarningIcon weight="fill" />}
               title={t("templates.scaleSets.waiting", { reason: s.waiting })}
-              description={isSet(s.waiting_since) ? <>{t("templates.scaleSets.since")} <RelativeTime value={s.waiting_since} /></> : undefined}
+              description={isSet(s.waiting_since) ? withNode(t("templates.scaleSets.since"), "{time}", <RelativeTime value={s.waiting_since} />) : undefined}
             />
           )}
           <div className="grid grid-cols-2 gap-4">
@@ -72,7 +73,7 @@ function ScaleSetCard({ s, onEdit, onRemove }: { s: ScaleSet; onEdit: () => void
           {max ? <Meter label={t("templates.scaleSets.concurrency")} value={s.live} max={max} customValue={`${s.live} / ${max}`} /> : null}
           <div className="flex flex-col gap-1.5">
             <span className="text-sm text-kumo-subtle">{t("templates.scaleSets.useIt")}</span>
-            <ClipboardText text={`runs-on: ${s.name}`} size="base" />
+            <ClipboardText text={`runs-on: ${s.name}`} size="base" tooltip={{ text: t("shell.copy.short"), copiedText: t("shell.copy.copied") }} labels={{ copyAction: t("shell.copy.action") }} />
           </div>
         </LayerCard.Primary>
         {config && (

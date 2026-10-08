@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "@/test/render-app";
 import { mockApi } from "@/test/api-mock";
-import { dateInput } from "./history-card";
+import { dateInput, describeCounts } from "./history-card";
 import { FakeEventSource } from "@/test/fake-event-source";
 
 beforeEach(() => FakeEventSource.reset());
@@ -97,4 +97,8 @@ test("a partial cleanup shows its warning", async () => {
   await within(dialog).findByText(/1 environment/);
   await user.click(within(dialog).getByRole("button", { name: "Delete" }));
   expect(await screen.findByText(/could not remove env1/)).toBeInTheDocument();
+});
+
+test("cleanup counts are written in the language's number format", () => {
+  expect(describeCounts({ environments: 1, jobs: 0, events: 12345, audit_events: 0, templates: 0 })).toContain("12,345 events");
 });

@@ -1,6 +1,6 @@
 import { screen } from "@testing-library/react";
 import { renderApp } from "@/test/render-app";
-import { env, mockApi } from "@/test/api-mock";
+import { env, job, mockApi, scaleSet } from "@/test/api-mock";
 import { FakeEventSource } from "@/test/fake-event-source";
 
 beforeEach(() => FakeEventSource.reset());
@@ -29,4 +29,19 @@ test("the sign-in page is in pt-BR", async () => {
   mockApi({ "/api/v1/auth/session": { state: "signed_out" } });
   renderApp("/", { locale: "pt-BR" });
   expect(await screen.findByRole("button", { name: "Entrar" })).toBeInTheDocument();
+});
+
+test("pagination speaks Portuguese", async () => {
+  const jobs = Array.from({ length: 30 }, (_, i) => job({ id: `job-${i}`, status: "completed", result: "succeeded" }));
+  mockApi({ "/api/v1/jobs": { jobs } });
+  renderApp("/jobs", { locale: "pt-BR" });
+  expect(await screen.findByText(/Mostrando 1.25 de 30/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Próxima página" })).toBeInTheDocument();
+});
+
+test("copy buttons and the sidebar toggle speak Portuguese", async () => {
+  mockApi({ "/api/v1/scale-sets": { scale_sets: [scaleSet()] } });
+  renderApp("/scale-sets", { locale: "pt-BR" });
+  expect(await screen.findByRole("button", { name: "Copiar para a área de transferência" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Alternar barra lateral" })).toBeInTheDocument();
 });

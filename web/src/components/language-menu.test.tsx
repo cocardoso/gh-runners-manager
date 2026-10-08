@@ -21,6 +21,8 @@ test("the language menu lists every language and remembers the choice", async ()
   await user.click(screen.getByRole("menuitemradio", { name: "Português (Brasil)" }));
   await waitFor(() => expect(document.documentElement.lang).toBe("pt-BR"));
   expect(localStorage.getItem("ghrm.locale")).toBe("pt-BR");
+  // Keyboard and screen-reader users stay where they were.
+  await waitFor(() => expect(document.activeElement?.getAttribute("aria-label")).toMatch(/^Idioma/));
 });
 
 test("the sign-in page offers the language menu too", async () => {

@@ -6,13 +6,13 @@ import { useSettings, useTemplates } from "@/api/queries";
 import { useAdminAction } from "@/components/admin-action";
 import { ErrorState, Loading, Page, RelativeTime } from "@/components/common";
 import { TemplateStateBadge } from "@/components/status-badge";
-import { currentLocale, tr, useT, type Key } from "@/i18n";
+import { currentFormatLocale, tr, useT, type Key } from "@/i18n";
 
 export type TemplateView = TemplateVersion;
 
 export function formatBytes(n: number): string {
   if (!n) return "—";
-  const num = (v: number, digits = 0) => new Intl.NumberFormat(currentLocale(), { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v);
+  const num = (v: number, digits = 0) => new Intl.NumberFormat(currentFormatLocale(), { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v);
   if (n < 1024 ** 2) return tr("templates.units.kb", { n: num(Math.max(1, Math.round(n / 1024))) });
   const gb = n / 1024 ** 3;
   return gb >= 1 ? tr("templates.units.gb", { n: num(gb, 2) }) : tr("templates.units.mb", { n: num(Math.round(n / 1024 ** 2)) });
