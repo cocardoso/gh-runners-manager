@@ -10,6 +10,11 @@ function ratio(hits: number, misses: number) {
 }
 
 /** The registry cache on the job network: whether each origin answers, how often images come from it, and its disk. */
+// checked is false until the control plane has checked the cache once (Go's zero time).
+function checked(at: string | undefined) {
+  return !!at && !at.startsWith("0001-");
+}
+
 export function CacheCard() {
   const cache = useCache();
   return (
@@ -34,7 +39,11 @@ export function CacheCard() {
             <>
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="font-mono">{cache.data.address}</span>
-                {cache.data.up ? (
+                {!checked(cache.data.checked_at) ? (
+                  <Badge variant="neutral" appearance="dot">
+                    Checking…
+                  </Badge>
+                ) : cache.data.up ? (
                   <Badge variant="success" appearance="dot">
                     Answering
                   </Badge>
@@ -43,9 +52,16 @@ export function CacheCard() {
                     Not answering: jobs pull from the registries
                   </Badge>
                 )}
-                <span className="text-kumo-subtle">
-                  checked <RelativeTime value={cache.data.checked_at} />
-                </span>
+                {checked(cache.data.checked_at) && (
+                  <span className="text-kumo-subtle">
+                    {!cache.data.up && cache.data.down_since ? (
+                      <>
+                        down since <RelativeTime value={cache.data.down_since} />,{" "}
+                      </>
+                    ) : null}
+                    checked <RelativeTime value={cache.data.checked_at} />
+                  </span>
+                )}
               </div>
               {cache.data.disk_budget_bytes > 0 && (
                 <Meter

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +79,7 @@ func TestMonitorRecordsDownAndUp(t *testing.T) {
 	h.m.Poll(ctx)
 	h.reg.Close()
 	h.m.Poll(ctx)
+	h.m.Poll(ctx) // down twice in a row
 	if s := h.m.Status(); s.Up || s.Origins[1].Up || s.Origins[1].Error == "" {
 		t.Fatalf("status after the cache went away = %+v", s)
 	}
@@ -106,6 +108,8 @@ func TestMonitorKeepsTheLastCountersWhileDown(t *testing.T) {
 	h.m.Poll(ctx)
 	at = at.Add(30 * time.Second)
 	h.m.Poll(ctx)
+	at = at.Add(30 * time.Second)
+	h.m.Poll(ctx)
 	s := h.m.Status()
 	// Counters going to zero would read as a counter reset in Prometheus.
 	if o := s.Origins[0]; o.Up || o.BlobHits != 1 || o.BlobMisses != 1 || o.ServedBytes != 4452326 {
@@ -113,6 +117,55 @@ func TestMonitorKeepsTheLastCountersWhileDown(t *testing.T) {
 	}
 	if !s.DownSince.Equal(wentDown) || !s.CheckedAt.Equal(at) {
 		t.Fatalf("down since %v (want %v), checked at %v", s.DownSince, wentDown, s.CheckedAt)
+	}
+}
+
+func TestOneFailedCheckIsNotAnOutage(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	fail := true
+	reg, port := serve(t, "")
+	reg.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail {
+			http.Error(w, "busy", http.StatusServiceUnavailable)
+			return
+		}
+		b, _ := os.ReadFile("testdata/registry-proxy-metrics.txt")
+		_, _ = w.Write(b)
+	})
+	h.m.Cache.MetricsPorts["ghcr.io"] = port
+	h.m.Poll(ctx)
+	if s := h.m.Status(); !s.Up || s.Origins[1].Up || s.Origins[1].Error == "" {
+		t.Fatalf("after one failed check = %+v; the origin shows the error, the cache is not down yet", s)
+	}
+	fail = false
+	h.m.Poll(ctx)
+	evs, _ := h.db.ListEvents(ctx, store.EventFilter{})
+	for _, e := range evs {
+		if strings.HasPrefix(e.Kind, "cache.") {
+			t.Fatalf("event %s for a single failed check", e.Kind)
+		}
+	}
+}
+
+func TestOriginsArePolledTogether(t *testing.T) {
+	h := newHarness(t)
+	slow, port := serve(t, "")
+	slow.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		b, _ := os.ReadFile("testdata/registry-proxy-metrics.txt")
+		_, _ = w.Write(b)
+	})
+	for _, o := range config.CacheOrigins {
+		h.m.Cache.MetricsPorts[o] = port
+	}
+	start := time.Now()
+	h.m.Poll(context.Background())
+	if d := time.Since(start); d > 900*time.Millisecond {
+		t.Fatalf("poll took %v; four slow origins must be checked in parallel", d)
+	}
+	if !h.m.Status().Up {
+		t.Fatal("slow origins still answer")
 	}
 }
 

@@ -52,9 +52,11 @@ type Monitor struct {
 	Recorder *events.Recorder
 	Now      func() time.Time
 
-	mu     sync.Mutex
-	status Status
-	seen   bool
+	mu       sync.Mutex
+	status   Status
+	seen     bool
+	failures int       // failed checks in a row
+	failedAt time.Time // the first of them
 }
 
 func (m *Monitor) now() time.Time {
@@ -132,7 +134,8 @@ func (m *Monitor) metrics(ctx context.Context, port int) (map[string]float64, er
 	return out, sc.Err()
 }
 
-// Poll checks every origin and the disk exporter once.
+// Poll checks every origin and the disk exporter once, in parallel. The cache is
+// reported down after two failed checks in a row: one slow answer is not an outage.
 func (m *Monitor) Poll(ctx context.Context) {
 	if !m.Cache.Enabled() {
 		return
@@ -140,37 +143,61 @@ func (m *Monitor) Poll(ctx context.Context) {
 	m.mu.Lock()
 	prev := m.status
 	m.mu.Unlock()
-	s := Status{Up: true, CheckedAt: m.now(), DiskUsed: prev.DiskUsed, DiskBudget: prev.DiskBudget}
+	now := m.now()
+	s := Status{Up: true, CheckedAt: now, DiskUsed: prev.DiskUsed, DiskBudget: prev.DiskBudget}
+	s.Origins = make([]OriginStatus, len(config.CacheOrigins))
+	var wg sync.WaitGroup
 	for i, origin := range config.CacheOrigins {
-		o := OriginStatus{Origin: origin}
-		got, err := m.metrics(ctx, m.Cache.MetricsPorts[origin])
-		if err != nil {
-			// The last counters stay: dropping to zero would read as a counter reset.
-			if i < len(prev.Origins) {
-				o = prev.Origins[i]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			o := OriginStatus{Origin: origin}
+			got, err := m.metrics(ctx, m.Cache.MetricsPorts[origin])
+			if err != nil {
+				// The last counters stay: dropping to zero would read as a counter reset.
+				if i < len(prev.Origins) {
+					o = prev.Origins[i]
+				}
+				o.Up, o.Error = false, err.Error()
+			} else {
+				o.Up = true
+				o.BlobHits = got[`registry_proxy_hits_total{type="blob"}`]
+				o.BlobMisses = got[`registry_proxy_misses_total{type="blob"}`]
+				o.ServedBytes = got[`registry_proxy_pushed_bytes_total{type="blob"}`]
+				o.PulledBytes = got[`registry_proxy_pulled_bytes_total{type="blob"}`]
 			}
-			o.Up, o.Error = false, err.Error()
-			s.Up = false
-		} else {
-			o.Up = true
-			o.BlobHits = got[`registry_proxy_hits_total{type="blob"}`]
-			o.BlobMisses = got[`registry_proxy_misses_total{type="blob"}`]
-			o.ServedBytes = got[`registry_proxy_pushed_bytes_total{type="blob"}`]
-			o.PulledBytes = got[`registry_proxy_pulled_bytes_total{type="blob"}`]
-		}
-		s.Origins = append(s.Origins, o)
+			s.Origins[i] = o
+		}()
 	}
-	if disk, err := m.metrics(ctx, m.Cache.ExporterPort); err == nil {
+	var disk map[string]float64
+	var diskErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		disk, diskErr = m.metrics(ctx, m.Cache.ExporterPort)
+	}()
+	wg.Wait()
+	if diskErr == nil {
 		s.DiskUsed, s.DiskBudget = int64(disk["ghrm_cache_disk_used_bytes"]), int64(disk["ghrm_cache_disk_budget_bytes"])
+	}
+	failed := false
+	for _, o := range s.Origins {
+		failed = failed || !o.Up
 	}
 
 	m.mu.Lock()
 	wasUp, seen := m.status.Up, m.seen
-	if !s.Up {
-		s.DownSince = s.CheckedAt
-		if seen && !wasUp {
-			s.DownSince = m.status.DownSince
+	if failed {
+		if m.failures == 0 {
+			m.failedAt = now
 		}
+		m.failures++
+		s.Up = m.failures < 2
+	} else {
+		m.failures = 0
+	}
+	if !s.Up {
+		s.DownSince = m.failedAt
 	}
 	m.status, m.seen = s, true
 	m.mu.Unlock()

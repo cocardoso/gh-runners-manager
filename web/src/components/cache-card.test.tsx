@@ -40,3 +40,25 @@ test("the cache card explains when no cache is configured", async () => {
   const card = (await screen.findByRole("heading", { name: "Registry cache" })).closest("section")!;
   expect(await within(card).findByText(/No registry cache is configured/)).toBeInTheDocument();
 });
+
+test("the cache card waits for the first check before judging the cache", async () => {
+  mockApi({ "/api/v1/cache": { enabled: true, address: "10.50.0.3", up: false, origins: [], disk_used_bytes: 0, disk_budget_bytes: 0, checked_at: "0001-01-01T00:00:00Z" } });
+  renderApp("/settings");
+  const card = (await screen.findByRole("heading", { name: "Registry cache" })).closest("section")!;
+  expect(await within(card).findByText("Checking…")).toBeInTheDocument();
+  expect(within(card).queryByText(/Not answering/)).not.toBeInTheDocument();
+  expect(within(card).queryByText(/checked/)).not.toBeInTheDocument();
+});
+
+test("the cache card says since when the cache is down", async () => {
+  mockApi({
+    "/api/v1/cache": {
+      enabled: true, address: "10.50.0.3", up: false, origins: [], disk_used_bytes: 0, disk_budget_bytes: 0,
+      checked_at: T, down_since: "2026-10-07T11:00:00Z",
+    },
+  });
+  renderApp("/settings");
+  const card = (await screen.findByRole("heading", { name: "Registry cache" })).closest("section")!;
+  expect(await within(card).findByText(/Not answering/)).toBeInTheDocument();
+  expect(within(card).getByText(/down since/)).toBeInTheDocument();
+});
