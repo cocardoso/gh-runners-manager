@@ -1,9 +1,10 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Banner, Button, ClipboardText, Dialog, DialogRoot, DialogTitle, Input, Select } from "@cloudflare/kumo";
-import { PlusIcon } from "@phosphor-icons/react";
+import { Badge, Banner, Button, ClipboardText, Combobox, Dialog, DialogRoot, DialogTitle, Input, Select } from "@cloudflare/kumo";
+import { BookBookmarkIcon, BuildingsIcon, LockSimpleIcon, PlusIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api, unwrap, type ScaleSetSettings } from "@/api/client";
-import { useCredentials } from "@/api/queries";
+import { api, unwrap, type ScaleSetSettings, type Target } from "@/api/client";
+import { useCredentials, useCredentialTargets } from "@/api/queries";
+import { HelpLabel } from "@/components/help-tip";
 import { CredentialDialog } from "@/components/credentials-editor";
 import { currentFormatLocale, useT } from "@/i18n";
 import { formatMB } from "@/lib/format";
@@ -18,6 +19,92 @@ const URL_RE = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]*)(?:\/([A-Za-z0
 
 const MEMORY_MB = [1024, 2048, 4096, 8192, 16384, 32768, 65536];
 const KEEP_MINUTES = [0, 15, 60, 240, 1440] as const;
+
+/** A scale set name from a repository (its name) or an organization (its login). */
+function suggestName(target: Target) {
+  return (target.name || target.owner).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
+}
+
+/** Picks the repository or organization from what the credential reaches; falls back to
+ * typing the URL when GitHub cannot list them (or on request). */
+function RepositoryField({
+  credential,
+  url,
+  onPick,
+  onType,
+  error,
+}: {
+  credential: string;
+  url: string;
+  onPick: (t: Target) => void;
+  onType: (url: string) => void;
+  error?: string;
+}) {
+  const t = useT();
+  const targets = useCredentialTargets(credential);
+  const [typing, setTyping] = useState(false);
+  const list = targets.data ?? [];
+  const picked = list.find((x) => x.url.toLowerCase() === url.replace(/\/$/, "").toLowerCase());
+  const label = <HelpLabel label={t("templates.scaleSetHelp.repo")} help={t("templates.scaleSetHelp.repoTip")} />;
+  if (typing || targets.isError || (!targets.isPending && list.length === 0) || !credential || (url && !picked && !targets.isPending)) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <Input
+          label={<HelpLabel label={t("templates.scaleSets.editor.url")} help={t("templates.scaleSetHelp.repoTip")} />}
+          placeholder="https://github.com/owner/repo"
+          value={url}
+          onChange={(e) => onType(e.target.value)}
+          error={error}
+        />
+        {targets.isError && (
+          <span className="text-sm text-kumo-warning">{t("templates.scaleSetHelp.listFailed", { error: targets.error instanceof Error ? targets.error.message : String(targets.error) })}</span>
+        )}
+        {list.length > 0 && (
+          <button type="button" className="self-start text-sm text-kumo-link hover:underline" onClick={() => setTyping(false)}>
+            {t("templates.scaleSetHelp.pickFromList")}
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (targets.isPending) return <span className="text-sm text-kumo-subtle">{t("templates.scaleSetHelp.loading")}</span>;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Combobox
+        label={label}
+        items={list.map((x) => x.full_name)}
+        value={picked?.full_name ?? null}
+        onValueChange={(v) => {
+          const target = list.find((x) => x.full_name === v);
+          if (target) onPick(target);
+        }}
+      >
+        <Combobox.TriggerInput placeholder={t("templates.scaleSetHelp.search")} className="w-full" />
+        <Combobox.Content>
+          <Combobox.Empty>{t("templates.scaleSetHelp.nothing")}</Combobox.Empty>
+          <Combobox.List>
+            {(fullName: string) => {
+              const x = list.find((y) => y.full_name === fullName)!;
+              return (
+                <Combobox.Item key={fullName} value={fullName}>
+                  <span className="flex items-center gap-2">
+                    {x.kind === "organization" ? <BuildingsIcon className="shrink-0" /> : <BookBookmarkIcon className="shrink-0" />}
+                    <span className="truncate">{fullName}</span>
+                    {x.kind === "organization" && <Badge variant="neutral">{t("templates.scaleSetHelp.organization")}</Badge>}
+                    {x.private && <LockSimpleIcon aria-label={t("templates.scaleSetHelp.private")} className="shrink-0 text-kumo-subtle" />}
+                  </span>
+                </Combobox.Item>
+              );
+            }}
+          </Combobox.List>
+        </Combobox.Content>
+      </Combobox>
+      <button type="button" className="self-start text-sm text-kumo-link hover:underline" onClick={() => setTyping(true)}>
+        {t("templates.scaleSetHelp.typeUrl")}
+      </button>
+    </div>
+  );
+}
 
 /** A titled group of fields. */
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -36,6 +123,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
   const creds = useCredentials();
   const credNames = (creds.data ?? []).map((c) => c.name);
   const [name, setName] = useState(fixedName ?? "");
+  const [nameTouched, setNameTouched] = useState(false);
   const [url, setUrl] = useState(initial?.url ?? "");
   const [credential, setCredential] = useState(initial?.credential ?? "");
   const [labels, setLabels] = useState((initial?.labels ?? []).join(", "));
@@ -104,44 +192,20 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
             <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto px-6 py-5">
               {error && <Banner variant="error" title={error} />}
               <Section title={t("templates.scaleSetForm.essentials")}>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="min-w-0">
-                    <Input
-                      label={t("templates.scaleSets.editor.name")}
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      disabled={!!fixedName}
-                      error={nameBad ? t("templates.scaleSetForm.nameInvalid") : undefined}
-                      description={nameBad ? undefined : t("templates.scaleSets.editor.nameHelp")}
-                    />
-                  </div>
-                  {/* Kumo's label style and spacing, so it lines up with the name field. */}
-                  <div className="flex min-w-0 flex-col gap-1.5">
-                    <span className="m-0 text-base font-medium text-kumo-default">{t("templates.scaleSetForm.preview")}</span>
-                    <ClipboardText
-                      text={`runs-on: ${name.trim() || "<name>"}`}
-                      tooltip={{ text: t("shell.copy.short"), copiedText: t("shell.copy.copied") }}
-                      labels={{ copyAction: t("shell.copy.action") }}
-                    />
-                  </div>
-                </div>
-                <Input
-                  label={t("templates.scaleSets.editor.url")}
-                  placeholder="https://github.com/owner/repo"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  error={urlBad ? t("templates.scaleSetForm.urlInvalid") : undefined}
-                />
                 {credNames.length > 0 ? (
                   <Select
-                    label={t("templates.scaleSets.editor.credential")}
+                    aria-label={t("templates.scaleSets.editor.credential")}
+                    label={<HelpLabel label={t("templates.scaleSets.editor.credential")} help={t("templates.scaleSetHelp.credentialTip")} />}
                     value={chosen}
                     onValueChange={(v) => setCredential(String(v ?? ""))}
                     items={Object.fromEntries(credNames.map((n) => [n, n]))}
+                    className="w-full"
                   />
                 ) : (
                   <div className="flex flex-col gap-1.5">
-                    <span className="text-sm font-medium text-kumo-default">{t("templates.scaleSets.editor.credential")}</span>
+                    <span className="text-base font-medium text-kumo-default">
+                      <HelpLabel label={t("templates.scaleSets.editor.credential")} help={t("templates.scaleSetHelp.credentialTip")} />
+                    </span>
                     <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-kumo-line px-3 py-2">
                       <span className="text-sm text-kumo-subtle">{t("templates.scaleSetForm.noCredential")}</span>
                       <Button type="button" size="sm" variant="secondary" icon={PlusIcon} onClick={() => setAddingCredential(true)}>
@@ -150,12 +214,48 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
                     </div>
                   </div>
                 )}
+                <RepositoryField
+                  credential={chosen}
+                  url={url}
+                  onPick={(target) => {
+                    setUrl(target.url);
+                    if (!fixedName && !nameTouched) setName(suggestName(target));
+                  }}
+                  onType={setUrl}
+                  error={urlBad ? t("templates.scaleSetForm.urlInvalid") : undefined}
+                />
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="min-w-0">
+                    <Input
+                      label={<HelpLabel label={t("templates.scaleSets.editor.name")} help={t("templates.scaleSetHelp.nameTip")} />}
+                      value={name}
+                      onChange={(e) => {
+                        setNameTouched(true);
+                        setName(e.target.value);
+                      }}
+                      disabled={!!fixedName}
+                      error={nameBad ? t("templates.scaleSetForm.nameInvalid") : undefined}
+                      description={nameBad ? undefined : t("templates.scaleSets.editor.nameHelp")}
+                    />
+                  </div>
+                  {/* Kumo's label style and spacing, so it lines up with the name field. */}
+                  <div className="flex min-w-0 flex-col gap-1.5">
+                    <span className="m-0 text-base font-medium text-kumo-default">
+                      <HelpLabel label={t("templates.scaleSetHelp.runsOnTitle")} help={t("templates.scaleSetHelp.runsOnTip")} />
+                    </span>
+                    <ClipboardText
+                      text={`runs-on: ${name.trim() || "<name>"}`}
+                      tooltip={{ text: t("shell.copy.short"), copiedText: t("shell.copy.copied") }}
+                      labels={{ copyAction: t("shell.copy.action") }}
+                    />
+                  </div>
+                </div>
               </Section>
               <Section title={t("templates.scaleSetForm.resources")}>
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div className="min-w-0">
                     <Input
-                      label={t("templates.scaleSetForm.maxConcurrent")}
+                      label={<HelpLabel label={t("templates.scaleSetForm.maxConcurrent")} help={t("templates.scaleSetHelp.maxTip")} />}
                       type="number"
                       min={1}
                       value={maxConcurrent}
@@ -165,7 +265,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
                   </div>
                   <div className="min-w-0">
                     <Input
-                      label={t("templates.scaleSetForm.cores")}
+                      label={<HelpLabel label={t("templates.scaleSetForm.cores")} help={t("templates.scaleSetHelp.coresTip")} />}
                       type="number"
                       min={1}
                       value={cores}
@@ -175,7 +275,8 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
                   </div>
                   <div className="min-w-0">
                     <Select
-                      label={t("templates.scaleSetForm.memory")}
+                      aria-label={t("templates.scaleSetForm.memory")}
+                      label={<HelpLabel label={t("templates.scaleSetForm.memory")} help={t("templates.scaleSetHelp.memoryTip")} />}
                       value={memory}
                       onValueChange={(v) => setMemory(String(v ?? memory))}
                       items={memoryItems}
@@ -187,7 +288,8 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div className="min-w-0">
                     <Select
-                      label={t("templates.scaleSetForm.keep")}
+                      aria-label={t("templates.scaleSetForm.keep")}
+                      label={<HelpLabel label={t("templates.scaleSetForm.keep")} help={t("templates.scaleSetHelp.keepTip")} />}
                       value={keep}
                       onValueChange={(v) => setKeep(String(v ?? keep))}
                       items={keepItems}
@@ -197,7 +299,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
                   </div>
                   <div className="min-w-0">
                     <Input
-                      label={t("templates.scaleSets.editor.labels")}
+                      label={<HelpLabel label={t("templates.scaleSets.editor.labels")} help={t("templates.scaleSetHelp.labelsTip")} />}
                       placeholder="linux, big"
                       value={labels}
                       onChange={(e) => setLabels(e.target.value)}
@@ -206,7 +308,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
                   </div>
                   <div className="min-w-0">
                     <Input
-                      label={t("templates.scaleSets.editor.runnerGroup")}
+                      label={<HelpLabel label={t("templates.scaleSets.editor.runnerGroup")} help={t("templates.scaleSetHelp.runnerGroupTip")} />}
                       value={group}
                       onChange={(e) => setGroup(e.target.value)}
                       description={t("templates.scaleSetForm.runnerGroupHelp")}

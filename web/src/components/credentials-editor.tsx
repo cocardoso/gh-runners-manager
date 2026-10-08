@@ -1,14 +1,18 @@
 import { useState, type FormEvent } from "react";
-import { Badge, Banner, Button, Dialog, DialogRoot, DialogTitle, Input, SensitiveInput, Table, Tooltip } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Dialog, DialogRoot, DialogTitle, Input, Link, SensitiveInput, Table, Tooltip } from "@cloudflare/kumo";
 import { PlusIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type CredentialView } from "@/api/client";
 import { useCredentials } from "@/api/queries";
+import { HelpLabel } from "@/components/help-tip";
+import { formatNumber } from "@/lib/format";
 import { useT } from "@/i18n";
 import { ErrorState, Loading } from "./common";
 
 const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^settings: /, "") : String(e));
 
+/** Adds a credential, or replaces its token: checked against GitHub before it is saved,
+ * next to how to create one. */
 export function CredentialDialog({ open, name: fixedName, onClose }: { open: boolean; name?: string; onClose: () => void }) {
   const t = useT();
   const qc = useQueryClient();
@@ -16,6 +20,8 @@ export function CredentialDialog({ open, name: fixedName, onClose }: { open: boo
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [check, setCheck] = useState<{ ok: boolean; text: string }>();
+  const [checking, setChecking] = useState(false);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -23,6 +29,7 @@ export function CredentialDialog({ open, name: fixedName, onClose }: { open: boo
     try {
       unwrap(await api.PUT("/api/v1/credentials/{name}", { params: { path: { name: name.trim() } }, body: { token: token.trim() } }));
       void qc.invalidateQueries({ queryKey: ["credentials"] });
+      void qc.invalidateQueries({ queryKey: ["credential-targets"] });
       onClose();
     } catch (err) {
       setError(message(err));
@@ -30,22 +37,89 @@ export function CredentialDialog({ open, name: fixedName, onClose }: { open: boo
       setBusy(false);
     }
   };
+  const test = async () => {
+    setChecking(true);
+    setCheck(undefined);
+    try {
+      const r = unwrap(await api.POST("/api/v1/credentials/check", { body: { token: token.trim() } }));
+      setCheck(
+        r.ok
+          ? {
+              ok: true,
+              text: t("settings.credentialGuide.works", {
+                login: r.login ?? "",
+                repos: t("settings.credentialGuide.repos", { count: r.repositories, n: formatNumber(r.repositories) }),
+                orgs: t("settings.credentialGuide.orgs", { count: r.organizations, n: formatNumber(r.organizations) }),
+              }),
+            }
+          : { ok: false, text: r.error ?? "" },
+      );
+    } catch (err) {
+      setCheck({ ok: false, text: message(err) });
+    } finally {
+      setChecking(false);
+    }
+  };
+  const guide = (
+    <aside className="flex flex-col gap-3 rounded-lg bg-kumo-tint p-4 text-sm">
+      <h3 className="font-semibold text-kumo-default">{t("settings.credentialGuide.title")}</h3>
+      <ol className="flex list-decimal flex-col gap-2 pl-5 text-kumo-subtle">
+        <li>
+          {t("settings.credentialGuide.step1")}{" "}
+          <Link href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">
+            {t("settings.credentialGuide.create")}
+          </Link>
+        </li>
+        <li>{t("settings.credentialGuide.step2")}</li>
+        <li>
+          {t("settings.credentialGuide.step3")}
+          <ul className="mt-1 flex list-disc flex-col gap-1 pl-4">
+            <li>{t("settings.credentialGuide.admin")}</li>
+            <li>{t("settings.credentialGuide.actions")}</li>
+            <li>{t("settings.credentialGuide.orgRunners")}</li>
+          </ul>
+        </li>
+        <li>{t("settings.credentialGuide.step4")}</li>
+      </ol>
+    </aside>
+  );
   return (
     <DialogRoot open={open} onOpenChange={(o) => !o && onClose()}>
-      <Dialog size="sm" className="flex flex-col gap-4 p-6">
-        <DialogTitle className="text-lg font-semibold">{fixedName ? t("settings.credentials.replaceTitle", { name: fixedName }) : t("settings.credentials.addTitle")}</DialogTitle>
-        <p className="text-sm text-kumo-subtle">{t("settings.credentials.help")}</p>
-        {error && <Banner variant="error" title={error} />}
-        <form className="flex flex-col gap-4" onSubmit={submit}>
-          <Input
-            label={t("settings.credentials.name")}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={!!fixedName}
-            description={t("settings.credentials.nameHint")}
-          />
-          <SensitiveInput label={t("settings.credentials.token")} value={token} onValueChange={setToken} />
-          <div className="flex justify-end gap-2">
+      <Dialog size="xl" className="flex max-h-[90dvh] flex-col overflow-hidden p-0">
+        <div className="border-b border-kumo-line px-6 py-4">
+          <DialogTitle className="text-lg font-semibold">{fixedName ? t("settings.credentials.replaceTitle", { name: fixedName }) : t("settings.credentials.addTitle")}</DialogTitle>
+          <p className="mt-1 text-sm text-kumo-subtle">{t("settings.credentials.help")}</p>
+        </div>
+        <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
+          <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto px-6 py-5 md:grid-cols-2">
+            <div className="flex min-w-0 flex-col gap-4">
+              {error && <Banner variant="error" title={error} />}
+              <Input
+                label={<HelpLabel label={t("settings.credentials.name")} help={t("settings.credentialGuide.nameTip")} />}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={!!fixedName}
+                description={t("settings.credentials.nameHint")}
+              />
+              <SensitiveInput
+                label={<HelpLabel label={t("settings.credentials.token")} help={t("settings.credentialGuide.tokenTip")} />}
+                aria-label={t("settings.credentials.token")}
+                value={token}
+                onValueChange={(v) => {
+                  setToken(v);
+                  setCheck(undefined);
+                }}
+              />
+              <div className="flex flex-wrap items-center gap-3">
+                <Button type="button" variant="secondary" loading={checking} disabled={!token.trim()} onClick={() => void test()}>
+                  {t("settings.credentialGuide.test")}
+                </Button>
+                {check && <span className={check.ok ? "text-sm text-kumo-success" : "text-sm text-kumo-danger"}>{check.text}</span>}
+              </div>
+            </div>
+            {guide}
+          </div>
+          <div className="flex justify-end gap-2 border-t border-kumo-line px-6 py-4">
             <Button variant="secondary" type="button" onClick={onClose}>
               {t("settings.credentials.cancel")}
             </Button>

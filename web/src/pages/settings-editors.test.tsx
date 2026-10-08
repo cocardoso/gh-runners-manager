@@ -76,7 +76,7 @@ test("scale sets can be created, edited and removed; file ones are read-only", a
 
   const uiCard = screen.getByRole("heading", { name: "big" }).closest("section")!;
   await user.click(within(uiCard).getByRole("button", { name: "Edit big" }));
-  const memory = await screen.findByRole("combobox", { name: "Memory" });
+  const memory = await screen.findByRole("combobox", { name: /^Memory/ });
   expect(memory).toHaveTextContent("8 GB");
   await user.click(memory);
   await user.click(await screen.findByRole("option", { name: "16 GB" }));
@@ -88,4 +88,23 @@ test("scale sets can be created, edited and removed; file ones are read-only", a
   await user.type(await screen.findByRole("textbox", { name: "Type big to confirm deletion" }), "big");
   await user.click(screen.getByRole("button", { name: "Remove scale set" }));
   await waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
+});
+
+test("a token is checked in the dialog before it is saved, and GitHub's page to create one is linked", async () => {
+  const calls = mockApi({
+    "/api/v1/credentials": { credentials: [] },
+    "POST /api/v1/credentials/check": { ok: true, login: "octocat", repositories: 3, organizations: 1 },
+  });
+  const user = userEvent.setup();
+  renderApp("/settings");
+  await user.click(await screen.findByRole("button", { name: "Add credential" }));
+  const dialog = await screen.findByRole("dialog");
+  const create = within(dialog).getByRole("link", { name: /Create a token on GitHub/ });
+  expect(create.getAttribute("href")).toBe("https://github.com/settings/personal-access-tokens/new");
+  expect(create.getAttribute("target")).toBe("_blank");
+  await user.type(within(dialog).getByLabelText("Token"), "github_pat_x");
+  await user.click(within(dialog).getByRole("button", { name: "Test token" }));
+  expect(await within(dialog).findByText(/octocat/)).toBeInTheDocument();
+  expect(within(dialog).getByText(/3 repositories, 1 organization/)).toBeInTheDocument();
+  expect(await calls.find((c) => c.url.pathname === "/api/v1/credentials/check")!.request.json()).toEqual({ token: "github_pat_x" });
 });

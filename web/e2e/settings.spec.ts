@@ -4,6 +4,7 @@ test("a credential and a scale set are created, tested and removed from the UI",
   const errors = trackErrors(page);
   await page.goto(`${demo.url}/settings`);
   await page.getByRole("button", { name: "Add credential" }).click();
+  expect(await page.getByRole("dialog").evaluate((d) => d.getBoundingClientRect().width)).toBeGreaterThan(700);
   await page.getByLabel("Name").fill("e2e-cred");
   await page.getByLabel("Token").fill("github_pat_e2e_token");
   await page.getByRole("button", { name: "Save credential" }).click();
@@ -14,8 +15,14 @@ test("a credential and a scale set are created, tested and removed from the UI",
 
   await page.goto(`${demo.url}/scale-sets`);
   await page.getByRole("button", { name: "New scale set" }).click();
-  await page.getByLabel("Name").fill("e2e-set");
-  await page.getByLabel("Repository or organization URL").fill("https://github.com/octo/e2e");
+  const form = page.getByRole("dialog");
+  // The repository is picked from what the credential reaches (the demo answers like GitHub).
+  await form.getByRole("combobox", { name: /^Credential/ }).click();
+  await page.getByRole("option", { name: "e2e-cred" }).click();
+  await form.getByRole("combobox", { name: /^Repository or organization/ }).click();
+  await page.getByRole("option", { name: /octo\/infra/ }).click();
+  await expect(form.getByLabel("Name")).toHaveValue("infra");
+  await form.getByLabel("Name").fill("e2e-set");
   await page.getByRole("button", { name: "Save scale set" }).click();
   const card = page.locator("section").filter({ has: page.getByRole("heading", { name: "e2e-set" }) });
   await expect(card.getByText("Listening")).toBeVisible();

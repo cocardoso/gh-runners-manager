@@ -7,6 +7,7 @@ type Schemas = components["schemas"];
 export type Alert = Schemas["Alert"];
 export type Environment = Schemas["Environment"];
 export type Job = Schemas["Job"];
+export type Target = Schemas["Target"];
 export type JobBucket = Schemas["JobBucket"];
 export type JobDetails = Schemas["JobDetails"];
 export type LogEntry = Schemas["Entry"];

@@ -116,3 +116,14 @@ export function useCache() {
 export function useHistorySettings() {
   return useQuery({ queryKey: ["history-settings"], queryFn: async () => unwrap(await api.GET("/api/v1/history/settings")) });
 }
+
+/** The repositories and organizations a credential's token can reach (asked from GitHub). */
+export function useCredentialTargets(name: string) {
+  return useQuery({
+    queryKey: ["credential-targets", name],
+    enabled: !!name,
+    retry: false,
+    staleTime: 5 * 60_000,
+    queryFn: async () => unwrap(await api.GET("/api/v1/credentials/{name}/targets", { params: { path: { name } } })).targets ?? [],
+  });
+}

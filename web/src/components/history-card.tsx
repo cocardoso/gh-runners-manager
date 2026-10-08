@@ -7,6 +7,7 @@ import type { components } from "@/api/schema";
 import { useHistorySettings } from "@/api/queries";
 import { formatNumber } from "@/lib/format";
 import { useAdminAction } from "@/components/admin-action";
+import { HelpLabel } from "@/components/help-tip";
 import { ErrorState, Loading } from "@/components/common";
 import { tr, useT } from "@/i18n";
 
@@ -114,7 +115,10 @@ function SettingsForm({ initial }: { initial: Settings }) {
     });
   return (
     <div className="flex flex-col gap-4">
-      <Radio.Group legend={t("settings.history.cleanup")} value={mode} onValueChange={(v) => setMode(v as Settings["mode"])}>
+      <Radio.Group value={mode} onValueChange={(v) => setMode(v as Settings["mode"])}>
+        <Radio.Legend>
+          <HelpLabel label={t("settings.history.cleanup")} help={t("settings.historyHelp.modeTip")} />
+        </Radio.Legend>
         <Radio.Item label={t("settings.history.automatic")} value="automatic" />
         <Radio.Item label={t("settings.history.manual")} value="manual" />
       </Radio.Group>
@@ -122,9 +126,18 @@ function SettingsForm({ initial }: { initial: Settings }) {
         {mode === "automatic" ? t("settings.history.automaticHint") : t("settings.history.manualHint")}
       </p>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Input label={t("settings.history.keepDays")} type="number" min={1} max={365} value={days} onChange={(e) => setDays(e.target.value)} />
         <Input
-          label={t("settings.history.keepAuditDays")}
+          label={<HelpLabel label={t("settings.history.keepDays")} help={t("settings.historyHelp.daysTip")} />}
+          aria-label={t("settings.history.keepDays")}
+          type="number"
+          min={1}
+          max={365}
+          value={days}
+          onChange={(e) => setDays(e.target.value)}
+        />
+        <Input
+          label={<HelpLabel label={t("settings.history.keepAuditDays")} help={t("settings.historyHelp.auditTip")} />}
+          aria-label={t("settings.history.keepAuditDays")}
           type="number"
           min={1}
           max={3650}

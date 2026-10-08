@@ -134,6 +134,9 @@ const en = {
   sidebar: {
     toggle: "Toggle sidebar",
   },
+  help: {
+    more: "More information",
+  },
 };
 
 export const shell: Record<Locale, typeof en> = {
@@ -272,6 +275,9 @@ export const shell: Record<Locale, typeof en> = {
     sidebar: {
       toggle: "Alternar barra lateral",
     },
+    help: {
+      more: "Mais informações",
+    },
   },
   es: {
     nav: {
@@ -406,6 +412,9 @@ export const shell: Record<Locale, typeof en> = {
     },
     sidebar: {
       toggle: "Alternar barra lateral",
+    },
+    help: {
+      more: "Más información",
     },
   },
   fr: {
@@ -542,6 +551,9 @@ export const shell: Record<Locale, typeof en> = {
     sidebar: {
       toggle: "Afficher ou masquer la barre latérale",
     },
+    help: {
+      more: "Plus d'informations",
+    },
   },
   it: {
     nav: {
@@ -676,6 +688,9 @@ export const shell: Record<Locale, typeof en> = {
     },
     sidebar: {
       toggle: "Mostra o nascondi la barra laterale",
+    },
+    help: {
+      more: "Ulteriori informazioni",
     },
   },
 };
