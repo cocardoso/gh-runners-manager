@@ -20,7 +20,7 @@ proxmox:
     end: 948
   thin_pool: data                               # LV name; read when the token has Sys.Audit on "/"
   storage: local-lvm                            # storage ID; used for disk usage otherwise
-  firewall_settle: 12s
+  firewall_settle: 12s                          # fallback when the agent cannot prove the firewall applies
 
 # --- ghrm serve ---
 data_dir: /var/lib/ghrm

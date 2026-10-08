@@ -465,3 +465,16 @@ func TestStatusUsesLiveStateNotTheCachedList(t *testing.T) {
 		t.Fatal("stopped guest reported running")
 	}
 }
+
+// A guest whose agent waits for the firewall itself starts at once.
+func TestFirewallGatedGuestSkipsTheSettleDelay(t *testing.T) {
+	h := newHarness(t, 900, 909)
+	s := spec("aaa")
+	s.FirewallGated = true
+	if _, err := h.rt.Create(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.sleeps) != 0 {
+		t.Fatalf("sleeps = %v, want none", h.sleeps)
+	}
+}

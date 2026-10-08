@@ -43,6 +43,8 @@ var (
 	_ api.Controller        = (*controller.Controller)(nil)
 	_ ingest.BuildService   = (*template.Service)(nil)
 	_ template.Environments = (*controller.Controller)(nil)
+
+	_ controller.FirewallGatedSource = (*template.Service)(nil)
 )
 
 // runtimeTemplates maps the templates configuration to the proxmox-lxc runtime.
@@ -133,8 +135,9 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 	gh := github.New(reg, logger)
+	probe := serveFirewallProbe(ctx, cfg.Ingest, logger)
 	ctl := controller.New(controller.Deps{Store: db, Recorder: rec, Runtime: rt, GitHub: gh, Logs: logStore, Config: cfg,
-		IngestURL: cfg.Ingest.AdvertiseURL, IngestFingerprint: fingerprint})
+		IngestURL: cfg.Ingest.AdvertiseURL, IngestFingerprint: fingerprint, FirewallProbe: probe})
 	tpl := template.NewService(template.Deps{Store: db, Recorder: rec, Logs: logStore, Runtime: rt, Environments: ctl,
 		Releases: template.NewGitHubReleases("", "", nil), Config: cfg.Templates, Cache: cfg.Cache, BootstrapVMID: p.TemplateVMID, DataDir: cfg.DataDir})
 	if err := tpl.EnsureBootstrap(ctx); err != nil {
@@ -308,4 +311,29 @@ func waitOrTimeout(wait func(), d time.Duration) bool {
 	case <-time.After(d):
 		return false
 	}
+}
+
+// serveFirewallProbe opens the firewall probe next to the ingest port and returns the
+// address agents probe, or "" when it cannot be served: then guests wait the fixed
+// firewall delay. The probe needs the ingest to be advertised on the port it listens on.
+func serveFirewallProbe(ctx context.Context, in config.Ingest, logger *slog.Logger) string {
+	probe, err := ingest.ProbeAddress(in.AdvertiseURL)
+	if err != nil {
+		logger.Warn("firewall probe disabled", "error", err)
+		return ""
+	}
+	host, port, err := net.SplitHostPort(in.Listen)
+	listened, _ := ingest.ProbeAddress("https://" + net.JoinHostPort("h", port))
+	_, probePort, _ := net.SplitHostPort(probe)
+	if _, listenedPort, _ := net.SplitHostPort(listened); err != nil || listenedPort != probePort {
+		logger.Warn("firewall probe disabled: the ingest listens on another port than it advertises", "listen", in.Listen, "advertise_url", in.AdvertiseURL)
+		return ""
+	}
+	ln, err := ingest.ListenProbe(net.JoinHostPort(host, probePort))
+	if err != nil {
+		logger.Warn("firewall probe disabled", "error", err)
+		return ""
+	}
+	go ingest.ServeProbe(ctx, ln)
+	return probe
 }

@@ -121,6 +121,20 @@ func (s *Service) Active(ctx context.Context) (string, int) {
 	return s.d.Runtime.TemplateEnvironmentRef(runtime.TemplateRef{ID: t.RuntimeRef}), t.VMID
 }
 
+// ActiveFirewallGated is Active, plus whether the template's agent waits for the job
+// network's firewall: built templates from layer FirewallGateSince on. The bootstrap
+// template's agent may be older.
+func (s *Service) ActiveFirewallGated(ctx context.Context) (string, int, bool) {
+	t, err := s.d.Store.ActiveTemplate(ctx)
+	if err != nil || t.RuntimeRef == "" {
+		return "", s.d.BootstrapVMID, false
+	}
+	major, _, _ := strings.Cut(t.LayerVersion, ".")
+	n, err := strconv.Atoi(major)
+	gated := err == nil && n >= layer.FirewallGateSince
+	return s.d.Runtime.TemplateEnvironmentRef(runtime.TemplateRef{ID: t.RuntimeRef}), t.VMID, gated
+}
+
 func inProgress(state string) bool {
 	return state == store.TemplateBuilding || state == store.TemplateCreating || state == store.TemplateVerifying
 }

@@ -215,9 +215,12 @@ func (r *Runtime) Create(ctx context.Context, spec runtime.EnvironmentSpec) (run
 		}
 		return runtime.Ref{}, r.abandon(ctx, vmid, fmt.Errorf("configure %d: %w", vmid, err))
 	}
-	// The firewall rules of a new guest are applied on pve-firewall's next cycle (spec §10.3).
-	if err := r.sleep(ctx, r.cfg.FirewallSettle); err != nil {
-		return runtime.Ref{}, r.abandon(ctx, vmid, fmt.Errorf("wait for firewall on %d: %w", vmid, err))
+	// The firewall rules of a new guest are applied on pve-firewall's next cycle (spec §10.3);
+	// a gated guest's agent waits for them itself, before it starts the runner.
+	if !spec.FirewallGated {
+		if err := r.sleep(ctx, r.cfg.FirewallSettle); err != nil {
+			return runtime.Ref{}, r.abandon(ctx, vmid, fmt.Errorf("wait for firewall on %d: %w", vmid, err))
+		}
 	}
 	return refFor(vmid, spec.ID), nil
 }

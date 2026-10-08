@@ -285,6 +285,8 @@ sequenceDiagram
 
 GitHub's JobStarted message lags the runner by 10–30 seconds, sometimes past the job's end, so the agent's `job_started` marks the job running: it carries the job's name, which is matched to the scale set's one job with that name queued in the last 24 hours (two such jobs, as in a matrix or an organization's repositories, wait for GitHub's message). Both sides claim the job with one conditional update, so only one records the start; GitHub's message then completes the record and never reopens a finished job. A job still queued after 24 hours, which GitHub has canceled, is closed as canceled.
 
+A guest starts without waiting for `pve-firewall` when its template's agent gates the runner itself (layer 6 on): the control plane serves a probe on the ingest port + 1, which the job security group drops, and passes it in `GHRM_FIREWALL_PROBE`. The agent connects to it every 500 ms; once the probe has answered and then times out (or the host is unreachable), the group applies and the runner starts. A probe that never answered proves nothing, so the agent then keeps the `firewall_settle` delay from its own start (`GHRM_FIREWALL_SETTLE`); a probe still answering after 60 s fails the environment at stage `firewall`. Build and verify environments, older templates and an ingest advertised on another port than it listens on keep the delay before the start.
+
 Proxmox reads are sent up to three times when the answer is a passing server error (the LXC list answers 500 now and then while a guest starts or stops: `failed to read from command socket`; 502–504, 595 and 596 during a pveproxy reload) or the connection drops. A missing guest, a timeout and an answer that does not decode are final. The overview shares one capacity call for 5 seconds and keeps the last good answer for a minute, so a single failed call is not shown as an unreachable runtime; callers wait for the shared call only as long as their own request lives. A token that may not read `/disks/lvmthin` is asked again every 10 minutes, so a permission granted later takes effect without a restart.
 
 Agent → ingest frames are NDJSON batches every 250 ms. Each log stream has its own sequence numbers, so a retried batch is stored once; an agent numbers from its start time in microseconds, so an agent that restarts (a builder updating itself) continues above its predecessor. Events share the `agent` stream's sequence and reach the controller exactly once.
@@ -365,8 +367,10 @@ flowchart TD
     clone -- ok --> unlockalloc["release allocation lock"]
     unlockalloc --> tag["tag: ghrm-env, ghrmid-ID"]
     tag --> configure["configure: cores, memory, swap, env"]
-    configure --> settle["wait for pve-firewall (firewall_settle)"]
-    settle --> ref(["return ref VMID/ID"])
+    configure --> gated{"agent gates the firewall?<br/>(template layer ≥ 6 and a probe)"}
+    gated -- yes --> ref(["return ref VMID/ID"])
+    gated -- no --> settle["wait for pve-firewall (firewall_settle)"]
+    settle --> ref
     tag -- error --> cleanup["destroy clone; report cleanup failure with the VMID"]
     configure -- error --> cleanup
     settle -- cancelled --> cleanup

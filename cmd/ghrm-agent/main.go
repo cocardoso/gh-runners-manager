@@ -49,6 +49,7 @@ func main() {
 }
 
 func run(ctx context.Context, environ, runnerDir, runnerUser, cgroup, poweroff string) int {
+	started := time.Now()
 	boot, ok, err := agent.LoadBootstrap(environ)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -139,6 +140,18 @@ func run(ctx context.Context, environ, runnerDir, runnerUser, cgroup, poweroff s
 	} else {
 		client.Log("agent", "runner user "+runnerUser+" not found; running as the current user")
 	}
+	// The runner only starts once the job network's firewall applies to this guest.
+	if boot.FirewallProbe != "" {
+		start := time.Now()
+		if err := agent.WaitFirewall(ctx, boot.FirewallProbe, agent.FirewallWait{Since: started, Settle: boot.FirewallSettle}); err != nil {
+			client.Log("agent", "not starting the runner: "+err.Error())
+			client.Event(ingest.EventFirewallOpen, map[string]any{"error": err.Error()})
+			stopMetrics()
+			stopTail()
+			return shutdown(client, stopSend, poweroff)
+		}
+		client.Log("agent", "job network firewall applies after "+time.Since(start).Round(100*time.Millisecond).String())
+	}
 	client.Event(ingest.EventRunnerStarted, nil)
 	code, err := r.Run(ctx)
 	if err != nil {
@@ -149,6 +162,11 @@ func run(ctx context.Context, environ, runnerDir, runnerUser, cgroup, poweroff s
 	stopMetrics()
 	tailer.Poll() // final read
 	stopTail()
+	return shutdown(client, stopSend, poweroff)
+}
+
+// shutdown flushes what is left to the control plane, says goodbye and powers off.
+func shutdown(client *agent.Client, stopSend func(), poweroff string) int {
 	fctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	_ = client.Flush(fctx)
 	cancel()

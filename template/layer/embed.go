@@ -13,7 +13,11 @@ import (
 
 // Version identifies the layer. Bump it with every change to the files in this directory:
 // a new version triggers a template rebuild (spec §8.5).
-const Version = "5"
+const Version = "6"
+
+// FirewallGateSince is the first layer whose agent waits for the job network's firewall
+// before it starts the runner (GHRM_FIREWALL_PROBE).
+const FirewallGateSince = 6
 
 //go:embed Dockerfile ghrm-agent.service apt-ipv4.conf persist-env.sh mirrors.sh
 var files embed.FS

@@ -308,7 +308,7 @@ After a control-plane restart, state is rebuilt from the three sources before sc
 
 ### 10.3 Firewall application window
 
-A new guest must not start before `pve-firewall` has applied its rules. The runtime confirms that the rules are applied before `Start`. The exact mechanism is an implementation task (Section 14). Until it exists, a fixed delay longer than one compile cycle (≥ 12 s) is used.
+A new guest must not run job code before `pve-firewall` has applied its rules. The guest's agent confirms it before it starts the runner: it probes a control-plane port the job security group drops, and starts the runner once a probe that answered stops answering. Without that proof (the probe never answered), and for templates whose agent predates the check, a fixed delay longer than one compile cycle (`firewall_settle`, ≥ 12 s) is kept, counted from the agent's start or applied before `Start`.
 
 ### 10.4 GitHub credentials
 
@@ -457,7 +457,7 @@ gh-runners-manager/
 |---|---|---|
 | 1 | The `actions/scaleset` client is in public preview, and its API may change. | Pin versions and wrap the client behind an internal interface. Confirm repository-level scale sets for personal accounts early. |
 | 2 | ~~The LXC `env` option may need privileges beyond the scoped role.~~ | **Resolved:** `ghrm smoke` with the scoped `GhrmRuntime` role on Proxmox VE 9.2 sets `env` successfully. Minimum version: Proxmox VE 9.1. |
-| 3 | No API confirms when `pve-firewall` has applied rules for a new guest. | Investigate a reliable signal. Until then, use a fixed delay longer than one compile cycle. |
+| 3 | No API confirms when `pve-firewall` has applied rules for a new guest. | The agent probes a port the security group drops and starts the runner once the probe stops answering; without proof, the fixed delay. |
 | 4 | Converting the `ubuntu-slim` image into an LXC root filesystem: the image has no init, and Proxmox's `ostype=ubuntu` network setup must work with it. | The ghrm layer installs systemd. Validated: template verification runs the software-report comparison on every build. |
 | 5 | Every job starts with a cold Docker cache, which makes buildx-heavy jobs slower than on hosted runners. | **Resolved:** a pull-through registry cache on the job network (see [architecture](architecture.md)); BuildKit `type=gha` cache exports also work. |
 | 6 | Docker Engine inside an unprivileged LXC with `nesting=1` is a supported but less common setup. | Covered by the canary suite and by template verification on every build. |

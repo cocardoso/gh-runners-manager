@@ -30,6 +30,9 @@ type EnvironmentSpec struct {
 	Template string
 	// DiskGB grows the root disk after cloning (0 keeps the template's size).
 	DiskGB int
+	// FirewallGated means the guest's agent holds the runner until the job network's
+	// firewall applies, so the runtime need not wait for it before the start.
+	FirewallGated bool
 }
 
 var (

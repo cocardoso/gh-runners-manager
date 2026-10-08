@@ -746,3 +746,24 @@ func TestVerifyEnvironmentGetsTheCache(t *testing.T) {
 		t.Fatalf("blocked env = %q; want the configured addresses and the cache's private ports", b)
 	}
 }
+
+func TestOnlyTemplatesWithTheGatedAgentSkipTheFirewallDelay(t *testing.T) {
+	h := newService(t, nil)
+	ctx := context.Background()
+	if _, _, gated := h.s.ActiveFirewallGated(ctx); gated {
+		t.Fatal("the bootstrap template's agent may predate the gate")
+	}
+	for layerVersion, want := range map[string]bool{"5.abcdef012345": false, "6.abcdef012345": true, "12.abcdef012345.cafe": true, "": false, "x": false} {
+		id := "t" + strings.ReplaceAll(layerVersion, ".", "")
+		if err := h.db.CreateTemplate(ctx, store.Template{ID: id, State: store.TemplateReady, VMID: 951, RuntimeRef: "951/" + id, LayerVersion: layerVersion}); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.db.SetActiveTemplate(ctx, id, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		ref, vmid, gated := h.s.ActiveFirewallGated(ctx)
+		if gated != want || vmid != 951 || ref == "" {
+			t.Errorf("layer %q: %q %d gated=%v, want gated=%v", layerVersion, ref, vmid, gated, want)
+		}
+	}
+}

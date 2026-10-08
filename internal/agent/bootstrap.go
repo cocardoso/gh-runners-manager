@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/ingest"
 )
@@ -25,6 +26,10 @@ type Bootstrap struct {
 	Blocked []string
 	// Mirrors lists the registry cache's host:port addresses the self-test must reach.
 	Mirrors []string
+	// FirewallProbe, when set, is checked before the runner starts (see WaitFirewall), with
+	// FirewallSettle as the fallback delay.
+	FirewallProbe  string
+	FirewallSettle time.Duration
 }
 
 // ParseEnviron splits a NUL-separated environment block.
@@ -53,6 +58,11 @@ func LoadBootstrap(path string) (Bootstrap, bool, error) {
 		Token:         env[ingest.EnvToken],
 		Fingerprint:   env[ingest.EnvFingerprint],
 		Mode:          env[ingest.EnvMode],
+		FirewallProbe: env[ingest.EnvFirewallProbe],
+	}
+	b.FirewallSettle = 12 * time.Second
+	if d, err := time.ParseDuration(env[ingest.EnvFirewallSettle]); err == nil && d > 0 {
+		b.FirewallSettle = d
 	}
 	for _, a := range strings.Split(env[ingest.EnvSelfTestBlocked], ",") {
 		if a = strings.TrimSpace(a); a != "" {
