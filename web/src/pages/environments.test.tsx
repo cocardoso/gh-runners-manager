@@ -57,7 +57,9 @@ test("a failed environment kept for debugging says until when, in the language's
   const until = keptFixture(10, 30);
   renderApp("/environments");
   const table = await screen.findByRole("table");
-  const time = new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(until);
+  // 20 minutes ahead: near midnight that is tomorrow, and the day shows too.
+  const today = until.toDateString() === new Date().toDateString();
+  const time = new Intl.DateTimeFormat("en", today ? { hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(until);
   expect(await within(table).findByText(`kept for debugging until ${time}`)).toBeInTheDocument();
 });
 
