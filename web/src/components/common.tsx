@@ -3,6 +3,7 @@ import { Breadcrumbs, Empty, Loader, Tooltip, cn } from "@cloudflare/kumo";
 import { HouseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { PageHeader } from "@/blocks/page-header/page-header";
 import { formatAbsolute, formatRelative } from "@/lib/format";
+import { tr } from "@/i18n";
 
 let tick = Date.now();
 const subscribers = new Set<() => void>();
@@ -31,7 +32,7 @@ export function RelativeTime({ value, className }: { value: string | undefined; 
       content={formatAbsolute(value)}
       render={
         <time dateTime={value} className={cn("whitespace-nowrap", className)}>
-          {formatRelative(value, now)}
+          {formatRelative(value, undefined, now)}
         </time>
       }
     />
@@ -95,7 +96,7 @@ export function Page({
   );
 }
 
-export function Loading({ label = "Loading…" }: { label?: string }) {
+export function Loading({ label = tr("common.loading") }: { label?: string }) {
   return (
     <div className="flex items-center gap-2 p-6 text-kumo-subtle" role="status">
       <Loader /> {label}
@@ -107,7 +108,7 @@ export function ErrorState({ error }: { error: unknown }) {
   return (
     <Empty
       icon={<WarningCircleIcon size={40} className="text-kumo-danger" />}
-      title="Could not load this data"
+      title={tr("shell.errorTitle")}
       description={error instanceof Error ? error.message : String(error)}
     />
   );

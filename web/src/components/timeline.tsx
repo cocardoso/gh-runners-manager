@@ -3,6 +3,7 @@ import { CheckCircleIcon, CircleNotchIcon, XCircleIcon } from "@phosphor-icons/r
 import type { Stage } from "@/lib/timeline";
 import { formatAbsolute, formatDuration } from "@/lib/format";
 import { RelativeTime } from "./common";
+import { tr } from "@/i18n";
 
 const icon = {
   done: <CheckCircleIcon size={20} weight="fill" className="text-kumo-success" />,
@@ -12,10 +13,10 @@ const icon = {
 
 /** The lifecycle stages of a job or environment, with timestamps and durations. */
 export function Timeline({ stages }: { stages: Stage[] }) {
-  if (stages.length === 0) return <p className="text-sm text-kumo-subtle">No lifecycle events recorded yet.</p>;
+  if (stages.length === 0) return <p className="text-sm text-kumo-subtle">{tr("shell.timeline.empty")}</p>;
   const longest = Math.max(...stages.map((s) => s.durationMs ?? 0), 1);
   return (
-    <ol className="flex flex-col" aria-label="Lifecycle">
+    <ol className="flex flex-col" aria-label={tr("shell.timeline.lifecycle")}>
       {stages.map((s, i) => (
         <li key={`${s.key}-${s.at}`} className="relative flex gap-3 pb-4 last:pb-0">
           {i < stages.length - 1 && <span aria-hidden className="absolute top-6 bottom-0 left-[9px] w-px bg-kumo-line" />}
@@ -31,8 +32,7 @@ export function Timeline({ stages }: { stages: Stage[] }) {
               <div className="flex items-center gap-2">
                 <span className="h-1.5 rounded-full bg-kumo-brand/60" style={{ width: `${Math.max(2, (s.durationMs / longest) * 100)}%`, maxWidth: "60%" }} />
                 <span className="text-sm tabular-nums text-kumo-subtle">
-                  {formatDuration(s.durationMs)}
-                  {s.status === "current" ? " so far" : ""}
+                  {s.status === "current" ? tr("shell.timeline.soFar", { duration: formatDuration(s.durationMs) }) : formatDuration(s.durationMs)}
                 </span>
               </div>
             )}

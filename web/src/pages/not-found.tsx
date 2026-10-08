@@ -1,5 +1,7 @@
 import { Page } from "@/components/common";
+import { useT } from "@/i18n";
 
 export function NotFoundPage() {
-  return <Page title="Not found">{null}</Page>;
+  const t = useT();
+  return <Page title={t("shell.notFound")}>{null}</Page>;
 }

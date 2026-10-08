@@ -14,19 +14,11 @@ import {
 } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
 import { api, unwrap } from "@/api/client";
+import { tr } from "@/i18n";
 import { stripAnsi } from "@/lib/ansi";
-import { useLogStream, type LogStreamName, type LogStreamState } from "@/lib/use-log-stream";
+import { formatNumber } from "@/lib/format";
+import { useLogStream, type LogStreamName } from "@/lib/use-log-stream";
 import { LogView } from "./log-view";
-
-const stateLabel: Record<LogStreamState, string> = {
-  loading: "Loading",
-  connecting: "Connecting",
-  live: "Live",
-  reconnecting: "Reconnecting",
-  paused: "Paused",
-  ended: "Ended",
-  error: "Error",
-};
 
 /** Reads a whole stream through the REST API, page by page, as raw text. */
 async function readAll(envId: string, stream: LogStreamName): Promise<string[]> {
@@ -75,6 +67,8 @@ export interface LiveLogProps {
 
 /** A log panel: stream tabs, follow/pause, search, wrap, timestamps, copy and download. */
 export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "", className, createEventSource }: LiveLogProps) {
+  // tr, not useT: the viewer also renders outside the i18n provider, as in its tests.
+  const t = tr;
   const toast = useKumoToastManager();
   const [stream, setStream] = useState<LogStreamName>(defaultStream);
   const [follow, setFollow] = useState(true);
@@ -108,9 +102,9 @@ export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(log.lines.map((l) => stripAnsi(l.text)).join("\n"));
-      toast.add({ title: `Copied ${log.lines.length.toLocaleString()} lines` });
+      toast.add({ title: t("environments.log.copied", { count: log.lines.length, n: formatNumber(log.lines.length) }) });
     } catch {
-      toast.add({ title: "Could not copy to the clipboard", variant: "error" });
+      toast.add({ title: t("environments.log.copyFailed"), variant: "error" });
     }
   };
 
@@ -126,7 +120,7 @@ export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "
       // Revoking in the same task can cancel the download in some browsers.
       setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (e) {
-      toast.add({ title: "Download failed", description: e instanceof Error ? e.message : String(e), variant: "error" });
+      toast.add({ title: t("environments.log.downloadFailed"), description: e instanceof Error ? e.message : String(e), variant: "error" });
     } finally {
       setDownloading(false);
     }
@@ -152,7 +146,7 @@ export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "
         />
         <span className="flex items-center gap-1.5 text-sm text-kumo-subtle" role="status">
           <span className={cn("size-2 rounded-full", dot)} />
-          {stateLabel[state]} · {log.lines.length.toLocaleString()} lines
+          {t(`environments.log.state.${state}`)} · {t("environments.log.lines", { count: log.lines.length, n: formatNumber(log.lines.length) })}
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-1">
           <InputGroup size="sm" className="w-48 sm:w-60">
@@ -161,8 +155,8 @@ export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "
             </InputGroup.Addon>
             <InputGroup.Input
               type="search"
-              aria-label="Search the log"
-              placeholder="Search"
+              aria-label={t("environments.log.searchLabel")}
+              placeholder={t("environments.log.searchPlaceholder")}
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
@@ -174,24 +168,24 @@ export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "
             />
             {search && (
               <InputGroup.Suffix className="whitespace-nowrap text-xs tabular-nums">
-                {matches.length ? `${current + 1} of ${matches.length}` : "0 matches"}
+                {matches.length ? t("environments.log.matchOf", { current: formatNumber(current + 1), total: formatNumber(matches.length) }) : t("environments.log.noMatches")}
               </InputGroup.Suffix>
             )}
           </InputGroup>
-          <Button variant="ghost" size="sm" shape="square" icon={CaretUpIcon} aria-label="Previous match" disabled={!matches.length} onClick={() => step(-1)} />
-          <Button variant="ghost" size="sm" shape="square" icon={CaretDownIcon} aria-label="Next match" disabled={!matches.length} onClick={() => step(1)} />
+          <Button variant="ghost" size="sm" shape="square" icon={CaretUpIcon} aria-label={t("environments.log.previousMatch")} disabled={!matches.length} onClick={() => step(-1)} />
+          <Button variant="ghost" size="sm" shape="square" icon={CaretDownIcon} aria-label={t("environments.log.nextMatch")} disabled={!matches.length} onClick={() => step(1)} />
           {live && (
             <Button variant="secondary" size="sm" icon={follow ? PauseIcon : PlayIcon} onClick={() => setFollow(!follow)}>
-              {follow ? "Pause" : "Resume"}
+              {follow ? t("environments.log.pause") : t("environments.log.resume")}
             </Button>
           )}
-          <ToggleButton pressed={wrap} onClick={() => setWrap(!wrap)} label="Wrap lines" icon={ArrowsInLineHorizontalIcon} />
-          <ToggleButton pressed={timestamps} onClick={() => setTimestamps(!timestamps)} label="Show timestamps" icon={ClockIcon} />
-          <ToggleButton pressed={numbers} onClick={() => setNumbers(!numbers)} label="Show line numbers" icon={ListNumbersIcon} />
-          <Tooltip content="Copy loaded lines" render={<Button variant="ghost" size="sm" shape="square" icon={CopyIcon} aria-label="Copy" onClick={copy} />} />
+          <ToggleButton pressed={wrap} onClick={() => setWrap(!wrap)} label={t("environments.log.wrap")} icon={ArrowsInLineHorizontalIcon} />
+          <ToggleButton pressed={timestamps} onClick={() => setTimestamps(!timestamps)} label={t("environments.log.timestamps")} icon={ClockIcon} />
+          <ToggleButton pressed={numbers} onClick={() => setNumbers(!numbers)} label={t("environments.log.lineNumbers")} icon={ListNumbersIcon} />
+          <Tooltip content={t("environments.log.copyTooltip")} render={<Button variant="ghost" size="sm" shape="square" icon={CopyIcon} aria-label={t("environments.log.copy")} onClick={copy} />} />
           <Tooltip
-            content="Download the whole stream"
-            render={<Button variant="ghost" size="sm" shape="square" icon={DownloadSimpleIcon} aria-label="Download" loading={downloading} onClick={download} />}
+            content={t("environments.log.downloadTooltip")}
+            render={<Button variant="ghost" size="sm" shape="square" icon={DownloadSimpleIcon} aria-label={t("environments.log.download")} loading={downloading} onClick={download} />}
           />
         </div>
       </div>
@@ -215,7 +209,7 @@ export function LiveLog({ envId, streams, defaultStream, live, initialSearch = "
         loadingEarlier={log.loadingEarlier}
         onLoadEarlier={log.loadEarlier}
         dropped={log.dropped}
-        empty={log.state === "loading" ? "Loading…" : live ? "Waiting for the first line…" : "This stream has no lines."}
+        empty={log.state === "loading" ? t("environments.log.loading") : live ? t("environments.log.waiting") : t("environments.log.noLines")}
       />
     </div>
   );

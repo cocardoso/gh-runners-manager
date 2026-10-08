@@ -1,23 +1,26 @@
 import { useMemo, useState } from "react";
-import { Empty, LayerCard, Link, Pagination, Table } from "@cloudflare/kumo";
+import { Empty, LayerCard, Link, Table } from "@cloudflare/kumo";
 import { CubeIcon, FunnelSimpleIcon } from "@phosphor-icons/react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useEnvironments, useJobs, useScaleSets } from "@/api/queries";
 import { ErrorState, Loading, Page, RelativeTime, Truncate } from "@/components/common";
 import { EnvironmentStateBadge } from "@/components/status-badge";
 import { ListToolbar } from "@/components/list-toolbar";
-import { formatMB } from "@/lib/format";
+import { AppPagination } from "@/components/app-pagination";
+import { useT } from "@/i18n";
+import { formatMB, formatNumber } from "@/lib/format";
 import { useFrozenOrder } from "@/lib/frozen-order";
 import type { ListSearch } from "@/router";
 
 const PER_PAGE = 25;
 const LIST_LIMIT = 1000;
 const LIVE = new Set(["pending", "provisioning", "booting", "connected", "idle", "running", "completing", "destroying", "failed"]);
-const stateOptions = { live: "Live", failed: "Failed", destroyed: "Destroyed" };
 
 export function EnvironmentsPage() {
   const search = useSearch({ strict: false }) as ListSearch;
   const navigate = useNavigate();
+  const t = useT();
+  const stateOptions = { live: t("environments.list.filter.live"), failed: t("environments.list.filter.failed"), destroyed: t("environments.list.filter.destroyed") };
   // State and scale set filter on the server, so they reach past the newest LIST_LIMIT environments.
   const serverState = search.state === "live" ? [...LIVE].join(",") : search.state;
   const envs = useEnvironments({ limit: LIST_LIMIT, state: serverState, scaleSet: search.scale_set });
@@ -49,12 +52,12 @@ export function EnvironmentsPage() {
     body = (
       <Empty
         icon={<CubeIcon size={48} className="text-kumo-inactive" />}
-        title="No environments yet"
-        description="An environment is created for every job a scale set receives, and destroyed when the job ends."
+        title={t("environments.list.emptyTitle")}
+        description={t("environments.list.emptyDescription")}
       />
     );
   else if (filtered.length === 0)
-    body = <Empty icon={<FunnelSimpleIcon size={48} className="text-kumo-inactive" />} title="No environment matches these filters" description="Change or clear the filters." />;
+    body = <Empty icon={<FunnelSimpleIcon size={48} className="text-kumo-inactive" />} title={t("environments.list.noMatchTitle")} description={t("environments.list.noMatchDescription")} />;
   else
     body = (
       <>
@@ -62,13 +65,13 @@ export function EnvironmentsPage() {
           <Table className="min-w-[56rem]">
             <Table.Header>
               <Table.Row>
-                <Table.Head>Environment</Table.Head>
-                <Table.Head>State</Table.Head>
-                <Table.Head>Scale set</Table.Head>
-                <Table.Head>Job</Table.Head>
-                <Table.Head>IP</Table.Head>
-                <Table.Head>Memory</Table.Head>
-                <Table.Head>Created</Table.Head>
+                <Table.Head>{t("environments.list.col.environment")}</Table.Head>
+                <Table.Head>{t("environments.list.col.state")}</Table.Head>
+                <Table.Head>{t("environments.list.col.scaleSet")}</Table.Head>
+                <Table.Head>{t("environments.list.col.job")}</Table.Head>
+                <Table.Head>{t("environments.list.col.ip")}</Table.Head>
+                <Table.Head>{t("environments.list.col.memory")}</Table.Head>
+                <Table.Head>{t("environments.list.col.created")}</Table.Head>
               </Table.Row>
             </Table.Header>
             <Table.Body>
@@ -78,7 +81,7 @@ export function EnvironmentsPage() {
                     <Link href={`/environments/${encodeURIComponent(e.id)}`} className="block truncate font-mono text-sm">
                       {e.id}
                     </Link>
-                    {e.failure_stage && <Truncate className="text-xs text-kumo-danger" text={`at ${e.failure_stage}: ${e.failure_reason ?? ""}`} />}
+                    {e.failure_stage && <Truncate className="text-xs text-kumo-danger" text={t("environments.list.failedAt", { stage: e.failure_stage, reason: e.failure_reason ?? "" })} />}
                   </Table.Cell>
                   <Table.Cell>
                     <EnvironmentStateBadge state={e.state} />
@@ -106,23 +109,23 @@ export function EnvironmentsPage() {
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-kumo-line px-3 py-2">
           <span className="text-sm text-kumo-subtle" aria-live="polite">
             {pending > 0
-              ? `${pending} new — move the pointer away to show them`
-              : `${filtered.length.toLocaleString()} environments${all.length >= LIST_LIMIT ? ` (only the newest ${LIST_LIMIT.toLocaleString()} matching environments are loaded)` : ""}`}
+              ? t("environments.list.pending", { count: pending, n: formatNumber(pending) })
+              : `${t("environments.list.count", { count: filtered.length, n: formatNumber(filtered.length) })}${all.length >= LIST_LIMIT ? ` ${t("environments.list.limited", { limit: formatNumber(LIST_LIMIT) })}` : ""}`}
           </span>
-          <Pagination page={page} setPage={(p) => set({ page: p > 1 ? p : undefined })} perPage={PER_PAGE} totalCount={filtered.length} />
+          <AppPagination page={page} setPage={(p) => set({ page: p > 1 ? p : undefined })} perPage={PER_PAGE} totalCount={filtered.length} />
         </div>
       </>
     );
 
   return (
-    <Page title="Environments" description="One short-lived LXC per job, from creation to destruction.">
+    <Page title={t("environments.list.title")} description={t("environments.list.description")}>
       <ListToolbar
         search={search.q ?? ""}
         onSearch={(q) => set({ q: q || undefined })}
-        searchLabel="Search environments"
+        searchLabel={t("environments.list.search")}
         filters={[
-          { key: "state", label: "State", value: search.state, options: stateOptions },
-          { key: "scale_set", label: "Scale set", value: search.scale_set, options: scaleSets },
+          { key: "state", label: t("environments.list.filter.state"), value: search.state, options: stateOptions },
+          { key: "scale_set", label: t("environments.list.filter.scaleSet"), value: search.scale_set, options: scaleSets },
         ]}
         onFilter={(key, value) => set({ [key]: value })}
         onClear={() => void navigate({ to: "/environments", search: {}, replace: true })}

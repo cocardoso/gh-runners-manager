@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button, InputGroup, Select } from "@cloudflare/kumo";
 import { MagnifyingGlassIcon, XIcon } from "@phosphor-icons/react";
+import { tr } from "@/i18n";
 
 export interface FilterDef {
   key: string;
@@ -43,12 +44,12 @@ export function ListToolbar({
           className="min-w-36"
           value={f.value ?? ""}
           onValueChange={(v) => onFilter(f.key, (v as string) || undefined)}
-          items={{ "": `${f.label}: all`, ...Object.fromEntries(Object.entries(f.options).map(([k, v]) => [k, `${f.label}: ${v}`])) }}
+          items={{ "": tr("shell.filters.all", { label: f.label }), ...Object.fromEntries(Object.entries(f.options).map(([k, v]) => [k, tr("shell.filters.option", { label: f.label, value: v })])) }}
         />
       ))}
       {active && (
         <Button variant="ghost" icon={XIcon} onClick={onClear}>
-          Clear filters
+          {tr("shell.filters.clear")}
         </Button>
       )}
       {children && <div className="ml-auto flex items-center gap-2">{children}</div>}

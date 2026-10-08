@@ -3,6 +3,7 @@ import { Banner, Button, Dialog, DialogRoot, DialogTitle, Input, Select } from "
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type ScaleSetSettings } from "@/api/client";
 import { useCredentials } from "@/api/queries";
+import { useT } from "@/i18n";
 
 const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^settings: /, "") : String(e));
 
@@ -10,6 +11,7 @@ const numberOr = (v: string, fallback: number) => (v.trim() === "" || Number.isN
 
 /** Creates a scale set, or edits one created here (name fixed). */
 export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: string; initial?: ScaleSetSettings | null; onClose: () => void }) {
+  const t = useT();
   const qc = useQueryClient();
   const creds = useCredentials();
   const credNames = (creds.data ?? []).map((c) => c.name);
@@ -53,34 +55,34 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
   return (
     <DialogRoot open onOpenChange={(o) => !o && onClose()}>
       <Dialog className="flex max-h-[90dvh] flex-col gap-4 overflow-y-auto p-6">
-        <DialogTitle className="text-lg font-semibold">{fixedName ? `Edit ${fixedName}` : "New scale set"}</DialogTitle>
+        <DialogTitle className="text-lg font-semibold">{fixedName ? t("templates.scaleSets.editor.edit", { name: fixedName }) : t("templates.scaleSets.new")}</DialogTitle>
         <p className="text-sm text-kumo-subtle">
-          Jobs use it with <code>runs-on: &lt;name&gt;</code>. Changes apply to new environments; running ones keep their settings.
+          {t("templates.scaleSets.editor.usage")} <code>runs-on: &lt;name&gt;</code>. {t("templates.scaleSets.editor.changes")}
         </p>
         {error && <Banner variant="error" title={error} />}
         <form className="flex flex-col gap-4" onSubmit={submit}>
-          <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} disabled={!!fixedName} description="Lower-case letters, digits and dashes." />
+          <Input label={t("templates.scaleSets.editor.name")} value={name} onChange={(e) => setName(e.target.value)} disabled={!!fixedName} description={t("templates.scaleSets.editor.nameHelp")} />
           <Input
-            label="Repository or organization URL"
+            label={t("templates.scaleSets.editor.url")}
             placeholder="https://github.com/owner/repo"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
           />
           <Select
-            label="Credential"
+            label={t("templates.scaleSets.editor.credential")}
             value={chosen}
             onValueChange={(v) => setCredential(String(v ?? ""))}
             items={Object.fromEntries(credNames.map((n) => [n, n]))}
-            placeholder="Add a credential in Settings first"
+            placeholder={t("templates.scaleSets.editor.credentialPlaceholder")}
           />
-          <Input label="Extra labels" placeholder="linux, big" value={labels} onChange={(e) => setLabels(e.target.value)} description="Comma-separated; the name is always a label." />
-          <Input label="Runner group" value={group} onChange={(e) => setGroup(e.target.value)} />
+          <Input label={t("templates.scaleSets.editor.labels")} placeholder="linux, big" value={labels} onChange={(e) => setLabels(e.target.value)} description={t("templates.scaleSets.editor.labelsHelp")} />
+          <Input label={t("templates.scaleSets.editor.runnerGroup")} value={group} onChange={(e) => setGroup(e.target.value)} />
           <div className="grid grid-cols-2 gap-4">
-            <Input label="Max concurrent" type="number" min={1} value={maxConcurrent} onChange={(e) => setMaxConcurrent(e.target.value)} />
-            <Input label="Cores" type="number" min={1} value={cores} onChange={(e) => setCores(e.target.value)} />
-            <Input label="Memory (MB)" type="number" min={256} step={256} value={memory} onChange={(e) => setMemory(e.target.value)} />
+            <Input label={t("templates.scaleSets.editor.maxConcurrent")} type="number" min={1} value={maxConcurrent} onChange={(e) => setMaxConcurrent(e.target.value)} />
+            <Input label={t("templates.scaleSets.editor.cores")} type="number" min={1} value={cores} onChange={(e) => setCores(e.target.value)} />
+            <Input label={t("templates.scaleSets.editor.memory")} type="number" min={256} step={256} value={memory} onChange={(e) => setMemory(e.target.value)} />
             <Input
-              label="Keep failed environments (minutes)"
+              label={t("templates.scaleSets.editor.keep")}
               type="number"
               min={0}
               value={keep}
@@ -89,10 +91,10 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" type="button" onClick={onClose}>
-              Cancel
+              {t("templates.scaleSets.editor.cancel")}
             </Button>
             <Button variant="primary" type="submit" loading={busy} disabled={!name.trim() || !url.trim() || !chosen}>
-              Save scale set
+              {t("templates.scaleSets.editor.save")}
             </Button>
           </div>
         </form>

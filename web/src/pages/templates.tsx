@@ -6,44 +6,53 @@ import { useSettings, useTemplates } from "@/api/queries";
 import { useAdminAction } from "@/components/admin-action";
 import { ErrorState, Loading, Page, RelativeTime } from "@/components/common";
 import { TemplateStateBadge } from "@/components/status-badge";
+import { currentFormatLocale, tr, useT, type Key } from "@/i18n";
 
 export type TemplateView = TemplateVersion;
 
 export function formatBytes(n: number): string {
   if (!n) return "—";
-  if (n < 1024 ** 2) return `${Math.max(1, Math.round(n / 1024))} KB`;
+  const num = (v: number, digits = 0) => new Intl.NumberFormat(currentFormatLocale(), { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v);
+  if (n < 1024 ** 2) return tr("templates.units.kb", { n: num(Math.max(1, Math.round(n / 1024))) });
   const gb = n / 1024 ** 3;
-  return gb >= 1 ? `${gb.toFixed(2)} GB` : `${Math.round(n / 1024 ** 2)} MB`;
+  return gb >= 1 ? tr("templates.units.gb", { n: num(gb, 2) }) : tr("templates.units.mb", { n: num(Math.round(n / 1024 ** 2)) });
 }
 
-const triggerLabel: Record<string, string> = {
-  manual: "Manual",
-  "slim-release": "New ubuntu-slim release",
-  "runner-release": "New runner release",
-  layer: "New ghrm layer",
-  "bootstrap-replacement": "Replaces the bootstrap template",
-  bootstrap: "Bootstrap",
+const triggerKey: Record<string, Key> = {
+  manual: "templates.trigger.manual",
+  "slim-release": "templates.trigger.slimRelease",
+  "runner-release": "templates.trigger.runnerRelease",
+  layer: "templates.trigger.layer",
+  "bootstrap-replacement": "templates.trigger.bootstrapReplacement",
+  bootstrap: "templates.trigger.bootstrap",
 };
 
+function triggerLabel(trigger?: string): string {
+  const key = triggerKey[trigger ?? ""];
+  return key ? tr(key) : (trigger ?? "");
+}
+
 function Flags({ t }: { t: TemplateView }) {
+  const tl = useT();
   return (
     <span className="flex flex-wrap gap-1">
-      {t.pinned && <Badge variant="outline">Pinned</Badge>}
-      {t.in_use && <Badge variant="outline">In use</Badge>}
+      {t.pinned && <Badge variant="outline">{tl("templates.flags.pinned")}</Badge>}
+      {t.in_use && <Badge variant="outline">{tl("templates.flags.inUse")}</Badge>}
     </span>
   );
 }
 
 export function TemplateActions({ t, run }: { t: TemplateView; run: ReturnType<typeof useAdminAction>["run"] }) {
+  const tl = useT();
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ["templates"] });
   const activate = () =>
-    run(t.state === "ready" && t.activated_at && !t.activated_at.startsWith("0001") ? `Rolled back to ${t.id}` : `${t.id} is now active`, async () => {
+    run(t.state === "ready" && t.activated_at && !t.activated_at.startsWith("0001") ? tl("templates.actions.rolledBack", { id: t.id }) : tl("templates.actions.activated", { id: t.id }), async () => {
       unwrap(await api.POST("/api/v1/templates/{id}/activate", { params: { path: { id: t.id } } }));
       await refresh();
     });
   const pin = (pinned: boolean) =>
-    run(pinned ? `${t.id} pinned` : `${t.id} unpinned`, async () => {
+    run(pinned ? tl("templates.actions.pinned", { id: t.id }) : tl("templates.actions.unpinned", { id: t.id }), async () => {
       const path = pinned ? "/api/v1/templates/{id}/pin" : "/api/v1/templates/{id}/unpin";
       unwrap(await api.POST(path, { params: { path: { id: t.id } } }));
       await refresh();
@@ -51,18 +60,18 @@ export function TemplateActions({ t, run }: { t: TemplateView; run: ReturnType<t
   const wasActive = !!t.activated_at && !t.activated_at.startsWith("0001");
   return (
     <DropdownMenu>
-      <DropdownMenu.Trigger render={<Button variant="ghost" size="sm" shape="square" icon={DotsThreeIcon} aria-label={`Actions for ${t.id}`} />} />
+      <DropdownMenu.Trigger render={<Button variant="ghost" size="sm" shape="square" icon={DotsThreeIcon} aria-label={tl("templates.actions.menu", { id: t.id })} />} />
       <DropdownMenu.Content>
         <DropdownMenu.Item icon={wasActive ? ArrowCounterClockwiseIcon : CheckCircleIcon} disabled={t.active} onClick={activate}>
-          {wasActive ? "Roll back to this version" : "Activate"}
+          {wasActive ? tl("templates.actions.rollBack") : tl("templates.actions.activate")}
         </DropdownMenu.Item>
         {t.pinned ? (
           <DropdownMenu.Item icon={PushPinSlashIcon} onClick={() => pin(false)}>
-            Unpin
+            {tl("templates.actions.unpin")}
           </DropdownMenu.Item>
         ) : (
           <DropdownMenu.Item icon={PushPinIcon} onClick={() => pin(true)}>
-            Pin (stop automatic activation)
+            {tl("templates.actions.pin")}
           </DropdownMenu.Item>
         )}
       </DropdownMenu.Content>
@@ -71,6 +80,7 @@ export function TemplateActions({ t, run }: { t: TemplateView; run: ReturnType<t
 }
 
 export function TemplatesPage() {
+  const tl = useT();
   const list = useTemplates();
   const settings = useSettings();
   const qc = useQueryClient();
@@ -81,14 +91,20 @@ export function TemplatesPage() {
   const templates: TemplateView[] = list.data?.templates ?? [];
 
   const buildNow = () =>
-    admin.run("Build started", async () => {
+    admin.run(tl("templates.build.started"), async () => {
       unwrap(await api.POST("/api/v1/templates/build"));
       await qc.invalidateQueries({ queryKey: ["templates"] });
     });
-  const reason = !enabled ? "Template builds are not configured" : building ? "A build is already running" : !canAct ? "No admin token is configured" : "";
+  const reason = !enabled
+    ? tl("templates.build.notConfigured")
+    : building
+      ? tl("templates.build.alreadyRunning")
+      : !canAct
+        ? tl("templates.build.noToken")
+        : "";
   const button = (
     <Button variant="primary" icon={HammerIcon} disabled={!!reason || admin.busy} loading={admin.busy} onClick={buildNow}>
-      Build now
+      {tl("templates.build.now")}
     </Button>
   );
 
@@ -96,22 +112,22 @@ export function TemplatesPage() {
   if (list.isLoading) body = <Loading />;
   else if (list.error) body = <ErrorState error={list.error} />;
   else if (templates.length === 0)
-    body = <Empty icon={<PackageIcon size={48} className="text-kumo-inactive" />} title="No templates" description="The configured template is registered on the first start." />;
+    body = <Empty icon={<PackageIcon size={48} className="text-kumo-inactive" />} title={tl("templates.empty.title")} description={tl("templates.empty.description")} />;
   else
     body = (
       <div className="overflow-x-auto">
         <Table className="min-w-[56rem]">
           <Table.Header>
             <Table.Row>
-              <Table.Head>Version</Table.Head>
+              <Table.Head>{tl("templates.columns.version")}</Table.Head>
               <Table.Head>ubuntu-slim</Table.Head>
-              <Table.Head>Runner</Table.Head>
-              <Table.Head>Layer</Table.Head>
-              <Table.Head>State</Table.Head>
-              <Table.Head>Size</Table.Head>
-              <Table.Head>Created</Table.Head>
+              <Table.Head>{tl("templates.columns.runner")}</Table.Head>
+              <Table.Head>{tl("templates.columns.layer")}</Table.Head>
+              <Table.Head>{tl("templates.columns.state")}</Table.Head>
+              <Table.Head>{tl("templates.columns.size")}</Table.Head>
+              <Table.Head>{tl("templates.columns.created")}</Table.Head>
               <Table.Head>
-                <span className="sr-only">Actions</span>
+                <span className="sr-only">{tl("templates.columns.actions")}</span>
               </Table.Head>
             </Table.Row>
           </Table.Header>
@@ -123,7 +139,9 @@ export function TemplatesPage() {
                     {t.id}
                   </Link>
                   <span className="block truncate text-xs text-kumo-subtle">
-                    {t.bootstrap ? `Bootstrap: the configured template (VMID ${t.vmid})` : `${triggerLabel[t.trigger ?? ""] ?? t.trigger ?? ""}${t.vmid ? ` · VMID ${t.vmid}` : ""}`}
+                    {t.bootstrap
+                      ? tl("templates.bootstrapLine", { vmid: t.vmid })
+                      : `${triggerLabel(t.trigger)}${t.vmid ? ` · ${tl("templates.vmid", { vmid: t.vmid })}` : ""}`}
                   </span>
                 </Table.Cell>
                 <Table.Cell>{t.slim_release || "—"}</Table.Cell>
@@ -134,7 +152,7 @@ export function TemplatesPage() {
                     <TemplateStateBadge state={t.state} />
                     <Flags t={t} />
                   </span>
-                  {t.failure_reason && <span className="block max-w-64 truncate text-xs text-kumo-danger" title={t.failure_reason}>{`at ${t.failure_stage}: ${t.failure_reason}`}</span>}
+                  {t.failure_reason && <span className="block max-w-64 truncate text-xs text-kumo-danger" title={t.failure_reason}>{tl("templates.failedAt", { stage: t.failure_stage ?? "", reason: t.failure_reason })}</span>}
                 </Table.Cell>
                 <Table.Cell className="tabular-nums">{formatBytes(t.size_bytes)}</Table.Cell>
                 <Table.Cell>
@@ -150,20 +168,20 @@ export function TemplatesPage() {
 
   return (
     <Page
-      title="Templates"
-      description="Every environment is cloned from the active template, built from GitHub's ubuntu-slim recipe plus the ghrm layer."
+      title={tl("templates.title")}
+      description={tl("templates.description")}
       actions={reason ? <Tooltip content={reason} render={<span>{button}</span>} /> : button}
     >
       {list.data && !enabled && (
         <Banner
           variant="secondary"
           icon={<InfoIcon weight="fill" />}
-          title="Template builds are not configured"
-          description="Set templates.vmid_range in ghrm.yaml (and give the API token Datastore.AllocateTemplate on the template storage). Until then every environment clones the configured template."
+          title={tl("templates.build.notConfigured")}
+          description={tl("templates.build.notConfiguredHelp")}
         />
       )}
       {building && (
-        <Banner variant="default" icon={<HammerIcon weight="fill" />} title="A template build is running" description="It is listed below; open it to follow the build log." />
+        <Banner variant="default" icon={<HammerIcon weight="fill" />} title={tl("templates.build.runningTitle")} description={tl("templates.build.runningHelp")} />
       )}
       <LayerCard>
         <LayerCard.Primary className="p-0">{body}</LayerCard.Primary>

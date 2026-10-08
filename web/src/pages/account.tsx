@@ -6,6 +6,7 @@ import { api, unwrap } from "@/api/client";
 import { setCsrfToken } from "@/api/auth-state";
 import { useSession } from "@/api/queries";
 import { Page } from "@/components/common";
+import { useT } from "@/i18n";
 import { MIN_PASSWORD } from "./sign-in";
 
 const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^auth: /, "") : String(e));
@@ -25,6 +26,7 @@ export function useSignOut() {
 }
 
 export function AccountPage() {
+  const t = useT();
   const session = useSession();
   const signOut = useSignOut();
   const [current, setCurrent] = useState("");
@@ -39,7 +41,7 @@ export function AccountPage() {
     setResult(undefined);
     try {
       unwrap(await api.POST("/api/v1/auth/password", { body: { current, next } }));
-      setResult({ ok: true, text: "Password changed" });
+      setResult({ ok: true, text: t("settings.account.changed") });
       setCurrent("");
       setNext("");
       setConfirm("");
@@ -51,40 +53,40 @@ export function AccountPage() {
   };
   return (
     <Page
-      title="Account"
-      description={`Signed in as ${session.data?.username ?? "…"}.`}
+      title={t("settings.account.title")}
+      description={t("settings.account.signedInAs", { username: session.data?.username ?? "…" })}
       actions={
         <Button variant="secondary" icon={SignOutIcon} onClick={() => void signOut()}>
-          Sign out
+          {t("settings.account.signOut")}
         </Button>
       }
     >
       <LayerCard className="max-w-lg">
-        <LayerCard.Secondary>Change password</LayerCard.Secondary>
+        <LayerCard.Secondary>{t("settings.account.changePassword")}</LayerCard.Secondary>
         <LayerCard.Primary className="flex flex-col gap-4 p-4">
           {result && <Banner variant={result.ok ? "default" : "error"} title={result.text} />}
-          <p className="text-sm text-kumo-subtle">Your other signed-in browsers are signed out.</p>
+          <p className="text-sm text-kumo-subtle">{t("settings.account.othersSignedOut")}</p>
           <form className="flex flex-col gap-4" onSubmit={submit}>
-            <Input label="Current password" type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+            <Input label={t("settings.account.current")} type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
             <Input
-              label="New password"
+              label={t("settings.account.next")}
               type="password"
               autoComplete="new-password"
               value={next}
               onChange={(e) => setNext(e.target.value)}
-              description={`At least ${MIN_PASSWORD} characters.`}
+              description={t("settings.password.atLeast", { min: MIN_PASSWORD })}
             />
             <Input
-              label="Confirm new password"
+              label={t("settings.account.confirm")}
               type="password"
               autoComplete="new-password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
-              error={confirm.length > 0 && confirm !== next ? "The passwords differ." : undefined}
+              error={confirm.length > 0 && confirm !== next ? t("settings.password.differ") : undefined}
             />
             <div>
               <Button variant="primary" type="submit" loading={busy} disabled={!valid}>
-                Change password
+                {t("settings.account.changePassword")}
               </Button>
             </div>
           </form>
