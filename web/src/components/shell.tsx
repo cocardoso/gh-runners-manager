@@ -8,7 +8,7 @@ import { ErrorState, Loading } from "./common";
 import { AppLink } from "./app-link";
 import { GlobalSearch } from "./command-palette";
 import { LiveIndicator } from "./live-indicator";
-import { navItems } from "./nav";
+import { navGroups } from "./nav";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { LanguageMenu } from "./language-menu";
 import { useT } from "@/i18n";
@@ -56,6 +56,16 @@ function AccountButton({ username }: { username?: string }) {
   );
 }
 
+/** A sidebar section; a labelled one is announced as a group (its label hides when the sidebar collapses to icons). */
+function NavGroup({ id, label, children }: { id: string; label?: string; children: React.ReactNode }) {
+  return (
+    <Sidebar.Group role={label ? "group" : undefined} aria-labelledby={label ? id : undefined}>
+      {label && <Sidebar.GroupLabel id={id}>{label}</Sidebar.GroupLabel>}
+      <Sidebar.Menu>{children}</Sidebar.Menu>
+    </Sidebar.Group>
+  );
+}
+
 /** Signs the visitor in (or creates the first account) before showing the app. */
 export function Shell() {
   const session = useSession();
@@ -78,17 +88,17 @@ function AppShell({ username }: { username?: string }) {
             <Logo />
           </Sidebar.Header>
           <Sidebar.Content>
-            <Sidebar.Group>
-              <Sidebar.Menu>
-                {navItems.map((n) => (
+            {navGroups.map((g) => (
+              <NavGroup key={g.id} id={`nav-${g.id}`} label={"labelKey" in g ? t(g.labelKey) : undefined}>
+                {g.items.map((n) => (
                   <Sidebar.MenuItem key={n.href}>
                     <Sidebar.MenuButton icon={n.icon} href={n.href} active={isActive(pathname, n.href)} tooltip={t(n.labelKey)}>
                       {t(n.labelKey)}
                     </Sidebar.MenuButton>
                   </Sidebar.MenuItem>
                 ))}
-              </Sidebar.Menu>
-            </Sidebar.Group>
+              </NavGroup>
+            ))}
           </Sidebar.Content>
           <Sidebar.Footer>
             <Sidebar.Trigger aria-label={t("shell.sidebar.toggle")} />

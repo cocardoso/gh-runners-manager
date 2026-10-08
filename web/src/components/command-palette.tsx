@@ -46,7 +46,7 @@ function usePaletteGroups(): { groups: PaletteGroup[]; loading: boolean } {
       {
         id: "pages",
         label: t("shell.palette.pages"),
-        items: navItems.map((n) => ({ id: `page:${n.href}`, title: t(n.labelKey), href: n.href, keywords: "", icon: <n.icon size={16} /> })),
+        items: navItems.map((n) => ({ id: `page:${n.href}`, title: t(n.labelKey), href: n.href, keywords: n.href, icon: <n.icon size={16} /> })),
       },
       {
         id: "jobs",

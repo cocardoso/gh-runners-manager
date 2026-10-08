@@ -30,6 +30,7 @@ This document holds the architecture diagrams of gh-runners-manager (`ghrm`). It
 | Secrets sealed at rest (AES-256-GCM, separate key file), `ghrm secret` | `internal/secrets` |
 | Editable credentials and scale sets, listener supervisor | `internal/settings`, `cmd/ghrm/supervisor.go` |
 | Prometheus metrics, daily backups | `internal/metrics`, `internal/backup` |
+| Repositories view: scale sets and job activity per GitHub repository or organization (`GET /api/v1/repositories`) | `internal/api/repositories.go`, `internal/store/activity.go` |
 | History retention: daily or manual cleanup of finished environments, jobs, events, logs and failed template records | `internal/retention`, `internal/store/history.go` |
 | Registry cache: proxies, eviction, disk exporter, monitor, mirror settings in templates | `internal/cachemon`, `internal/agent` (`cacheprune.go`, `cacheexporter.go`), `template/layer/mirrors.sh` |
 | Installer, container image, releases | `deploy/proxmox/install.sh`, `Dockerfile`, `deploy/docker`, `.github/workflows/release.yml` |

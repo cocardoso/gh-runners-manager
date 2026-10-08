@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "@/test/render-app";
-import { env, job, mockApi } from "@/test/api-mock";
+import { env, job, mockApi, scaleSet } from "@/test/api-mock";
 import { FakeEventSource } from "@/test/fake-event-source";
 
 vi.mock("@/components/resources-chart", () => ({ ResourcesChart: () => <div /> }));
@@ -18,21 +18,107 @@ const envs = [
   env({ id: "env-old", state: "destroyed" }),
 ];
 
-test("lists environments including ones that failed before a job", async () => {
-  mockApi({ "/api/v1/environments": { environments: envs }, "/api/v1/jobs": { jobs: [job({ id: "j1", display_name: "build" })] } });
+const LIVE_STATES = ["pending", "provisioning", "booting", "connected", "idle", "running", "completing", "destroying", "failed"];
+
+/** Answers like the server: only the environments in the asked states. */
+function byState(list: ReturnType<typeof env>[]) {
+  return (u: URL) => {
+    const states = u.searchParams.get("state")?.split(",");
+    return { environments: states ? list.filter((e) => states.includes(e.state)) : list };
+  };
+}
+
+test("the Running tab lists every environment that exists now, asking the server only for those states", async () => {
+  const calls = mockApi({ "/api/v1/environments": byState(envs), "/api/v1/jobs": { jobs: [job({ id: "j1", display_name: "build" })] } });
   renderApp("/environments");
   const table = await screen.findByRole("table");
+  expect(screen.getByRole("tab", { name: "Running", selected: true })).toBeInTheDocument();
+  expect(within(table).getByRole("link", { name: "env-run" })).toBeInTheDocument();
   expect(within(table).getByRole("link", { name: "env-bad" })).toBeInTheDocument();
   expect(within(table).getByText(/no hello/)).toBeInTheDocument();
+  expect(within(table).queryByText("env-old")).not.toBeInTheDocument();
   expect(await within(table).findByRole("link", { name: "build" })).toHaveAttribute("href", "/jobs/j1");
+  const asked = calls.filter((c) => c.url.pathname === "/api/v1/environments").map((c) => c.url.searchParams.get("state")?.split(",").sort());
+  expect(asked).toContainEqual([...LIVE_STATES].sort());
 });
 
-test("filters by state", async () => {
-  mockApi({ "/api/v1/environments": { environments: envs } });
-  renderApp("/environments?state=live");
+test("a failed environment kept for debugging is badged with when it will be destroyed", async () => {
+  const failedAt = new Date(2026, 9, 8, 14, 0, 0);
+  mockApi({
+    "/api/v1/environments": byState([env({ id: "env-bad", state: "failed", state_changed_at: failedAt.toISOString(), failure_stage: "booting" })]),
+    "/api/v1/scale-sets": { scale_sets: [scaleSet({ name: "homelab", settings: { url: "https://github.com/octo", credential: "c", keep_on_failure_minutes: 30 } })] },
+  });
+  renderApp("/environments");
   const table = await screen.findByRole("table");
-  expect(within(table).getAllByRole("row")).toHaveLength(3);
-  expect(within(table).queryByText("env-old")).not.toBeInTheDocument();
+  expect(await within(table).findByText(/kept for debugging until 14:30/)).toBeInTheDocument();
+});
+
+test("without a known keep time the failed environment is still badged", async () => {
+  mockApi({ "/api/v1/environments": byState([env({ id: "env-bad", state: "failed" })]), "/api/v1/scale-sets": { scale_sets: [] } });
+  renderApp("/environments");
+  const table = await screen.findByRole("table");
+  expect(within(table).getByText("kept for debugging")).toBeInTheDocument();
+});
+
+test("with nothing running the Running tab says so and points to the history", async () => {
+  mockApi({ "/api/v1/environments": byState([env({ id: "env-old", state: "destroyed" })]) });
+  renderApp("/environments");
+  expect(await screen.findByText("No environment is running")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "See the history" })).toHaveAttribute("href", "/environments?tab=history");
+});
+
+test("the History tab lists destroyed environments, newest first, with how long they lived", async () => {
+  const calls = mockApi({
+    "/api/v1/environments": byState([
+      env({ id: "env-run", state: "running" }),
+      env({ id: "env-a", state: "destroyed", created_at: "2026-10-08T10:00:00Z", state_changed_at: "2026-10-08T10:05:30Z" }),
+      env({ id: "env-b", state: "destroyed", created_at: "2026-10-08T11:00:00Z", state_changed_at: "2026-10-08T11:01:00Z", failure_stage: "booting", failure_reason: "no hello" }),
+    ]),
+  });
+  renderApp("/environments?tab=history");
+  const table = await screen.findByRole("table");
+  expect(screen.getByRole("tab", { name: "History", selected: true })).toBeInTheDocument();
+  const rows = within(table).getAllByRole("row").slice(1);
+  expect(rows).toHaveLength(2);
+  expect(within(rows[0]!).getByRole("link", { name: "env-b" })).toBeInTheDocument();
+  expect(within(rows[0]!).getByText(/no hello/)).toBeInTheDocument();
+  expect(within(rows[1]!).getByText("5m 30s")).toBeInTheDocument();
+  expect(within(table).queryByText("env-run")).not.toBeInTheDocument();
+  expect(calls.some((c) => c.url.pathname === "/api/v1/environments" && c.url.searchParams.get("state") === "destroyed")).toBe(true);
+});
+
+test("the History tab filters by outcome", async () => {
+  mockApi({
+    "/api/v1/environments": byState([
+      env({ id: "env-a", state: "destroyed" }),
+      env({ id: "env-b", state: "destroyed", failure_stage: "booting", failure_reason: "no hello" }),
+    ]),
+  });
+  renderApp("/environments?tab=history&status=failed");
+  const table = await screen.findByRole("table");
+  expect(within(table).getAllByRole("row")).toHaveLength(2);
+  expect(within(table).getByRole("link", { name: "env-b" })).toBeInTheDocument();
+});
+
+test("switching tabs puts the tab in the URL", async () => {
+  mockApi({ "/api/v1/environments": byState(envs) });
+  const user = userEvent.setup();
+  const { history } = renderApp("/environments");
+  await screen.findByRole("table");
+  await user.click(screen.getByRole("tab", { name: "History" }));
+  await waitFor(() => expect(history.location.search).toContain("tab=history"));
+  expect(await screen.findByRole("link", { name: "env-old" })).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Running" }));
+  await waitFor(() => expect(history.location.search).not.toContain("tab="));
+});
+
+test("in Portuguese the tabs and the badge are translated", async () => {
+  mockApi({ "/api/v1/environments": byState(envs), "/api/v1/scale-sets": { scale_sets: [] } });
+  renderApp("/environments", { locale: "pt-BR" });
+  const table = await screen.findByRole("table");
+  expect(screen.getByRole("tab", { name: "Em execução", selected: true })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Histórico" })).toBeInTheDocument();
+  expect(within(table).getByText("mantido para depuração")).toBeInTheDocument();
 });
 
 async function clickDestroy(user: ReturnType<typeof userEvent.setup>) {
@@ -110,4 +196,19 @@ test("without admin actions a destroyed environment offers no Delete from histor
   renderApp("/environments/env-old");
   await screen.findByRole("heading", { name: "env-old" });
   expect(screen.queryByRole("button", { name: "Delete from history" })).not.toBeInTheDocument();
+});
+
+test("after deleting a destroyed environment the history tab is shown, where it was", async () => {
+  mockApi({
+    "/api/v1/environments/env-old": env({ id: "env-old", state: "destroyed" }),
+    "/api/v1/settings": { version: "dev", admin_actions: true, proxmox: {}, ingest: {}, capacity: {}, scale_sets: [] },
+    "/api/v1/environments/env-old/logs/control-plane": { entries: [], next: 0 },
+    "DELETE /api/v1/environments/env-old": () => new Response(null, { status: 204 }),
+  });
+  const user = userEvent.setup();
+  const { history } = renderApp("/environments/env-old");
+  await user.click(await screen.findByRole("button", { name: "Delete from history" }));
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(history.location.pathname).toBe("/environments"));
+  expect(history.location.search).toContain("tab=history");
 });

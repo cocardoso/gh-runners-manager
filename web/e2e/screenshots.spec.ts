@@ -7,11 +7,13 @@ test.use({ viewport: { width: 1440, height: 900 } });
 
 const shots: [string, string][] = [
   ["overview", "/"],
-  ["jobs", "/jobs"],
+  ["repositories", "/repositories"],
+  ["jobs", "/jobs?tab=history"],
   ["environments", "/environments"],
   ["scale-sets", "/scale-sets"],
-  ["live-logs", "/logs"],
+  ["events", "/logs"],
   ["templates", "/templates"],
+  ["template-history", "/templates?tab=history"],
   ["settings", "/settings"],
 ];
 

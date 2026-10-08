@@ -30,7 +30,8 @@ export function DeleteRecord({ kind, id }: { kind: keyof typeof kinds; id: strin
       setOpen(false);
       toast.add({ title: t("environments.deleteRecord.deleted"), description: id, variant: "success" });
       for (const key of ["templates", "template", "environments", "environment", "jobs", "job", "stats", "overview"]) void qc.invalidateQueries({ queryKey: [key] });
-      void navigate({ to: k.back });
+      // The record was history: show the history it was part of.
+      void navigate({ to: k.back, search: { tab: "history" } });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

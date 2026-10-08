@@ -37,18 +37,116 @@ const templates = [
 ];
 const settings = { version: "dev", admin_actions: true, proxmox: { template_vmid: 949 }, ingest: {}, capacity: {}, scale_sets: [] };
 
-test("lists versions with their state, badges and inputs", async () => {
-  mockApi({ "/api/v1/templates": { templates, building: false, enabled: true }, "/api/v1/settings": settings });
+const T2 = "2026-10-06T12:00:00Z";
+const T3 = "2026-10-05T12:00:00Z";
+const past = [
+  { id: "tplfail", state: "failed", slim_release: "20261012.3", runner_version: "2.339.0", layer_version: "1", vmid: 952, size_bytes: 0,
+    pinned: false, active: false, bootstrap: false, in_use: false, trigger: "slim-release", failure_stage: "verify", failure_reason: "docker hello-world failed",
+    created_at: T3, updated_at: T3, activated_at: ZERO },
+  { id: "tplgone", state: "deleted", slim_release: "20260928.1", runner_version: "2.337.0", layer_version: "1", vmid: 948, size_bytes: 0,
+    pinned: false, active: false, bootstrap: false, in_use: false, trigger: "manual", created_at: T2, updated_at: T, activated_at: T2 },
+  { id: "bootold", state: "retired", vmid: 900, size_bytes: 0, pinned: false, active: false, bootstrap: true, in_use: false, trigger: "bootstrap",
+    created_at: T3, updated_at: T2, activated_at: T3 },
+];
+const all = [...templates, ...past];
+
+test("the default tab shows the active template in use and the versions available for rollback", async () => {
+  mockApi({ "/api/v1/templates": { templates: all, building: false, enabled: true }, "/api/v1/settings": settings });
   renderApp("/templates");
-  const table = await screen.findByRole("table");
+  const inUse = await screen.findByRole("region", { name: "In use" });
+  expect(within(inUse).getByText("tplold")).toBeInTheDocument();
+  expect(within(inUse).getByText("20261005.17")).toBeInTheDocument();
+  expect(within(inUse).getByText("2.338.0")).toBeInTheDocument();
+  expect(within(inUse).getByText("950")).toBeInTheDocument();
+  expect(within(inUse).getByText(/Matches GitHub's software report/)).toBeInTheDocument();
+  expect(within(inUse).getByRole("link", { name: /details/i })).toHaveAttribute("href", "/templates/tplold");
+
+  const available = screen.getByRole("region", { name: "Available for rollback" });
+  const table = within(available).getByRole("table");
   const rows = within(table).getAllByRole("row");
-  expect(rows).toHaveLength(4);
-  expect(within(rows[2]!).getByText("active")).toBeInTheDocument();
-  expect(within(rows[2]!).getByText("Pinned")).toBeInTheDocument();
-  expect(within(rows[2]!).getByText("In use")).toBeInTheDocument();
+  expect(rows).toHaveLength(3);
+  expect(within(rows[1]!).getByRole("link", { name: /tplnew/ })).toHaveAttribute("href", "/templates/tplnew");
   expect(within(rows[1]!).getByText("20261012.3")).toBeInTheDocument();
-  expect(within(rows[3]!).getByText(/Bootstrap/)).toBeInTheDocument();
-  expect(within(table).getByRole("link", { name: /tplnew/ })).toHaveAttribute("href", "/templates/tplnew");
+  expect(within(rows[2]!).getByText(/Bootstrap/)).toBeInTheDocument();
+  expect(within(available).getByRole("button", { name: "Actions for tplnew" })).toBeInTheDocument();
+
+  for (const id of ["tplfail", "tplgone", "bootold"]) expect(screen.queryByText(id)).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "In use and available" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("without an active template the in-use card explains it", async () => {
+  mockApi({ "/api/v1/templates": { templates: [templates[0], past[0]], building: false, enabled: true }, "/api/v1/settings": settings });
+  renderApp("/templates");
+  const inUse = await screen.findByRole("region", { name: "In use" });
+  expect(within(inUse).getByText("No active template")).toBeInTheDocument();
+});
+
+test("the build history tab lists failed, deleted and retired versions with their reason", async () => {
+  mockApi({ "/api/v1/templates": { templates: all, building: false, enabled: true }, "/api/v1/settings": settings });
+  renderApp("/templates?tab=history");
+  const table = await screen.findByRole("table");
+  const rows = within(table).getAllByRole("row").slice(1);
+  expect(rows.map((r) => within(r).getAllByRole("link")[0]!.textContent)).toEqual(["tplgone", "bootold", "tplfail"]);
+  expect(within(rows[2]!).getByText("failed")).toBeInTheDocument();
+  expect(within(rows[2]!).getByText(/verify: docker hello-world failed/)).toBeInTheDocument();
+  expect(within(rows[0]!).getByText(/Replaced/)).toBeInTheDocument();
+  expect(within(rows[1]!).getByText(/Retired/)).toBeInTheDocument();
+  expect(within(rows[2]!).getByRole("button", { name: "Delete" })).toBeInTheDocument();
+  expect(within(rows[0]!).getByRole("button", { name: "Delete" })).toBeInTheDocument();
+  expect(within(rows[1]!).queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+  for (const id of ["tplnew", "tplold"]) expect(screen.queryByText(id)).not.toBeInTheDocument();
+});
+
+test("a failed record is deleted from the history tab", async () => {
+  const calls = mockApi({
+    "/api/v1/templates": { templates: all, building: false, enabled: true },
+    "/api/v1/settings": settings,
+    "DELETE /api/v1/templates/tplfail": () => new Response(null, { status: 204 }),
+  });
+  const user = userEvent.setup();
+  renderApp("/templates?tab=history");
+  const row = (await screen.findByRole("link", { name: "tplfail" })).closest("tr")!;
+  await user.click(within(row).getByRole("button", { name: "Delete" }));
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url.pathname === "/api/v1/templates/tplfail")).toBe(true));
+});
+
+test("the history tab has an empty state", async () => {
+  mockApi({ "/api/v1/templates": { templates, building: false, enabled: true }, "/api/v1/settings": settings });
+  renderApp("/templates?tab=history");
+  expect(await screen.findByText("No build history")).toBeInTheDocument();
+});
+
+test("switching tabs changes ?tab=", async () => {
+  mockApi({ "/api/v1/templates": { templates: all, building: false, enabled: true }, "/api/v1/settings": settings });
+  const user = userEvent.setup();
+  const { history } = renderApp("/templates");
+  await user.click(await screen.findByRole("tab", { name: "Build history" }));
+  await waitFor(() => expect(history.location.search).toContain("tab=history"));
+  expect(await screen.findByRole("link", { name: "tplfail" })).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "In use and available" }));
+  await waitFor(() => expect(history.location.search).not.toContain("tab="));
+  expect(await screen.findByRole("region", { name: "In use" })).toBeInTheDocument();
+});
+
+test("a build in progress has its own card with a link to its log", async () => {
+  const running = { ...templates[0], id: "tplbuild", state: "creating", report: undefined, created_at: T };
+  mockApi({ "/api/v1/templates": { templates: [running, ...all], building: true, enabled: true }, "/api/v1/settings": settings });
+  renderApp("/templates");
+  const card = await screen.findByRole("region", { name: "Build in progress" });
+  expect(within(card).getByText(/creating/)).toBeInTheDocument();
+  expect(within(card).getByRole("link", { name: /build log/i })).toHaveAttribute("href", "/templates/tplbuild");
+  expect(within(screen.getByRole("region", { name: "Available for rollback" })).queryByText("tplbuild")).not.toBeInTheDocument();
+});
+
+test("the tabs and cards speak Brazilian Portuguese", async () => {
+  mockApi({ "/api/v1/templates": { templates: all, building: false, enabled: true }, "/api/v1/settings": settings });
+  const user = userEvent.setup();
+  renderApp("/templates", { locale: "pt-BR" });
+  expect(await screen.findByRole("region", { name: "Em uso" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Disponíveis para rollback" })).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Histórico de builds" }));
+  expect(await screen.findByText(/Substituído/)).toBeInTheDocument();
 });
 
 test("build now starts a build with the session's CSRF token", async () => {
@@ -145,4 +243,11 @@ test("a ready template has no Delete action", async () => {
   renderApp("/templates/tplnew");
   expect(await screen.findByRole("button", { name: "Actions for tplnew" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+});
+
+test("a build that the list does not show yet still has its card", async () => {
+  mockApi({ "/api/v1/templates": { templates: templates.filter((t) => t.state !== "building"), building: true, enabled: true }, "/api/v1/settings": settings });
+  renderApp("/templates");
+  const card = await screen.findByRole("region", { name: "Build in progress" });
+  expect(within(card).getByText("Starting…")).toBeInTheDocument();
 });

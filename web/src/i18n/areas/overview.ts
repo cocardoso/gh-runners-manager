@@ -45,6 +45,10 @@ const en = {
     title: "Jobs",
     description: "Every job GitHub assigned to a scale set, updated live.",
     search: "Search jobs",
+    tabs: {
+      inProgress: "In progress",
+      history: "History",
+    },
     columns: {
       job: "Job",
       repository: "Repository",
@@ -52,10 +56,11 @@ const en = {
       status: "Status",
       queued: "Queued",
       duration: "Duration",
+      runningFor: "Running for",
+      result: "Result",
+      finished: "Finished",
     },
-    status: {
-      running: "Running",
-      assigned: "Waiting",
+    result: {
       succeeded: "Succeeded",
       failed: "Failed",
       canceled: "Canceled",
@@ -65,9 +70,14 @@ const en = {
       "24h": "Last 24 hours",
       "7d": "Last 7 days",
     },
-    empty: {
-      title: "No jobs yet",
-      description: "Jobs appear here as soon as GitHub assigns one to a scale set. Use the scale set name in a workflow's runs-on.",
+    inProgressEmpty: {
+      title: "No job is running",
+      description: "Jobs appear here while they wait for an environment or run. Finished jobs move to the history.",
+      link: "See the job history",
+    },
+    historyEmpty: {
+      title: "No finished jobs yet",
+      description: "Jobs land here when they finish. Use the scale set name in a workflow's runs-on to send jobs to it.",
       link: "See the scale sets",
     },
     noMatch: {
@@ -188,6 +198,10 @@ export const overview: Record<Locale, typeof en> = {
       title: "Jobs",
       description: "Todo job que o GitHub atribuiu a um scale set, atualizado ao vivo.",
       search: "Buscar jobs",
+      tabs: {
+        inProgress: "Em andamento",
+        history: "Histórico",
+      },
       columns: {
         job: "Job",
         repository: "Repositório",
@@ -195,10 +209,11 @@ export const overview: Record<Locale, typeof en> = {
         status: "Status",
         queued: "Na fila",
         duration: "Duração",
+        runningFor: "Executando há",
+        result: "Resultado",
+        finished: "Concluído",
       },
-      status: {
-        running: "Em execução",
-        assigned: "Aguardando",
+      result: {
         succeeded: "Sucesso",
         failed: "Falhou",
         canceled: "Cancelado",
@@ -208,9 +223,14 @@ export const overview: Record<Locale, typeof en> = {
         "24h": "Últimas 24 horas",
         "7d": "Últimos 7 dias",
       },
-      empty: {
-        title: "Nenhum job ainda",
-        description: "Os jobs aparecem aqui assim que o GitHub atribui um a um scale set. Use o nome do scale set no runs-on de um workflow.",
+      inProgressEmpty: {
+        title: "Nenhum job em execução",
+        description: "Os jobs aparecem aqui enquanto aguardam um ambiente ou executam. Jobs concluídos vão para o histórico.",
+        link: "Ver o histórico de jobs",
+      },
+      historyEmpty: {
+        title: "Nenhum job concluído ainda",
+        description: "Os jobs chegam aqui quando terminam. Use o nome do scale set no runs-on de um workflow para enviar jobs a ele.",
         link: "Ver os scale sets",
       },
       noMatch: {
@@ -328,6 +348,10 @@ export const overview: Record<Locale, typeof en> = {
       title: "Jobs",
       description: "Cada job que GitHub asignó a un scale set, actualizado en vivo.",
       search: "Buscar jobs",
+      tabs: {
+        inProgress: "En curso",
+        history: "Historial",
+      },
       columns: {
         job: "Job",
         repository: "Repositorio",
@@ -335,10 +359,11 @@ export const overview: Record<Locale, typeof en> = {
         status: "Estado",
         queued: "En cola",
         duration: "Duración",
+        runningFor: "Tiempo en ejecución",
+        result: "Resultado",
+        finished: "Finalizado",
       },
-      status: {
-        running: "En ejecución",
-        assigned: "En espera",
+      result: {
         succeeded: "Exitoso",
         failed: "Falló",
         canceled: "Cancelado",
@@ -348,9 +373,14 @@ export const overview: Record<Locale, typeof en> = {
         "24h": "Últimas 24 horas",
         "7d": "Últimos 7 días",
       },
-      empty: {
-        title: "Aún no hay jobs",
-        description: "Los jobs aparecen aquí en cuanto GitHub asigna uno a un scale set. Usa el nombre del scale set en el runs-on de un workflow.",
+      inProgressEmpty: {
+        title: "Ningún job en ejecución",
+        description: "Los jobs aparecen aquí mientras esperan un entorno o se ejecutan. Los jobs terminados pasan al historial.",
+        link: "Ver el historial de jobs",
+      },
+      historyEmpty: {
+        title: "Aún no hay jobs terminados",
+        description: "Los jobs llegan aquí al terminar. Usa el nombre del scale set en el runs-on de un workflow para enviarle jobs.",
         link: "Ver los scale sets",
       },
       noMatch: {
@@ -468,6 +498,10 @@ export const overview: Record<Locale, typeof en> = {
       title: "Jobs",
       description: "Chaque job que GitHub a attribué à un scale set, mis à jour en direct.",
       search: "Rechercher des jobs",
+      tabs: {
+        inProgress: "En cours",
+        history: "Historique",
+      },
       columns: {
         job: "Job",
         repository: "Dépôt",
@@ -475,10 +509,11 @@ export const overview: Record<Locale, typeof en> = {
         status: "Statut",
         queued: "En file d'attente",
         duration: "Durée",
+        runningFor: "En cours depuis",
+        result: "Résultat",
+        finished: "Terminé",
       },
-      status: {
-        running: "En cours",
-        assigned: "En attente",
+      result: {
         succeeded: "Réussi",
         failed: "Échoué",
         canceled: "Annulé",
@@ -488,9 +523,14 @@ export const overview: Record<Locale, typeof en> = {
         "24h": "Dernières 24 heures",
         "7d": "7 derniers jours",
       },
-      empty: {
-        title: "Aucun job pour l'instant",
-        description: "Les jobs apparaissent ici dès que GitHub en attribue un à un scale set. Utilisez le nom du scale set dans le runs-on d'un workflow.",
+      inProgressEmpty: {
+        title: "Aucun job en cours",
+        description: "Les jobs apparaissent ici pendant qu'ils attendent un environnement ou s'exécutent. Les jobs terminés passent dans l'historique.",
+        link: "Voir l'historique des jobs",
+      },
+      historyEmpty: {
+        title: "Aucun job terminé pour l'instant",
+        description: "Les jobs arrivent ici une fois terminés. Utilisez le nom du scale set dans le runs-on d'un workflow pour lui envoyer des jobs.",
         link: "Voir les scale sets",
       },
       noMatch: {
@@ -608,6 +648,10 @@ export const overview: Record<Locale, typeof en> = {
       title: "Job",
       description: "Ogni job che GitHub ha assegnato a uno scale set, aggiornato in tempo reale.",
       search: "Cerca job",
+      tabs: {
+        inProgress: "In corso",
+        history: "Cronologia",
+      },
       columns: {
         job: "Job",
         repository: "Repository",
@@ -615,10 +659,11 @@ export const overview: Record<Locale, typeof en> = {
         status: "Stato",
         queued: "In coda",
         duration: "Durata",
+        runningFor: "In esecuzione da",
+        result: "Esito",
+        finished: "Terminato",
       },
-      status: {
-        running: "In esecuzione",
-        assigned: "In attesa",
+      result: {
         succeeded: "Riuscito",
         failed: "Non riuscito",
         canceled: "Annullato",
@@ -628,9 +673,14 @@ export const overview: Record<Locale, typeof en> = {
         "24h": "Ultime 24 ore",
         "7d": "Ultimi 7 giorni",
       },
-      empty: {
-        title: "Ancora nessun job",
-        description: "I job compaiono qui non appena GitHub ne assegna uno a uno scale set. Usa il nome dello scale set nel runs-on di un workflow.",
+      inProgressEmpty: {
+        title: "Nessun job in esecuzione",
+        description: "I job compaiono qui mentre attendono un ambiente o sono in esecuzione. I job terminati passano nella cronologia.",
+        link: "Vedi la cronologia dei job",
+      },
+      historyEmpty: {
+        title: "Ancora nessun job terminato",
+        description: "I job arrivano qui quando terminano. Usa il nome dello scale set nel runs-on di un workflow per inviargli job.",
         link: "Vedi gli scale set",
       },
       noMatch: {

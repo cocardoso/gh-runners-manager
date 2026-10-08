@@ -39,6 +39,19 @@ test("settings show the configuration without secrets", async () => {
   expect(screen.getByText("v0.3.0")).toBeInTheDocument();
 });
 
+test("the events page is titled Events and describes the control plane's event log", async () => {
+  mockApi({ "/api/v1/events": { events: [] } });
+  renderApp("/logs");
+  expect(await screen.findByRole("heading", { name: "Events", level: 1 })).toBeInTheDocument();
+  expect(screen.getByText(/control plane's event log/)).toBeInTheDocument();
+});
+
+test("in Portuguese the events page is titled Eventos", async () => {
+  mockApi({ "/api/v1/events": { events: [] } });
+  renderApp("/logs", { locale: "pt-BR" });
+  expect(await screen.findByRole("heading", { name: "Eventos", level: 1 })).toBeInTheDocument();
+});
+
 test("live logs show the recent events and stream new ones, pausable", async () => {
   mockApi({
     "/api/v1/events": { events: [{ seq: 5, kind: "job.started", level: "info", message: "job started: build", time: "2026-10-07T12:00:00Z", job_id: "j1" }] },

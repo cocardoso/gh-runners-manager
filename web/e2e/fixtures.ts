@@ -81,10 +81,14 @@ export { expect };
 
 export const pages: [string, string][] = [
   ["/", "Overview"],
-  ["/jobs", "Jobs"],
-  ["/environments", "Environments"],
+  ["/repositories", "Repositories"],
   ["/scale-sets", "Scale sets"],
   ["/templates", "Templates"],
-  ["/logs", "Live logs"],
+  ["/templates?tab=history", "Templates"],
+  ["/jobs", "Jobs"],
+  ["/jobs?tab=history", "Jobs"],
+  ["/environments", "Environments"],
+  ["/environments?tab=history", "Environments"],
+  ["/logs", "Events"],
   ["/settings", "Settings"],
 ];

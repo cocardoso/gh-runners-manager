@@ -347,6 +347,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Repositories and organizations the scale sets serve */
+        get: operations["list-repositories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/scale-sets": {
         parameters: {
             query?: never;
@@ -823,6 +840,15 @@ export interface components {
             readonly $schema?: string;
             jobs: components["schemas"]["Job"][] | null;
         };
+        "List-repositoriesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/List-repositoriesResponse.json
+             */
+            readonly $schema?: string;
+            repositories: components["schemas"]["Repository"][] | null;
+        };
         "List-scale-setsResponse": {
             /**
              * Format: uri
@@ -923,6 +949,37 @@ export interface components {
             first_line?: number;
             /** Format: int64 */
             next: number;
+        };
+        Repository: {
+            credentials: string[] | null;
+            /** Format: int64 */
+            failed_24h: number;
+            /** Format: int64 */
+            jobs_24h: number;
+            /** Format: int64 */
+            jobs_running: number;
+            /** @enum {string} */
+            kind: "repository" | "organization";
+            last_job?: components["schemas"]["RepositoryJob"];
+            owner: string;
+            /** @description Empty for an organization */
+            repo: string;
+            repositories_seen?: string[] | null;
+            scale_sets: string[] | null;
+            /** Format: int64 */
+            succeeded_24h: number;
+            url: string;
+        };
+        RepositoryJob: {
+            display_name: string;
+            /** Format: date-time */
+            finished_at: string;
+            id: string;
+            repository: string;
+            result?: string;
+            status: string;
+            /** Format: date-time */
+            updated_at: string;
         };
         ScaleSet: {
             /** Format: int64 */
@@ -1804,6 +1861,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Overview"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-repositoriesResponse"];
                 };
             };
             /** @description Error */
