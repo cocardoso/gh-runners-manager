@@ -409,6 +409,19 @@ func TestCapacityFallsBackToStorageStatus(t *testing.T) {
 	if c.ThinPoolPercent != 25 {
 		t.Fatalf("ThinPoolPercent = %v, want 25 from the storage status", c.ThinPoolPercent)
 	}
+	// The token's permissions do not change: the refused path is not asked again.
+	if _, err := h.rt.Capacity(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	asked := 0
+	for _, r := range h.srv.Requests() {
+		if strings.HasSuffix(r, "/disks/lvmthin") {
+			asked++
+		}
+	}
+	if asked != 1 {
+		t.Fatalf("/disks/lvmthin asked %d times, want 1", asked)
+	}
 }
 
 // The LXC list status comes from pvestatd's cache and lags behind a start by

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/proxmox"
@@ -73,9 +74,10 @@ type Runtime struct {
 	cfg    Config
 	sleep  func(context.Context, time.Duration) error
 
-	allocMu sync.Mutex // held from VMID allocation until the clone exists
-	idMu    sync.Mutex
-	idLocks map[string]*sync.Mutex // per environment ID, for Create idempotency
+	allocMu    sync.Mutex  // held from VMID allocation until the clone exists
+	thinDenied atomic.Bool // the token may not read /disks/lvmthin: use the storage status
+	idMu       sync.Mutex
+	idLocks    map[string]*sync.Mutex // per environment ID, for Create idempotency
 }
 
 // New returns a Runtime.
@@ -489,9 +491,16 @@ func (r *Runtime) Capacity(ctx context.Context) (runtime.Capacity, error) {
 // pool-scoped token cannot read /disks/lvmthin (it needs Sys.Audit on "/"), so on
 // 403 it falls back to the storage status, which reports data usage only.
 func (r *Runtime) diskPercent(ctx context.Context) (float64, error) {
-	pools, err := r.client.ThinPools(ctx, r.cfg.Node)
+	var pools []proxmox.ThinPool
+	var err error
+	if !r.thinDenied.Load() {
+		pools, err = r.client.ThinPools(ctx, r.cfg.Node)
+	}
 	var apiErr *proxmox.APIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
+		r.thinDenied.Store(true)
+	}
+	if r.thinDenied.Load() {
 		st, err := r.client.StorageStatus(ctx, r.cfg.Node, r.cfg.Storage)
 		if err != nil {
 			return 0, fmt.Errorf("storage %s status: %w", r.cfg.Storage, err)

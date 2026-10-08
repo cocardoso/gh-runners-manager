@@ -67,6 +67,9 @@ type Server struct {
 	RejectEnvOption bool
 	// TransientTaskErrors makes the next n task status polls answer 596, as during a pveproxy reload.
 	TransientTaskErrors int
+	// TransientListErrors makes the next n LXC list calls answer 500, as Proxmox does
+	// when a guest's command socket resets while it starts or stops.
+	TransientListErrors int
 	// StaleListStatus makes the LXC list report every guest as stopped, like the
 	// pvestatd cache right after a start; status/current stays accurate.
 	StaleListStatus bool
@@ -284,6 +287,11 @@ func (s *Server) nextID(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listLXC(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.TransientListErrors > 0 {
+		s.TransientListErrors--
+		fail(w, http.StatusInternalServerError, "failed to read from command socket: Connection reset by peer")
+		return
+	}
 	out := []map[string]any{}
 	ids := make([]int, 0, len(s.guests))
 	for id := range s.guests {

@@ -274,13 +274,18 @@ sequenceDiagram
     E->>I: hello, runner_started (TLS pinned, bearer token)
     E->>GH: runner online, takes one job
     E->>I: runner_online, job_started, live job log, metrics
-    GH-->>L: JobStarted / JobCompleted
+    I->>C: job_started: the queued job with that name runs now
+    GH-->>L: JobStarted (often tens of seconds late) / JobCompleted
     E->>I: job_finished, runner_exited, shutdown
     E->>E: power off
     C->>R: Destroy (stop if needed, delete)
     C->>GH: remove runner (if still registered)
     I-->>UI: every step is an event and a log line, streamed live
 ```
+
+GitHub's JobStarted message lags the runner by 10–30 seconds, sometimes past the job's end, so the agent's `job_started` marks the job running: it carries the job's name, which is matched to the scale set's one queued job with that name (two queued jobs with the same name, as in a matrix, wait for GitHub's message). GitHub's message then completes the record and never reopens a finished job.
+
+Proxmox reads are sent up to three times: the LXC list answers 500 now and then while a guest starts or stops (`failed to read from command socket`). The overview shares one capacity answer for 5 seconds and keeps the last good one for a minute, so a single failed call is not shown as an unreachable runtime.
 
 Agent → ingest frames are NDJSON batches every 250 ms. Each log stream has its own sequence numbers, so a retried batch is stored once; an agent numbers from its start time in microseconds, so an agent that restarts (a builder updating itself) continues above its predecessor. Events share the `agent` stream's sequence and reach the controller exactly once.
 

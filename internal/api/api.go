@@ -160,6 +160,9 @@ func limit(n, def, max int) int {
 
 // New returns the HTTP handler for the API (and the UI when configured).
 func New(d Deps) http.Handler {
+	if d.Capacity != nil {
+		d.Capacity = cachedCapacity(d.Capacity, time.Now, 5*time.Second, time.Minute)
+	}
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("gh-runners-manager API", version.Version)
 	cfg.OpenAPIPath = "/api/openapi"

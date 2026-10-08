@@ -28,6 +28,7 @@ func newClient(t *testing.T, srv *proxmoxtest.Server, tokenSecret string) *proxm
 		t.Fatal(err)
 	}
 	c.PollInterval = time.Millisecond
+	c.RetryDelay = time.Millisecond
 	return c
 }
 
@@ -196,6 +197,32 @@ func TestWaitTaskRetriesTransientErrors(t *testing.T) {
 	srv.TransientTaskErrors = 100
 	if err := c.StopLXC(context.Background(), node, 903); err == nil {
 		t.Fatal("StopLXC with persistent poll errors must fail")
+	}
+}
+
+func TestReadsRetryTransientServerErrors(t *testing.T) {
+	srv, c := setup(t)
+	srv.TransientListErrors = 2
+	if _, err := c.ListLXC(context.Background(), node); err != nil {
+		t.Fatalf("ListLXC with 2 transient 500s = %v, want nil", err)
+	}
+	srv.TransientListErrors = 100
+	_, err := c.ListLXC(context.Background(), node)
+	var apiErr *proxmox.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 500 {
+		t.Fatalf("ListLXC with persistent 500s = %v, want the 500", err)
+	}
+}
+
+func TestWritesAreNotRetried(t *testing.T) {
+	srv, c := setup(t)
+	before := len(srv.Requests())
+	err := c.SetLXCConfig(context.Background(), node, 4242, url.Values{"memory": {"1"}})
+	if err == nil {
+		t.Fatal("SetLXCConfig on a missing guest must fail")
+	}
+	if n := len(srv.Requests()) - before; n != 1 {
+		t.Fatalf("a failed write was sent %d times, want 1", n)
 	}
 }
 

@@ -97,6 +97,12 @@ func (s *scaler) HandleJobStarted(ctx context.Context, info *scaleset.JobStarted
 	if j.StartedAt.IsZero() {
 		j.StartedAt = c.now()
 	}
+	// The agent may have reported the start already: then this message only completes the record.
+	known, err := c.d.Store.GetJob(ctx, j.ID)
+	seen := err == nil && known.Status != "assigned"
+	if seen && known.Status == "completed" {
+		j.Status = "" // never move a finished job back
+	}
 	envID := ""
 	if e, err := c.d.Store.FindEnvironmentByRunner(ctx, info.RunnerName); err == nil {
 		envID = e.ID
@@ -106,6 +112,9 @@ func (s *scaler) HandleJobStarted(ctx context.Context, info *scaleset.JobStarted
 	}
 	if err := c.d.Store.UpsertJob(ctx, j); err != nil {
 		return err
+	}
+	if seen {
+		return nil
 	}
 	_, _ = c.d.Recorder.Record(ctx, store.Event{Kind: "job.started", Level: "info", Time: c.now(),
 		Message:  j.DisplayName + " started on " + info.RunnerName,
