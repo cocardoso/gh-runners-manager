@@ -99,3 +99,7 @@ export function useSession() {
 export function useCredentials() {
   return useQuery({ queryKey: ["credentials"], queryFn: async () => unwrap(await api.GET("/api/v1/credentials")).credentials ?? [] });
 }
+
+export function useCache() {
+  return useQuery({ queryKey: ["cache"], queryFn: async () => unwrap(await api.GET("/api/v1/cache")), refetchInterval: 30_000 });
+}

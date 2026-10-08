@@ -37,7 +37,7 @@ func TestTarHoldsTheLayerAndTheAgent(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "persist-env.sh", "ghrm-agent"} {
+	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "persist-env.sh", "mirrors.sh", "ghrm-agent"} {
 		if got[name] == nil {
 			t.Fatalf("missing %s in %v", name, got)
 		}
@@ -116,5 +116,97 @@ func TestPersistEnvLetsTheImageEnvWin(t *testing.T) {
 		if strings.Contains(got, gone) {
 			t.Errorf("%q must be gone:\n%s", gone, got)
 		}
+	}
+}
+
+func runMirrors(t *testing.T, list string) string {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not found")
+	}
+	script, err := fs.ReadFile(Files(), "mirrors.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	_ = os.MkdirAll(root, 0o755)
+	scriptPath := filepath.Join(dir, "mirrors.sh")
+	_ = os.WriteFile(scriptPath, script, 0o755)
+	if out, err := exec.Command(bash, scriptPath, root, list).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	return root
+}
+
+func read(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	return string(b)
+}
+
+// Jobs pull through the cache without workflow changes: the Docker daemon (Docker Hub),
+// containerd (the other registries) and BuildKit (buildx builders) are all configured.
+func TestMirrorsScriptWritesDaemonContainerdAndBuildkitConfig(t *testing.T) {
+	root := runMirrors(t, "docker.io=10.50.0.3:5000,ghcr.io=10.50.0.3:5001,mcr.microsoft.com=10.50.0.3:5002,quay.io=10.50.0.3:5003")
+	daemon := read(t, filepath.Join(root, "etc/docker/daemon.json"))
+	for _, want := range []string{`"registry-mirrors": ["http://10.50.0.3:5000"]`, `"10.50.0.3:5001"`, `"10.50.0.3:5003"`} {
+		if !strings.Contains(daemon, want) {
+			t.Errorf("daemon.json lacks %s:\n%s", want, daemon)
+		}
+	}
+	hosts := read(t, filepath.Join(root, "etc/docker/certs.d/mcr.microsoft.com/hosts.toml"))
+	if !strings.Contains(hosts, `server = "https://mcr.microsoft.com"`) || !strings.Contains(hosts, `[host."http://10.50.0.3:5002"]`) ||
+		!strings.Contains(hosts, `capabilities = ["pull", "resolve"]`) {
+		t.Errorf("hosts.toml:\n%s", hosts)
+	}
+	if _, err := os.Stat(filepath.Join(root, "etc/docker/certs.d/docker.io")); err == nil {
+		t.Error("Docker Hub goes through registry-mirrors, not hosts.toml")
+	}
+	bk := read(t, filepath.Join(root, "home/runner/.docker/buildx/buildkitd.default.toml"))
+	for _, want := range []string{"[registry.\"docker.io\"]\n  mirrors = [\"10.50.0.3:5000\"]", "[registry.\"quay.io\"]\n  mirrors = [\"10.50.0.3:5003\"]", "[registry.\"10.50.0.3:5002\"]\n  http = true"} {
+		if !strings.Contains(bk, want) {
+			t.Errorf("buildkitd.default.toml lacks %q:\n%s", want, bk)
+		}
+	}
+}
+
+func TestMirrorsScriptConfiguresBuildkitForRootToo(t *testing.T) {
+	root := runMirrors(t, "docker.io=10.50.0.3:5000")
+	runner := read(t, filepath.Join(root, "home/runner/.docker/buildx/buildkitd.default.toml"))
+	if got := read(t, filepath.Join(root, "root/.docker/buildx/buildkitd.default.toml")); got != runner {
+		t.Fatalf("root's buildkitd.default.toml = %q, want the runner's (sudo docker buildx create)", got)
+	}
+}
+
+func TestMirrorsScriptRefusesToReplaceAnExistingDaemonConfig(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not found")
+	}
+	script, _ := fs.ReadFile(Files(), "mirrors.sh")
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	_ = os.MkdirAll(filepath.Join(root, "etc/docker"), 0o755)
+	_ = os.WriteFile(filepath.Join(root, "etc/docker/daemon.json"), []byte(`{"log-driver": "local"}`), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "mirrors.sh"), script, 0o755)
+	out, err := exec.Command(bash, filepath.Join(dir, "mirrors.sh"), root, "docker.io=10.50.0.3:5000").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "daemon.json already exists") {
+		t.Fatalf("err = %v, out = %s; an existing daemon.json must not be silently replaced", err, out)
+	}
+	if got := read(t, filepath.Join(root, "etc/docker/daemon.json")); got != `{"log-driver": "local"}` {
+		t.Fatalf("daemon.json = %s", got)
+	}
+}
+
+func TestMirrorsScriptWithoutCacheWritesNothing(t *testing.T) {
+	root := runMirrors(t, "")
+	entries, _ := os.ReadDir(root)
+	if len(entries) != 0 {
+		t.Fatalf("wrote %v; without a cache templates stay as they were", entries)
 	}
 }

@@ -155,6 +155,9 @@ export function invalidationKeys(e: ApiEvent): unknown[][] {
     case "template":
       keys.push(["templates"], ["environments"]);
       break;
+    case "cache":
+      keys.push(["cache"]);
+      break;
   }
   return keys;
 }

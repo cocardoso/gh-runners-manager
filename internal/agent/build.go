@@ -78,7 +78,7 @@ func RunBuild(ctx context.Context, c *Client, cmd Commander, work string) (err e
 	if err := cmd.Run(ctx, work, "docker", []string{"build", "--progress=plain",
 		"--build-arg", "BASE=" + slim, "--build-arg", "RUNNER_VERSION=" + spec.RunnerVersion,
 		"--build-arg", "RUNNER_SHA256=" + spec.RunnerSHA256, "--build-arg", "LAYER_VERSION=" + spec.LayerVersion,
-		"-t", tpl, layerDir}, log); err != nil {
+		"--build-arg", "CACHE_MIRRORS=" + spec.CacheMirrors, "-t", tpl, layerDir}, log); err != nil {
 		return err
 	}
 

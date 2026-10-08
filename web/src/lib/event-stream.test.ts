@@ -134,6 +134,7 @@ describe("invalidationKeys", () => {
       expect.arrayContaining([["environments"], ["environment", "e1"], ["overview"], ["scale-sets"]]),
     );
     expect(invalidationKeys(ev(1, "scaleset.demand"))).toEqual(expect.arrayContaining([["scale-sets"], ["overview"]]));
+    expect(invalidationKeys(ev(1, "cache.down"))).toEqual(expect.arrayContaining([["cache"], ["overview"]]));
   });
 
   test("unknown kinds refresh only the overview", () => {

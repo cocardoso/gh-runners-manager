@@ -41,6 +41,11 @@ RUN mkdir -p /home/runner/actions-runner \
  && ./bin/installdependencies.sh \
  && chown -R runner:runner /home/runner
 
+# Pull images through the registry cache on the job network, when one is configured (M6).
+ARG CACHE_MIRRORS=""
+COPY mirrors.sh /tmp/mirrors.sh
+RUN /tmp/mirrors.sh / "$CACHE_MIRRORS" && rm /tmp/mirrors.sh
+
 COPY ghrm-agent /usr/local/bin/ghrm-agent
 COPY ghrm-agent.service /etc/systemd/system/ghrm-agent.service
 

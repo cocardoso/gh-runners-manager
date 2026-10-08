@@ -51,6 +51,8 @@ type Deps struct {
 	Environments Environments
 	Releases     Releases
 	Config       config.Templates
+	// Cache is the registry cache job templates pull through (M6); disabled when empty.
+	Cache config.Cache
 	// BootstrapVMID is proxmox.template_vmid, the template used until the first build is active.
 	BootstrapVMID int
 	DataDir       string
@@ -188,6 +190,10 @@ func (s *Service) layerVersion() string {
 	if err != nil {
 		return layer.Version
 	}
+	if m := s.d.Cache.Mirrors(); m != "" { // the cache's settings are part of the layer
+		h := sha256.Sum256([]byte(sum + "\n" + m))
+		sum = hex.EncodeToString(h[:])
+	}
 	return layerVersionPrefix() + sum[:12]
 }
 
@@ -282,7 +288,7 @@ func (s *Service) BuildSpec(ctx context.Context, envID string) (ingest.BuildSpec
 		return ingest.BuildSpec{}, ingest.ErrWrongKind
 	}
 	spec := ingest.BuildSpec{TemplateID: t.ID, SlimTag: slimPrefix + t.SlimRelease, RunnerVersion: t.RunnerVersion,
-		RunnerSHA256: t.RunnerSHA256, LayerVersion: t.LayerVersion}
+		RunnerSHA256: t.RunnerSHA256, LayerVersion: t.LayerVersion, CacheMirrors: s.d.Cache.Mirrors()}
 	if t.BuildEnvID == envID {
 		spec.AgentSHA256, _ = s.agentSHA256()
 	}
@@ -461,7 +467,10 @@ func (s *Service) createAndVerify(ctx context.Context, id string) {
 	s.record(ctx, "info", "template.created", fmt.Sprintf("template %s created as %s; verifying", id, ref.ID), t, map[string]any{"ref": ref.ID})
 	envID, err := s.d.Environments.StartSpecial(ctx, controller.SpecialSpec{Kind: store.KindVerify,
 		Template: s.d.Runtime.TemplateEnvironmentRef(ref), TemplateVMID: t.VMID, Cores: 2, MemoryMB: 4096,
-		Env:       map[string]string{ingest.EnvMode: ingest.ModeSelfTest, ingest.EnvSelfTestBlocked: strings.Join(s.d.Config.SelfTestBlocked, ",")},
+		Env: map[string]string{ingest.EnvMode: ingest.ModeSelfTest,
+			// The cache's metrics and exporter ports must stay closed to jobs; its mirrors must answer.
+			ingest.EnvSelfTestBlocked: strings.Join(append(append([]string{}, s.d.Config.SelfTestBlocked...), s.d.Cache.PrivateAddrs()...), ","),
+			ingest.EnvSelfTestMirrors: strings.Join(s.d.Cache.MirrorAddrs(), ",")},
 		OnCreated: func(envID string) { s.recordEnv(ctx, id, envID, true) }})
 	_ = envID
 	if err != nil {

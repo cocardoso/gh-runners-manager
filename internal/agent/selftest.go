@@ -19,6 +19,7 @@ type SelfTestOptions struct {
 	Work         string
 	RunnerDir    string
 	BlockedAddrs []string // host:port that must be unreachable (LAN, hypervisor)
+	Mirrors      []string // host:port of the registry cache that must be reachable
 	ProbeURL     string   // HTTPS URL that must be reachable (default https://api.github.com)
 	// ScriptsDir is where the report scripts are mounted in GitHub's tooling (default /scripts).
 	ScriptsDir string
@@ -69,21 +70,27 @@ func RunSelfTest(ctx context.Context, c *Client, cmd Commander, o SelfTestOption
 	o.defaults()
 	log := func(line string) { c.Log("selftest", line) }
 	var rep ingest.SelfTestReport
-	check := func(name string, fn func(ctx context.Context) error) {
+	// checkWith runs one check; with warnOnly a failure passes with a warning.
+	checkWith := func(warnOnly bool, name string, fn func(ctx context.Context) error) {
 		log("==> " + name)
 		start := time.Now()
 		cctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		err := fn(cctx)
 		cancel()
 		ck := ingest.Check{Name: name, OK: err == nil, Seconds: time.Since(start).Seconds()}
-		if err != nil {
+		switch {
+		case err == nil:
+			log("ok " + name)
+		case warnOnly:
+			ck.OK, ck.Warning, ck.Detail = true, true, err.Error()
+			log("WARN " + name + ": " + err.Error())
+		default:
 			ck.Detail = err.Error()
 			log("FAIL " + name + ": " + err.Error())
-		} else {
-			log("ok " + name)
 		}
 		rep.Checks = append(rep.Checks, ck)
 	}
+	check := func(name string, fn func(ctx context.Context) error) { checkWith(false, name, fn) }
 	run := func(dir, name string, args ...string) func(context.Context) error {
 		return func(ctx context.Context) error { return cmd.Run(ctx, dir, name, args, log) }
 	}
@@ -131,6 +138,17 @@ func RunSelfTest(ctx context.Context, c *Client, cmd Commander, o SelfTestOption
 			defer cancel()
 			if err := o.Dial(dctx, addr); err == nil {
 				return fmt.Errorf("%s is reachable from a job environment", addr)
+			}
+			return nil
+		})
+	}
+	for _, addr := range o.Mirrors {
+		// A warning, not a failure: without the cache jobs pull from the registries, and a
+		// cache that is down must not hold back a template (a runner update, say).
+		checkWith(true, "registry cache "+addr, func(ctx context.Context) error {
+			// Any HTTP answer from the registry API root means the mirror is reachable.
+			if err := o.HTTPGet(ctx, "http://"+addr+"/v2/"); err != nil {
+				return fmt.Errorf("%w; jobs will pull from the registries directly", err)
 			}
 			return nil
 		})

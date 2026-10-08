@@ -4,7 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cocardoso/gh-runners-manager/internal/cachemon"
 	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
@@ -94,5 +96,30 @@ func TestScaleSetEndpoints(t *testing.T) {
 	}
 	if kinds["audit.scale_set_put"] != 1 || kinds["audit.scale_set_delete"] != 1 {
 		t.Fatalf("audit = %v", kinds)
+	}
+}
+
+type fakeCache struct{ s cachemon.Status }
+
+func (f fakeCache) Status() cachemon.Status { return f.s }
+
+func TestCacheEndpointAndAlert(t *testing.T) {
+	since := time.Date(2026, 10, 8, 1, 36, 22, 0, time.UTC)
+	down := cachemon.Status{Enabled: true, Address: "10.50.0.3", Up: false, CheckedAt: time.Now(), DownSince: since,
+		Origins: []cachemon.OriginStatus{{Origin: "docker.io", Error: "connection refused"}}}
+	h := newHarnessWith(t, "", func(d *Deps) { d.Cache = fakeCache{down} })
+	tok := map[string]string{"Authorization": "Bearer " + harnessToken}
+	_, b := h.call(t, "GET", "/api/v1/cache", nil, tok)
+	if !strings.Contains(string(b), `"enabled":true`) || !strings.Contains(string(b), `"origin":"docker.io"`) || !strings.Contains(string(b), "connection refused") {
+		t.Fatalf("cache = %s", b)
+	}
+	_, b = h.call(t, "GET", "/api/v1/overview", nil, tok)
+	if !strings.Contains(string(b), `"kind":"cache_down"`) || !strings.Contains(string(b), `"time":"2026-10-08T01:36:22Z"`) {
+		t.Fatalf("overview lacks the cache alert, dated when the cache went down: %s", b)
+	}
+	none := newHarness(t, "")
+	_, b = none.call(t, "GET", "/api/v1/cache", nil, tok)
+	if !strings.Contains(string(b), `"enabled":false`) {
+		t.Fatalf("no cache = %s", b)
 	}
 }

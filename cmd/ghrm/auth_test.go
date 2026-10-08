@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
@@ -60,5 +61,18 @@ func TestDemoHasASignInAccount(t *testing.T) {
 	}
 	if _, err := demoAuth(ctx, db); err != nil {
 		t.Fatalf("second start: %v", err)
+	}
+}
+
+func TestDemoCacheLooksAlive(t *testing.T) {
+	start := time.Now().Add(-10 * time.Minute)
+	c := demoCache{start: start, now: func() time.Time { return start.Add(10 * time.Minute) }}
+	s := c.Status()
+	if !s.Enabled || !s.Up || len(s.Origins) != 4 || s.Origins[0].BlobHits <= s.Origins[0].BlobMisses || s.DiskUsed <= 0 || s.DiskUsed >= s.DiskBudget {
+		t.Fatalf("demo cache = %+v", s)
+	}
+	later := demoCache{start: start, now: func() time.Time { return start.Add(20 * time.Minute) }}.Status()
+	if later.Origins[0].BlobHits <= s.Origins[0].BlobHits {
+		t.Fatal("hits grow over time")
 	}
 }

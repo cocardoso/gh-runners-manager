@@ -34,6 +34,7 @@ type Config struct {
 	ScaleSets     []ScaleSet `yaml:"scale_sets"`
 	Templates     Templates  `yaml:"templates"`
 	Backup        Backup     `yaml:"backup"`
+	Cache         Cache      `yaml:"cache"`
 
 	// AdminToken is read from AdminTokenFile; empty disables mutating API calls.
 	AdminToken string `yaml:"-"`
@@ -273,6 +274,7 @@ func (c *Config) applyDefaults() {
 	if c.Backup.Keep == 0 {
 		c.Backup.Keep = 7
 	}
+	c.Cache.applyDefaults()
 	cp := &c.Capacity
 	if cp.MaxEnvironments == 0 {
 		cp.MaxEnvironments = 4
@@ -466,6 +468,9 @@ func (c *Config) ValidateServe() error {
 // Validate checks the configuration after defaults have been applied.
 func (c *Config) Validate() error {
 	var errs []error
+	if err := c.Cache.validate(); err != nil {
+		errs = append(errs, err)
+	}
 	p := c.Proxmox
 	if u, err := url.Parse(p.URL); p.URL == "" || err != nil || u.Scheme != "https" || u.Host == "" {
 		errs = append(errs, fmt.Errorf("proxmox.url must be an https URL, got %q", p.URL))

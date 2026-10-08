@@ -13,9 +13,9 @@ import (
 
 // Version identifies the layer. Bump it with every change to the files in this directory:
 // a new version triggers a template rebuild (spec §8.5).
-const Version = "2"
+const Version = "4"
 
-//go:embed Dockerfile ghrm-agent.service apt-ipv4.conf persist-env.sh
+//go:embed Dockerfile ghrm-agent.service apt-ipv4.conf persist-env.sh mirrors.sh
 var files embed.FS
 
 // Files returns the layer files.
@@ -25,7 +25,7 @@ func Files() fs.FS { return files }
 func Tar(w io.Writer, agent io.Reader, agentSize int64) error {
 	tw := tar.NewWriter(w)
 	mtime := time.Unix(0, 0)
-	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "persist-env.sh"} {
+	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "persist-env.sh", "mirrors.sh"} {
 		b, err := fs.ReadFile(files, name)
 		if err != nil {
 			return err

@@ -17,6 +17,7 @@ interface Check {
   name: string;
   ok: boolean;
   detail?: string;
+  warning?: boolean;
   seconds: number;
 }
 interface Difference {
@@ -99,10 +100,17 @@ function VerificationTab({ t, fid }: { t: TemplateView; fid: Fidelity }) {
                   <Table.Row key={c.name}>
                     <Table.Cell>{c.name}</Table.Cell>
                     <Table.Cell>
-                      <span className={cn("flex items-center gap-1.5", c.ok ? "text-kumo-success" : "text-kumo-danger")}>
-                        {c.ok ? <CheckCircleIcon weight="fill" /> : <XCircleIcon weight="fill" />}
-                        {c.ok ? "passed" : c.detail || "failed"}
-                      </span>
+                      {c.ok && c.warning ? (
+                        <span className="flex items-center gap-1.5 text-kumo-warning">
+                          <WarningIcon weight="fill" />
+                          passed with a warning: {c.detail}
+                        </span>
+                      ) : (
+                        <span className={cn("flex items-center gap-1.5", c.ok ? "text-kumo-success" : "text-kumo-danger")}>
+                          {c.ok ? <CheckCircleIcon weight="fill" /> : <XCircleIcon weight="fill" />}
+                          {c.ok ? "passed" : c.detail || "failed"}
+                        </span>
+                      )}
                     </Table.Cell>
                     <Table.Cell className="tabular-nums">{formatDuration(c.seconds * 1000)}</Table.Cell>
                   </Table.Row>

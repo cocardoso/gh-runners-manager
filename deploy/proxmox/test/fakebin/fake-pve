@@ -48,17 +48,20 @@ curl)
           echo "0000000000000000000000000000000000000000000000000000000000000000  install.sh"; } >"$out"
         if [ -n "${FAKE_BAD_SUM:-}" ]; then sed -i.bak '1s/^./f/' "$out"; fi ;;
       *ghrm-agent-linux-amd64) release ghrm-agent >"$out" ;;
+      *registry_*_linux_amd64.tar.gz) cp "$(dirname "$0")/../fixtures/registry.tar.gz" "$out" ;;
       *ghrm-linux-amd64) release ghrm >"$out" ;;
     esac
   fi ;;
-dpkg) [ -f "$S/dnsmasq" ]; exit $? ;;
+dpkg)
+  if [ "$1" = --print-architecture ]; then echo "${FAKE_ARCH:-amd64}"; exit 0; fi
+  [ -f "$S/dnsmasq" ]; exit $? ;;
 apt-get) [[ " $* " == *" dnsmasq "* ]] && touch "$S/dnsmasq"; exit 0 ;;
 systemctl | sleep | mkdir) exit 0 ;;
 pvesm) [ "$1" = add ] && echo "$3" >>"$S/storages"; exit 0 ;;
 pveam)
   case $1 in
     list) sed -n "s|^$2:\(.*\)|$2:\1 100MB|p" "$S/images" ;;
-    available) printf 'system          debian-13-standard_13.1-2_amd64.tar.zst\nsystem          ubuntu-24.04-standard_24.04-2_amd64.tar.zst\n' ;;
+    available) printf 'system          debian-13-standard_13.1-2_amd64.tar.zst\nsystem          debian-13-standard_13.1-2_arm64.tar.zst\nsystem          ubuntu-24.04-standard_24.04-2_amd64.tar.zst\nsystem          ubuntu-24.04-standard_24.04-2_arm64.tar.zst\n' ;;
     download) echo "$2:vztmpl/$3" >>"$S/images" ;;
   esac ;;
 pveum)
@@ -108,15 +111,24 @@ pct)
     status)
       line=$(grep "^$vmid " "$S/guests") || { echo "Configuration file 'nodes/pve/lxc/$vmid.conf' does not exist" >&2; exit 2; }
       st=${line##* }; [ "$st" = template ] && st=stopped; echo "status: $st" ;;
-    config) line=$(grep "^$vmid " "$S/guests") || exit 2; read -r _ t st <<<"$line"; echo "tags: $t"; [ "$st" = template ] && echo "template: 1"; exit 0 ;;
-    create) shift 3; echo "$vmid $(opt tags "$@") stopped" >>"$S/guests" ;;
+    config)
+      line=$(grep "^$vmid " "$S/guests") || exit 2; read -r _ t st <<<"$line"; echo "tags: $t"; [ "$st" = template ] && echo "template: 1"
+      if [ -f "$S/rootfs_$vmid" ]; then echo "rootfs: $(cat "$S/rootfs_$vmid")"; fi
+      exit 0 ;;
+    create)
+      shift 3; echo "$vmid $(opt tags "$@") stopped" >>"$S/guests"
+      r=$(opt rootfs "$@"); [ -n "$r" ] && echo "${r%%:*}:vm-$vmid-disk-0,size=$(echo "${r#*:}" | cut -d, -f1)G${r#*:[0-9]*}" | sed 's/G,/G,/' >"$S/rootfs_$vmid" ;;
+    resize) r=$(cat "$S/rootfs_$vmid"); echo "$r" | sed -E "s/size=[0-9]+G/size=${4%G}G/" >"$S/rootfs_$vmid" ;;
     start) sed -i.bak "s/^\($vmid [^ ]*\) stopped$/\1 running/" "$S/guests" ;;
     stop | shutdown) sed -i.bak "s/^\($vmid [^ ]*\) running$/\1 stopped/" "$S/guests" ;;
     template) sed -i.bak "s/^\($vmid [^ ]*\) [a-z]*$/\1 template/" "$S/guests" ;;
     destroy) sed -i.bak "/^$vmid /d" "$S/guests" ;;
     set) t=$(opt tags "${@:3}"); [ -n "$t" ] && sed -i.bak "s/^$vmid [^ ]*/$vmid $t/" "$S/guests" ;;
     push)
+      # Like the real pct push: a running binary cannot be overwritten, and the exit status is still 0.
+      if grep -qxF "$vmid $4" "$S/busy" 2>/dev/null; then echo "failed to create file: $4: Text file busy" >&2; exit 0; fi
       echo "$vmid $4" >>"$S/ct_files"
+      /bin/mkdir -p "$(dirname "$S/files/$vmid$4")" && cp "$3" "$S/files/$vmid$4"
       [ "$4" = /usr/local/bin/ghrm ] && sh "$3" version >"$S/ct_version_$vmid"
       if [ "$4" = /etc/ghrm/ghrm.yaml ]; then echo "$vmid $(sed -n 's/^ *template_vmid: *\([0-9]*\).*/\1/p' "$3")" >>"$S/ct_tplvmid"; fi
       exit 0 ;;
@@ -124,8 +136,17 @@ pct)
       shift 3 # pct exec VMID --
       line="$*"
       grep -q "^$vmid .* running$" "$S/guests" || { echo "CT $vmid not running" >&2; exit 1; }
+      f="$S/files/$vmid"
       case $line in
         "test -x /usr/local/bin/ghrm") has ct_files "$vmid /usr/local/bin/ghrm"; exit $? ;;
+        "sh -c umask 077; cat > "*) p=${line##*cat > }; /bin/mkdir -p "$(dirname "$f$p")"; cat >"$f$p"; echo "$vmid $p" >>"$S/ct_files"; exit 0 ;;
+        "sh -c cat >> "*) p=${line##*cat >> }; /bin/mkdir -p "$(dirname "$f$p")"; cat >>"$f$p"; exit 0 ;;
+        "cat /var/lib/ghrm/setup-token") echo setup-token-xyz; exit 0 ;;
+        "mv -f "*) set -- $line; /bin/mv -f "$f$3" "$f$4"; echo "$vmid $4" >>"$S/ct_files"; exit 0 ;;
+        "cat "*) cat "$f${line#cat }" 2>/dev/null; exit $? ;;
+        "grep -q ^cache: "*) grep -q '^cache:' "$f${line##* }" 2>/dev/null; exit $? ;;
+        "sha256sum "*) [ -f "$f${line#sha256sum }" ] || exit 1; sha256sum "$f${line#sha256sum }" | sed "s| .*|  ${line#sha256sum }|"; exit 0 ;;
+        *"registry --version") [ -f "$f/usr/local/bin/registry" ] && sh "$f/usr/local/bin/registry" --version; exit $? ;;
         *template_vmid*) sed -n "s|^$vmid ||p" "$S/ct_tplvmid" 2>/dev/null ;;
         "test -f "* | "test -s "*) has ct_files "$vmid ${line##* }"; exit $? ;;
         *"ghrm secret list"*) sed -n "s|^$vmid ||p" "$S/ct_secrets" ;;
@@ -133,7 +154,7 @@ pct)
         *"ghrm secret set"*) cat >/dev/null; echo "$vmid ${line##* }" >>"$S/ct_secrets" ;;
         *"ghrm version") has ct_files "$vmid /usr/local/bin/ghrm" || exit 127; cat "$S/ct_version_$vmid" 2>/dev/null || echo "ghrm v0.0.0 (old)" ;;
         *"cat /var/lib/ghrm/setup-token") echo setup-token-xyz ;;
-        "bash -s") cat >/dev/null ;;
+        *"bash -s") cat >/dev/null ;;
         *"ip -4 -o addr"*) echo 192.0.2.20 ;;
       esac ;;
   esac ;;

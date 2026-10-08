@@ -16,6 +16,7 @@ export type ScaleSet = Schemas["ScaleSet"];
 export type SessionState = Schemas["SessionState"];
 export type CredentialView = Schemas["CredentialView"];
 export type ScaleSetSettings = Schemas["ScaleSetSettings"];
+export type CacheStatus = Schemas["Status"];
 export type Settings = Schemas["Settings"];
 export type TemplateVersion = Schemas["Template"];
 export type ApiEvent = Omit<Schemas["Event"], "$schema" | "data"> & { data?: Record<string, unknown>; [extra: string]: unknown };

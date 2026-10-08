@@ -42,6 +42,14 @@ SECURITY_GROUP=ghrm-job
 DNS=1.1.1.1
 ENV_RANGE=900-948
 TEMPLATE_RANGE=950-958
+CACHE_VMID=""            # registry cache; default: the existing one, else the next free ID
+CACHE_DISK_GB=100
+CACHE_DISK_SET=0         # 1 when --cache-disk-gb was given (an existing disk is otherwise kept as is)
+DOCKERHUB_CLEAR=0
+NO_CACHE=0
+DOCKERHUB_USER=""        # optional; its token is read from standard input
+REGISTRY_VERSION=3.1.2   # CNCF Distribution, checked against its published SHA-256
+REGISTRY_SHA256=${GHRM_REGISTRY_SHA256:-40df2224d410f72ae425c3371873b078bbdbda3b8b612be9571f0e6751f3acc8}
 VERSION=latest
 BINARY_DIR=""            # use ghrm and ghrm-agent from this directory instead of a release
 DRY_RUN=0
@@ -67,6 +75,14 @@ Options (defaults in brackets):
   --dns IP                 resolver for job environments [$DNS]
   --env-range A-B          VMIDs for job environments [$ENV_RANGE]
   --template-range A-B     VMIDs for built templates [$TEMPLATE_RANGE]
+  --cache-vmid ID          registry cache container ID [existing, else next free]
+  --cache-disk-gb N        registry cache disk [$CACHE_DISK_GB; an existing disk only grows]
+  --no-cache               do not set up the registry cache
+  --dockerhub-user NAME    Docker Hub account for the cache (raises the pull limit;
+                           the access token is read from standard input). Every job
+                           can pull what the account can: use a token with the
+                           "Public Repo Read-only" scope
+  --dockerhub-clear        remove the Docker Hub account from the cache
   --version vX.Y.Z|latest  ghrm release [$VERSION]
   --binary-dir DIR         install ghrm and ghrm-agent from DIR (development)
   --dry-run                show what would change, change nothing
@@ -92,6 +108,11 @@ while [ $# -gt 0 ]; do
     --dns) DNS=$2; shift ;;
     --env-range) ENV_RANGE=$2; shift ;;
     --template-range) TEMPLATE_RANGE=$2; shift ;;
+    --cache-vmid) CACHE_VMID=$2; shift ;;
+    --cache-disk-gb) CACHE_DISK_GB=$2; CACHE_DISK_SET=1; shift ;;
+    --no-cache) NO_CACHE=1 ;;
+    --dockerhub-user) DOCKERHUB_USER=$2; shift ;;
+    --dockerhub-clear) DOCKERHUB_CLEAR=1 ;;
     --version) VERSION=$2; shift ;;
     --binary-dir) BINARY_DIR=$2; shift ;;
     --dry-run) DRY_RUN=1 ;;
@@ -112,6 +133,21 @@ INGEST_IP=$NET_PREFIX.2
 DHCP_START=$NET_PREFIX.100
 DHCP_END=$NET_PREFIX.199
 INGEST_PORT=8443
+CACHE_IP=$NET_PREFIX.3
+CACHE_ORIGINS="docker.io=https://registry-1.docker.io ghcr.io=https://ghcr.io mcr.microsoft.com=https://mcr.microsoft.com quay.io=https://quay.io"
+
+# The Docker Hub token never touches the host's disk: it goes from standard input
+# straight into the cache container's configuration.
+DOCKERHUB_TOKEN=""
+if [ -n "$DOCKERHUB_USER" ]; then
+  if [ -t 0 ]; then
+    read -r -s -p "Docker Hub access token for $DOCKERHUB_USER: " DOCKERHUB_TOKEN
+    echo
+  else
+    read -r DOCKERHUB_TOKEN || true
+  fi
+  [ -n "$DOCKERHUB_TOKEN" ] || { echo "--dockerhub-user needs an access token on standard input" >&2; exit 2; }
+fi
 
 # --- output and dry run ----------------------------------------------------------------
 CHANGED=0
@@ -119,6 +155,7 @@ if [ -t 1 ]; then GREEN=$'\033[32m' YELLOW=$'\033[33m' RED=$'\033[31m' RESET=$'\
 exists() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$*"; }
 created() { printf '  %s+%s %s\n' "$YELLOW" "$RESET" "$*"; CHANGED=1; }
 note() { printf '    %s\n' "$*"; }
+warn() { printf '  %s!%s %s\n' "$YELLOW" "$RESET" "$*"; }
 step() { printf '\n%s\n' "$*"; }
 die() { printf '%serror:%s %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 
@@ -162,6 +199,9 @@ preflight() {
   if [ "$major" -lt 9 ] || { [ "$major" -eq 9 ] && [ "$minor" -lt 1 ]; }; then
     die "Proxmox VE 9.1 or later is required (found $v): ghrm passes the runner bootstrap through the LXC env option"
   fi
+  local arch
+  arch=$(dpkg --print-architecture)
+  [ "$arch" = amd64 ] || die "ghrm ships amd64 binaries only (this host is $arch)"
   exists "Proxmox VE $v on node $NODE"
   if [ "$DRY_RUN" = 1 ]; then note "dry run: nothing will be changed"; fi
 }
@@ -280,6 +320,12 @@ firewall() {
       note "warning: $SECURITY_GROUP has no rule for the ingest ($INGEST_IP:$INGEST_PORT); add it first in the group:"
       note "  pvesh create /cluster/firewall/groups/$SECURITY_GROUP --type out --action ACCEPT --proto tcp --dest $INGEST_IP --dport $INGEST_PORT --pos 0"
     fi
+    # Additive and needed for the cache to work: added once, above the drops.
+    if [ "$NO_CACHE" = 0 ] && ! has_entry "/cluster/firewall/groups/$SECURITY_GROUP" dest "$CACHE_IP"; then
+      run pvesh create "/cluster/firewall/groups/$SECURITY_GROUP" --type out --action ACCEPT --proto tcp --dest "$CACHE_IP" --dport 5000:5003 \
+        --enable 1 --comment "ghrm registry cache" --pos 0
+      created "cache rule in security group $SECURITY_GROUP (jobs may reach $CACHE_IP:5000-5003)"
+    fi
     return
   fi
   run pvesh create /cluster/firewall/groups --group "$SECURITY_GROUP" --comment "gh-runners-manager job environments"
@@ -290,6 +336,9 @@ firewall() {
   done
   run pvesh create "$g" --type in --action DROP --enable 1 --comment "nothing reaches a job"
   run pvesh create "$g" --type out --action ACCEPT --proto udp --dport 67 --enable 1 --comment "DHCP"
+  if [ "$NO_CACHE" = 0 ]; then
+    run pvesh create "$g" --type out --action ACCEPT --proto tcp --dest "$CACHE_IP" --dport 5000:5003 --enable 1 --comment "ghrm registry cache"
+  fi
   run pvesh create "$g" --type out --action ACCEPT --proto tcp --dest "$INGEST_IP" --dport "$INGEST_PORT" --enable 1 --comment "ghrm ingest"
   created "security group $SECURITY_GROUP (ingest $INGEST_IP:$INGEST_PORT, DHCP, then no inbound and no private ranges)"
 }
@@ -298,10 +347,10 @@ firewall() {
 # os_image PATTERN prints the volume ID of a downloaded image, downloading it if needed.
 os_image() {
   local pattern=$1 name
-  name=$(pveam list "$OS_STORAGE" | awk '{print $1}' | grep -E "$pattern" | sort | tail -n 1 || true)
+  name=$(pveam list "$OS_STORAGE" | awk '{print $1}' | grep -E "$pattern" | grep '_amd64\.' | sort | tail -n 1 || true)
   if [ -n "$name" ]; then echo "$name"; return; fi
   run pveam update >/dev/null
-  name=$(pveam available --section system | awk '{print $2}' | grep -E "${pattern#*/}" | sort | tail -n 1)
+  name=$(pveam available --section system | awk '{print $2}' | grep -E "${pattern#*/}" | grep '_amd64\.' | sort | tail -n 1)
   [ -n "$name" ] || die "no container image matches $pattern"
   run pveam download "$OS_STORAGE" "$name" >/dev/null
   echo "$OS_STORAGE:vztmpl/$name"
@@ -315,6 +364,21 @@ next_free() {
   echo "$n"
 }
 
+# next_outside N: like next_free, skipping the control plane and ghrm's job and template
+# ranges (ghrm counts on every ID there).
+next_outside() {
+  local n=$1 r
+  while :; do
+    n=$(next_free "$n")
+    for r in "$ENV_RANGE" "$TEMPLATE_RANGE"; do
+      if [ "$n" -ge "${r%-*}" ] && [ "$n" -le "${r#*-}" ]; then n=$((${r#*-} + 1)) && continue 2; fi
+    done
+    if [ "$n" = "$CT_VMID" ]; then n=$((n + 1)) && continue; fi
+    echo "$n"
+    return
+  done
+}
+
 pick_vmids() {
   if [ -z "$CT_VMID" ]; then CT_VMID=$(tagged ghrm-control-plane); fi
   if [ -z "$CT_VMID" ]; then CT_VMID=$(next_free "$(pvesh get /cluster/nextid)"); fi
@@ -326,6 +390,8 @@ pick_vmids() {
   if [ -z "$TEMPLATE_VMID" ]; then TEMPLATE_VMID=$(tagged ghrm-template); fi
   if [ -z "$TEMPLATE_VMID" ]; then TEMPLATE_VMID=$(tagged ghrm-template-building); fi
   if [ -z "$TEMPLATE_VMID" ]; then TEMPLATE_VMID=$(next_free $((CT_VMID + 1))); fi
+  if [ -z "$CACHE_VMID" ]; then CACHE_VMID=$(tagged ghrm-cache); fi
+  if [ -z "$CACHE_VMID" ]; then CACHE_VMID=$(next_outside $((TEMPLATE_VMID + 1))); fi
 }
 
 host_ip() { ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1; }
@@ -348,7 +414,7 @@ control_plane() {
   if [ -n "$LAN_GW" ]; then net0="$net0,gw=$LAN_GW"; fi
   run pct create "$CT_VMID" "$image" --hostname ghrm --unprivileged 1 --features nesting=1 --cores 1 --memory 2048 --swap 512 \
     --rootfs "$ROOTFS_STORAGE:16" --net0 "$net0" --net1 "name=eth1,bridge=$VNET,ip=$INGEST_IP/24" \
-    --onboot 1 --tags ghrm-control-plane --description "gh-runners-manager control plane"
+    --onboot 1 --tags ghrm-control-plane --description "gh-runners-manager control plane" >/dev/null
   run pct start "$CT_VMID"
   created "container $CT_VMID (Debian 13, 1 vCPU, 2 GiB; LAN on $LAN_BRIDGE, ingest $INGEST_IP on $VNET)"
 }
@@ -405,6 +471,7 @@ templates:
   firewall_group: $SECURITY_GROUP
   selftest_blocked: ["$api_ip:8006", "$api_ip:22"]
 EOF
+  if [ "$NO_CACHE" = 0 ]; then cache_section; fi
 }
 
 GHRM_SERVICE='[Unit]
@@ -450,7 +517,7 @@ install_ghrm() {
   if [ -n "$want" ] && [ "$want" = "$have" ]; then
     exists "ghrm $want (current)"
   else
-    pct exec "$CT_VMID" -- sh -c 'command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null)'
+    pct exec "$CT_VMID" -- env LC_ALL=C DEBIAN_FRONTEND=noninteractive sh -c 'command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null 2>&1)'
     pct exec "$CT_VMID" -- mkdir -p /etc/ghrm /var/lib/ghrm
     pct exec "$CT_VMID" -- sh -c 'systemctl stop ghrm 2>/dev/null || true'
     pct push "$CT_VMID" "$tmp/ghrm" /usr/local/bin/ghrm --perms 0755
@@ -460,6 +527,11 @@ install_ghrm() {
   fi
   if pct exec "$CT_VMID" -- test -f /etc/ghrm/ghrm.yaml; then
     exists "/etc/ghrm/ghrm.yaml (kept)"
+    if [ "$NO_CACHE" = 0 ] && ! pct exec "$CT_VMID" -- grep -q ^cache: /etc/ghrm/ghrm.yaml; then
+      cache_section | pct exec "$CT_VMID" -- sh -c "cat >> /etc/ghrm/ghrm.yaml"
+      created "cache settings added to /etc/ghrm/ghrm.yaml"
+      restart=1
+    fi
   else
     config_file "$(host_ip)" "$(fingerprint)" >"$tmp/ghrm.yaml"
     pct push "$CT_VMID" "$tmp/ghrm.yaml" /etc/ghrm/ghrm.yaml --perms 0640
@@ -483,6 +555,201 @@ install_ghrm() {
   pct exec "$CT_VMID" -- systemctl enable --now ghrm >/dev/null 2>&1
   if [ "$restart" = 1 ]; then pct exec "$CT_VMID" -- systemctl restart ghrm; fi
   exists "service ghrm running"
+}
+
+# --- 6b. registry cache ----------------------------------------------------------------
+cache_section() {
+  cat <<EOF
+
+# Pull-through registry cache on the job network (written by install.sh).
+cache:
+  address: $CACHE_IP
+EOF
+}
+
+registry_config() { # registry_config ORIGIN UPSTREAM PORT METRICS_PORT
+  cat <<EOF
+# Written by install.sh: a pull-through cache of $1 for gh-runners-manager jobs.
+version: 0.1
+log:
+  level: info
+storage:
+  filesystem:
+    rootdirectory: /var/lib/ghrm-cache/$1
+  delete:
+    enabled: true
+http:
+  addr: ":$3"
+  debug:
+    addr: ":$4"
+    prometheus:
+      enabled: true
+      path: /metrics
+proxy:
+  remoteurl: $2
+  ttl: 168h
+EOF
+  if [ "$1" = docker.io ] && [ -n "$DOCKERHUB_USER" ]; then
+    printf '  username: %s\n  password: %s\n' "$DOCKERHUB_USER" "$DOCKERHUB_TOKEN"
+  fi
+}
+
+# put_file VMID PATH: writes standard input to PATH in the container (0600) when it
+# differs; it returns 0 when it changed something.
+put_file() {
+  local vmid=$1 path=$2 want have
+  want=$(cat)
+  have=$(pct exec "$vmid" -- cat "$path" 2>/dev/null || true)
+  [ "$want" = "$have" ] && return 1
+  printf '%s\n' "$want" | pct exec "$vmid" -- sh -c "umask 077; cat > $path"
+  return 0
+}
+
+# push_binary VMID SRC DEST: replaces DEST even while it runs. pct push cannot write a
+# busy executable (and still exits 0); a rename next to it can.
+push_binary() {
+  pct push "$1" "$2" "$3.new" --perms 0755
+  pct exec "$1" -- mv -f "$3.new" "$3"
+}
+
+cache() {
+  step "Registry cache (container $CACHE_VMID)"
+  if [ "$NO_CACHE" = 1 ]; then
+    note "skipped (--no-cache)"
+    return
+  fi
+  if pct status "$CACHE_VMID" >/dev/null 2>&1; then
+    exists "container $CACHE_VMID (registry cache)"
+    if ! pct status "$CACHE_VMID" | grep -q running; then
+      run pct start "$CACHE_VMID"
+      created "started container $CACHE_VMID"
+    fi
+    # The disk the container has sets the budget; --cache-disk-gb can only grow it.
+    local size
+    size=$(pct config "$CACHE_VMID" | sed -n 's/^rootfs:.*size=\([0-9]*\)G.*/\1/p')
+    if [ -n "$size" ]; then
+      if [ "$CACHE_DISK_SET" = 1 ] && [ "$CACHE_DISK_GB" -gt "$size" ]; then
+        run pct resize "$CACHE_VMID" rootfs "${CACHE_DISK_GB}G"
+        created "cache disk grown from $size GB to $CACHE_DISK_GB GB"
+      else
+        if [ "$CACHE_DISK_SET" = 1 ] && [ "$CACHE_DISK_GB" -lt "$size" ]; then
+          warn "the cache disk is $size GB and Proxmox cannot shrink it: keeping $size GB"
+        fi
+        CACHE_DISK_GB=$size
+      fi
+    fi
+  else
+    local image
+    image=$(os_image 'debian-13-standard')
+    run pct create "$CACHE_VMID" "$image" --hostname ghrm-cache --unprivileged 1 --features nesting=1 --cores 1 --memory 512 --swap 0 \
+      --rootfs "$ROOTFS_STORAGE:$CACHE_DISK_GB,mountoptions=discard" --net0 "name=eth0,bridge=$VNET,ip=$CACHE_IP/24,gw=$GATEWAY" --nameserver "$DNS" \
+      --onboot 1 --tags ghrm-cache --description "gh-runners-manager registry cache" >/dev/null
+    run pct start "$CACHE_VMID"
+    created "container $CACHE_VMID (registry cache on $CACHE_IP, $CACHE_DISK_GB GB)"
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    if pct status "$CACHE_VMID" >/dev/null 2>&1; then
+      note "would check the registry v$REGISTRY_VERSION proxies, eviction timer and disk exporter, and update what differs"
+    else
+      note "would install the registry v$REGISTRY_VERSION (one proxy per registry), its eviction timer and disk exporter"
+    fi
+    return
+  fi
+  wait_for_container "$CACHE_VMID"
+  local tmp changed="" entry origin url port metrics i=0
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' RETURN
+  # "registry github.com/distribution/distribution/v3 3.1.2": the last word is the version.
+  if [ "$(pct exec "$CACHE_VMID" -- /usr/local/bin/registry --version 2>/dev/null | awk '{print $NF}')" != "$REGISTRY_VERSION" ]; then
+    curl -fsSL -o "$tmp/registry.tar.gz" \
+      "https://github.com/distribution/distribution/releases/download/v$REGISTRY_VERSION/registry_${REGISTRY_VERSION}_linux_amd64.tar.gz"
+    echo "$REGISTRY_SHA256  $tmp/registry.tar.gz" | sha256sum -c --quiet - || die "the registry download does not match its SHA-256"
+    tar -xzf "$tmp/registry.tar.gz" -C "$tmp" registry
+    push_binary "$CACHE_VMID" "$tmp/registry" /usr/local/bin/registry
+    created "registry v$REGISTRY_VERSION"
+    changed="$changed registry"
+  fi
+  binaries "$tmp"
+  if [ "$(sha256sum "$tmp/ghrm-agent" | cut -d' ' -f1)" != "$(pct exec "$CACHE_VMID" -- sha256sum /usr/local/bin/ghrm-agent 2>/dev/null | cut -d' ' -f1 || true)" ]; then
+    push_binary "$CACHE_VMID" "$tmp/ghrm-agent" /usr/local/bin/ghrm-agent
+    created "ghrm-agent (eviction and disk exporter)"
+    changed="$changed agent"
+  fi
+  pct exec "$CACHE_VMID" -- mkdir -p /etc/ghrm-cache /var/lib/ghrm-cache
+  local instances=""
+  for entry in $CACHE_ORIGINS; do
+    origin=${entry%%=*} url=${entry#*=} port=$((5000 + i)) metrics=$((5100 + i)) i=$((i + 1))
+    instances="$instances --instance $origin=/etc/ghrm-cache/$origin.yml"
+    # A credential set by an earlier run is kept (its token is only in the container),
+    # unless --dockerhub-clear removes it.
+    if [ "$origin" = docker.io ] && [ -z "$DOCKERHUB_USER" ] && [ "$DOCKERHUB_CLEAR" = 0 ]; then
+      local current
+      current=$(pct exec "$CACHE_VMID" -- cat /etc/ghrm-cache/docker.io.yml 2>/dev/null || true)
+      DOCKERHUB_USER=$(printf '%s\n' "$current" | sed -n 's/^  username: //p')
+      DOCKERHUB_TOKEN=$(printf '%s\n' "$current" | sed -n 's/^  password: //p')
+      if [ -n "$DOCKERHUB_USER" ]; then exists "Docker Hub credential for $DOCKERHUB_USER (kept)"; fi
+    fi
+    if registry_config "$origin" "$url" "$port" "$metrics" | put_file "$CACHE_VMID" "/etc/ghrm-cache/$origin.yml"; then
+      created "proxy for $origin on port $port"
+      changed="$changed $origin"
+    fi
+  done
+  local budget=$((CACHE_DISK_GB * 9 / 10))
+  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-registry@.service <<EOF; then changed="$changed units"; fi
+[Unit]
+Description=gh-runners-manager registry cache for %i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/registry serve /etc/ghrm-cache/%i.yml
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-exporter.service <<EOF; then changed="$changed units"; fi
+[Unit]
+Description=gh-runners-manager registry cache disk exporter
+
+[Service]
+ExecStart=/usr/local/bin/ghrm-agent cache-exporter --listen :5199 --status /var/lib/ghrm-cache/status
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-prune.service <<EOF; then changed="$changed units"; fi
+[Unit]
+Description=gh-runners-manager registry cache eviction
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ghrm-agent cache-prune --root /var/lib/ghrm-cache --budget-gb $budget$instances
+EOF
+  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-prune.timer <<EOF; then changed="$changed units"; fi
+[Unit]
+Description=Keep the gh-runners-manager registry cache under its disk budget
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target
+EOF
+  if [ -z "$changed" ]; then
+    exists "registry v$REGISTRY_VERSION proxies, eviction timer and disk exporter"
+    return
+  fi
+  local units="ghrm-cache-exporter.service ghrm-cache-prune.timer"
+  for entry in $CACHE_ORIGINS; do units="$units ghrm-cache-registry@${entry%%=*}.service"; done
+  pct exec "$CACHE_VMID" -- systemctl daemon-reload
+  # shellcheck disable=SC2086 # one word per unit
+  pct exec "$CACHE_VMID" -- systemctl enable --now $units >/dev/null 2>&1
+  # shellcheck disable=SC2086
+  pct exec "$CACHE_VMID" -- systemctl restart $units
+  created "registry cache services (re)started"
 }
 
 # --- 7. bootstrap template -------------------------------------------------------------
@@ -552,7 +819,7 @@ bootstrap_template() {
   image=$(os_image 'ubuntu-24.04-standard')
   run pct create "$TEMPLATE_VMID" "$image" --hostname ghrm-template --unprivileged 1 --features nesting=1 --cores 2 --memory 2048 \
     --rootfs "$ROOTFS_STORAGE:8" --net0 "name=eth0,bridge=$VNET,ip=dhcp,firewall=1" --nameserver "$DNS" --ostype ubuntu --pool "$POOL" \
-    --tags ghrm-template-building
+    --tags ghrm-template-building >/dev/null
   run pvesh set "/nodes/$NODE/lxc/$TEMPLATE_VMID/firewall/options" --enable 1
   run pvesh create "/nodes/$NODE/lxc/$TEMPLATE_VMID/firewall/rules" --type group --action "$SECURITY_GROUP" --enable 1
   if [ "$DRY_RUN" = 1 ]; then
@@ -570,7 +837,7 @@ bootstrap_template() {
   printf '%s\n' "$GHRM_AGENT_SERVICE" >"$tmp/ghrm-agent.service"
   pct push "$TEMPLATE_VMID" "$tmp/ghrm-agent" /usr/local/bin/ghrm-agent --perms 0755
   pct push "$TEMPLATE_VMID" "$tmp/ghrm-agent.service" /etc/systemd/system/ghrm-agent.service --perms 0644
-  printf '%s\n' "$PROVISION" | pct exec "$TEMPLATE_VMID" -- bash -s
+  printf '%s\n' "$PROVISION" | pct exec "$TEMPLATE_VMID" -- env LC_ALL=C bash -s
   pct shutdown "$TEMPLATE_VMID" --timeout 60
   pct template "$TEMPLATE_VMID"
   pct set "$TEMPLATE_VMID" --tags ghrm-template
@@ -602,6 +869,7 @@ token
 storage
 network
 firewall
+cache
 control_plane
 install_ghrm
 bootstrap_template

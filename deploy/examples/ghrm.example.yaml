@@ -80,3 +80,11 @@ templates:
   # Addresses a job must not reach; the self-test fails if any answers.
   selftest_blocked: ["192.168.1.1:443", "192.168.1.10:8006"]
   # agent_path: /usr/local/bin/ghrm-agent   # served to builders; default: next to the ghrm binary
+
+# Pull-through registry cache on the job network (install.sh creates it). Job templates
+# pull Docker Hub, GHCR, MCR and Quay images through it; remove the address to disable.
+cache:
+  address: 10.50.0.3
+  # ports: {docker.io: 5000, ghcr.io: 5001, mcr.microsoft.com: 5002, quay.io: 5003}
+  # metrics_ports: {docker.io: 5100, ghcr.io: 5101, mcr.microsoft.com: 5102, quay.io: 5103}
+  # exporter_port: 5199

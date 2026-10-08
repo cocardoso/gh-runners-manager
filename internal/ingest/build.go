@@ -26,6 +26,9 @@ const (
 	ModeSelfTest = "selftest"
 	// EnvSelfTestBlocked lists addresses (comma separated) that must be unreachable from a job.
 	EnvSelfTestBlocked = "GHRM_SELFTEST_BLOCKED"
+	// EnvSelfTestMirrors lists the registry cache's mirror addresses (comma separated)
+	// a job must reach.
+	EnvSelfTestMirrors = "GHRM_SELFTEST_MIRRORS"
 )
 
 // Build agent events.
@@ -53,6 +56,9 @@ type BuildSpec struct {
 	// AgentSHA256 is the control plane's ghrm-agent; a builder running another
 	// agent updates itself first (it is a clone of the active template).
 	AgentSHA256 string `json:"agent_sha256,omitempty"`
+	// CacheMirrors points the template at the registry cache ("origin=host:port,...";
+	// empty: no cache).
+	CacheMirrors string `json:"cache_mirrors,omitempty"`
 }
 
 // Check is one self-test result.
@@ -60,6 +66,7 @@ type Check struct {
 	Name    string  `json:"name"`
 	OK      bool    `json:"ok"`
 	Detail  string  `json:"detail,omitempty"`
+	Warning bool    `json:"warning,omitempty"` // passed, but Detail says what is degraded
 	Seconds float64 `json:"seconds"`
 }
 
