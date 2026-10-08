@@ -9,6 +9,7 @@ Ephemeral, isolated GitHub Actions runners on Proxmox LXC: one fresh environment
 - Jobs are received through GitHub's Runner Scale Set API (outbound connections only).
 - Each job runs in an unprivileged LXC container, linked-cloned from a template that ghrm builds from GitHub's own `ubuntu-slim` image recipe, verifies against GitHub's software report, and rebuilds when a new image or runner release appears.
 - Job environments live on an isolated network that cannot reach your LAN or the hypervisor.
+- A registry cache on that network serves the container images jobs pull (Docker Hub, GHCR, MCR, Quay), with no workflow changes.
 - A web UI shows queues, environments, jobs and the live logs of every lifecycle stage.
 
 ## Install

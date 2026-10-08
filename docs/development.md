@@ -90,6 +90,17 @@ Useful API calls (with the admin token from `/etc/ghrm/admin-token`):
 - `/metrics` (Prometheus, unauthenticated): `ghrm_environments{scale_set,state}`, `ghrm_environment_failures_total{stage}`, `ghrm_jobs_total{scale_set,result}`, `ghrm_scale_set_desired` (queue depth) and `ghrm_scale_set_listening`, `ghrm_template_builds_total{result}`, `ghrm_stage_duration_seconds{stage}`, `ghrm_build_info{version}`, plus Go process metrics.
 - Backups: every day at `backup.hour` (default 3, local time) ghrm writes a consistent copy of the database with `VACUUM INTO` to `backup.dir` (default `<data_dir>/backups`, mode `0600`) and keeps `backup.keep` copies (default 7). Each run is a `backup.done` or `backup.failed` event. Keep `secret.key` with them, and back up the container with Proxmox backups too.
 
+## Registry cache
+
+With `cache.address` set (the installer sets it up and creates the container), job environments pull Docker Hub, GHCR, MCR and Quay images through a pull-through cache on the job network (`<subnet>.3`), with unchanged workflows. The cache is an unprivileged Debian container (`ghrm-cache`, not in the ghrm pool) running one CNCF Distribution proxy per registry on ports 5000–5003, their metrics on 5100–5103 and `ghrm-agent cache-exporter` on 5199; jobs can reach only 5000–5003.
+
+- Disk: `install.sh --cache-disk-gb N` (default 100). Eviction keeps the cache under 90 % of it: above 85 % of that budget the least recently used repositories are deleted and the registry's garbage collection runs (`ghrm-cache-prune.timer`, every 15 minutes).
+- Docker Hub limits anonymous pulls per address, and every job leaves through the same address. `install.sh --dockerhub-user NAME` (access token on standard input) configures an account in the cache only.
+- Tags are checked with the registry on every pull; a cached tag is served only when the registry cannot be reached.
+- Settings shows the cache (each registry, the share served from the cache, disk use); the overview alerts while it does not answer, and jobs then pull from the registries directly.
+- To disable it, remove the `cache:` section (templates are rebuilt without the mirror settings), or install with `--no-cache`.
+- What is not cached: GitHub's Actions cache (`actions/cache`, `setup-node`'s `cache:`, BuildKit `type=gha`) and package registries (npm, PyPI, apt).
+
 ## Docker
 
 `docker build -t ghrm .` builds the control plane image (the web UI embedded, plus `ghrm-agent` for template builds; distroless, non-root). `deploy/docker/compose.yaml` runs it against a remote Proxmox host: put `ghrm.yaml` next to it with `data_dir: /var/lib/ghrm`, `listen: 0.0.0.0:8080`, `ingest.listen: 0.0.0.0:8443`, and an `ingest.advertise_url` that job environments can reach (allow it in the job security group), then store the secrets with `docker compose run --rm ghrm secret set proxmox/token-secret` and start it with `docker compose up -d`.

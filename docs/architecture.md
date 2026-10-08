@@ -31,6 +31,7 @@ Legend used in the diagrams: **green** = implemented, **grey dashed** = planned 
 | Secrets sealed at rest (AES-256-GCM, separate key file), `ghrm secret` | `internal/secrets` | Implemented (M5) |
 | Editable credentials and scale sets, listener supervisor | `internal/settings`, `cmd/ghrm/supervisor.go` | Implemented (M5) |
 | Prometheus metrics, daily backups | `internal/metrics`, `internal/backup` | Implemented (M5) |
+| Registry cache: proxies, eviction, disk exporter, monitor, mirror settings in templates | `internal/cachemon`, `internal/agent` (`cacheprune.go`, `cacheexporter.go`), `template/layer/mirrors.sh` | Implemented (M6) |
 | Installer, container image, releases | `deploy/proxmox/install.sh`, `Dockerfile`, `deploy/docker`, `.github/workflows/release.yml` | Implemented (M5) |
 
 ## 1. System overview
@@ -66,6 +67,7 @@ flowchart LR
             env1["Job LXC + ghrm-agent"]
             env2["Job LXC + ghrm-agent"]
             builder["Builder / verify LXC + ghrm-agent (build, self-test mode)"]
+            cache["Registry cache LXC: one proxy per registry<br/>(Docker Hub, GHCR, MCR, Quay)"]
         end
     end
 
@@ -81,6 +83,9 @@ flowchart LR
     env1 -- "events + logs (HTTPS)" --> ingest
     env2 -- "events + logs (HTTPS)" --> ingest
     env1 -- "runner protocol (outbound)" --> github
+    env1 -- "image pulls (mirrors)" --> cache
+    cache -- "first pull only" --> registries(["Container registries"])
+    templates -. "health, hits, disk" .-> cache
     reaper --> runtime
     reaper --> rest
     templates -- "release checks" --> rest
@@ -102,7 +107,7 @@ flowchart LR
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef planned fill:#f1f3f5,stroke:#868e96,stroke-dasharray:5 5,color:#000
-    class runtime,scheduler,listener,reaper,store,ingest,api,ui,templates,settings,vault,auth,metrics done
+    class runtime,scheduler,listener,reaper,store,ingest,api,ui,templates,settings,vault,auth,metrics,cache done
 ```
 
 ## 1a. Web UI data flow
@@ -197,6 +202,7 @@ flowchart LR
         job["Job LXC (unprivileged)"]
         gw["SDN gateway (on the Proxmox host)"]
         cpjob["ghrm: job-network interface (ingest only)"]
+        cache["Registry cache (.3): mirror ports only"]
     end
 
     internet(["Internet: GitHub, registries, package mirrors"])
@@ -210,6 +216,9 @@ flowchart LR
 
     job -->|"DHCP"| gw
     job -->|"ingest port only"| cpjob
+    job -->|"mirror ports 5000-5003"| cache
+    cache ==>|"first pull, via SNAT"| internet
+    cpjob -. "metrics and disk ports (control plane only)" .-> cache
     job ==>|"everything else, via SNAT"| internet
     job -. "blocked by the security group" .-x lan
     cplan --> hostapi
@@ -221,11 +230,16 @@ Security group applied to every job LXC (inherited from the template):
 |---|---|---|
 | 1 | out | ACCEPT UDP 67 (DHCP) |
 | 2 | out | ACCEPT TCP to the ingest address and port |
+| 2b | out | ACCEPT TCP to the registry cache's mirror ports (5000–5003), when a cache is configured |
 | 3 | in | DROP everything |
 | 4 | out | DROP 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 |
 | — | out | everything else (internet) is allowed |
 
-Nothing can open a connection into a job LXC (rule 3). The ingest exception (rule 2) is the only internal destination a job can reach.
+Nothing can open a connection into a job LXC (rule 3). The ingest (rule 2) and the registry cache's mirror ports (rule 2b) are the only internal destinations a job can reach; the cache's metrics and disk ports stay closed to jobs (the template self-test checks it).
+
+### 2a. Registry cache
+
+Job templates point the Docker daemon (`registry-mirrors`, Docker Hub), containerd (`/etc/docker/certs.d/<registry>/hosts.toml`) and BuildKit (`~/.docker/buildx/buildkitd.default.toml` of the runner user, read when `setup-buildx-action` creates a builder) at the cache, so `services:`, `container:`, `docker pull`, `docker build` and buildx pull through it with unchanged workflows. If the cache does not answer, pulls go straight to the registry. The cache container runs one CNCF Distribution proxy per registry; `ghrm-agent cache-prune` (every 15 minutes) evicts the least recently used repositories above 85 % of its disk budget, and `ghrm-agent cache-exporter` reports the disk use. The control plane polls it every 30 s for the overview alert, the Settings card and the `ghrm_cache_*` metrics. Changing the cache settings changes the layer version, so templates are rebuilt.
 
 ## 3. Job lifecycle
 
@@ -485,14 +499,15 @@ flowchart TD
     pre["Proxmox VE 9.1+ and root"] --> acc["pool ghrm, roles GhrmRuntime and GhrmTemplates,<br/>user ghrm@pve, API token, ACLs"]
     acc --> stor["template storage ghrm-tpl (dir, vztmpl)"]
     stor --> net["SDN zone + VNet + subnet (DHCP, SNAT); dnsmasq"]
-    net --> fw["datacenter firewall on; security group:<br/>ingest, DHCP, no inbound, no private ranges"]
-    fw --> cp["control-plane LXC (Debian 13): LAN + job-network NICs"]
+    net --> fw["datacenter firewall on; security group:<br/>ingest, cache mirrors, DHCP, no inbound, no private ranges"]
+    fw --> cache["registry cache LXC (.3): one proxy per registry,<br/>eviction timer, disk exporter (skip with --no-cache)"]
+    cache --> cp["control-plane LXC (Debian 13): LAN + job-network NICs"]
     cp --> bin["ghrm + ghrm-agent from the release (SHA256SUMS),<br/>ghrm.yaml, admin token, token secret into the vault, service"]
     bin --> tpl["bootstrap template (Ubuntu 24.04, Docker, runner, ghrm-agent)"]
     tpl --> done(["prints the UI address and the setup token"])
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
-    class pre,acc,stor,net,fw,cp,bin,tpl,done done
+    class pre,acc,stor,net,fw,cache,cp,bin,tpl,done done
 ```
 
 After the first sign-in, the operator adds a GitHub credential and a scale set and builds the first real template (Templates > Build now); ghrm then rebuilds templates on new releases by itself. The same image runs with Docker Compose (`deploy/docker/compose.yaml`) against a remote Proxmox host. A `v*` tag publishes the binaries, `SHA256SUMS`, the installer and the container image.
