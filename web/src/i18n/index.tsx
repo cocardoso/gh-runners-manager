@@ -1,10 +1,6 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { en } from "./en";
+import { en, messagesFor } from "./en";
 import { locales, type Locale } from "./locales";
-import { ptBR } from "./pt-BR";
-import { es } from "./es";
-import { fr } from "./fr";
-import { it } from "./it";
 
 export { locales, localeNames, type Locale } from "./locales";
 export type Messages = typeof en;
@@ -15,7 +11,7 @@ type Leaves<T, P extends string = ""> = {
 export type Key = Leaves<Messages>;
 export type Params = Record<string, string | number>;
 
-const catalogs: Record<Locale, Messages> = { en, "pt-BR": ptBR, es, fr, it };
+const catalogs = Object.fromEntries(locales.map((l) => [l, messagesFor(l)])) as Record<Locale, Messages>;
 
 // The language in use, for code outside React (formatters, tooltips). The provider sets
 // it before its tree renders, and remounts the tree when it changes.
