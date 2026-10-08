@@ -162,17 +162,29 @@ die() { printf '%serror:%s %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 # run executes a command that changes something; with --dry-run it only prints it.
 run() {
   if [ "$DRY_RUN" = 1 ]; then
-    printf '    would run: %s\n' "$*" >&2
+    local shown=$*
+    printf '    would run: %s\n' "${shown#quiet }" >&2
     return 0
   fi
   "$@"
 }
 
+# quiet CMD...: runs CMD and shows what it printed only when it fails.
+quiet() {
+  local out rc=0
+  out=$("$@" 2>&1) || rc=$?
+  if [ "$rc" != 0 ]; then printf '%s\n' "$out" >&2; fi
+  return "$rc"
+}
+
 json() { pvesh get "$1" --output-format json; }
 
 # has_entry PATH KEY VALUE: the JSON list at PATH has an entry whose KEY is VALUE.
+# A PATH that does not exist yet (a user not created) has no entries.
 has_entry() {
-  json "$1" | perl -MJSON::PP -0777 -e '
+  local data
+  data=$(json "$1" 2>/dev/null) || return 1
+  printf '%s' "$data" | perl -MJSON::PP -0777 -e '
     my ($k, $v) = @ARGV; my $d = decode_json(<STDIN>);
     exit((grep { defined $_->{$k} && $_->{$k} eq $v } @$d) ? 0 : 1)' "$2" "$3"
 }
@@ -302,7 +314,7 @@ network() {
       --dhcp-range "start-address=$DHCP_START,end-address=$DHCP_END" --dhcp-dns-server "$DNS"
     created "subnet $SUBNET (gateway $GATEWAY, SNAT, DHCP $DHCP_START-$DHCP_END, DNS $DNS)"; sdn_changed=1
   fi
-  if [ "$sdn_changed" = 1 ]; then run pvesh set /cluster/sdn; created "applied the SDN configuration"; fi
+  if [ "$sdn_changed" = 1 ]; then run quiet pvesh set /cluster/sdn; created "applied the SDN configuration"; fi
 }
 
 firewall() {
@@ -837,9 +849,9 @@ bootstrap_template() {
   printf '%s\n' "$GHRM_AGENT_SERVICE" >"$tmp/ghrm-agent.service"
   pct push "$TEMPLATE_VMID" "$tmp/ghrm-agent" /usr/local/bin/ghrm-agent --perms 0755
   pct push "$TEMPLATE_VMID" "$tmp/ghrm-agent.service" /etc/systemd/system/ghrm-agent.service --perms 0644
-  printf '%s\n' "$PROVISION" | pct exec "$TEMPLATE_VMID" -- env LC_ALL=C bash -s
+  printf '%s\n' "$PROVISION" | quiet pct exec "$TEMPLATE_VMID" -- env LC_ALL=C bash -s
   pct shutdown "$TEMPLATE_VMID" --timeout 60
-  pct template "$TEMPLATE_VMID"
+  quiet pct template "$TEMPLATE_VMID"
   pct set "$TEMPLATE_VMID" --tags ghrm-template
   created "template $TEMPLATE_VMID (Ubuntu 24.04, Docker, GitHub runner, ghrm-agent); ghrm builds the real templates from it"
 }
@@ -870,7 +882,8 @@ storage
 network
 firewall
 cache
+# ghrm builds from the bootstrap template as soon as it starts: create it first.
+bootstrap_template
 control_plane
 install_ghrm
-bootstrap_template
 summary

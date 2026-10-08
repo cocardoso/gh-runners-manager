@@ -183,6 +183,25 @@ test_a_new_release_is_installed() {
 
 ct_file() { cat "$FAKE_STATE/files/$1$2" 2>/dev/null; } # ct_file VMID PATH: a file inside a container
 
+test_bootstrap_template_exists_before_ghrm_starts() {
+  install || fail "exit $?: $(tail -n 3 "$tmp/out")"
+  # ghrm builds from the bootstrap template as soon as it starts.
+  tpl=$(grep -n '^pct template 101' "$FAKE_LOG" | cut -d: -f1)
+  start=$(grep -n '^pct exec 100 -- systemctl enable --now ghrm' "$FAKE_LOG" | cut -d: -f1)
+  [ -n "$tpl" ] && [ -n "$start" ] || fail "missing calls (template: '$tpl', start: '$start')"
+  [ "${tpl:-0}" -lt "${start:-0}" ] || fail "ghrm started (line $start) before the bootstrap template existed (line $tpl)"
+}
+
+test_install_report_has_no_tool_chatter() {
+  install || fail "exit $?: $(tail -n 3 "$tmp/out")"
+  expect_no_out "reloading network config|UPID:|Renamed|Unable to locate package"
+}
+
+test_failed_provisioning_shows_its_output() {
+  if FAKE_PROVISION_FAIL=1 install; then fail "a failed provisioning must stop the installer"; fi
+  expect_out "E: provisioning broke"
+}
+
 test_cache_is_created() {
   install || fail "exit $?: $(tail -n 3 "$tmp/out")"
   expect_out "+ container 102 (registry cache"
@@ -319,6 +338,12 @@ test_dry_run_changes_nothing() {
   expect_out "would run: pveum pool add ghrm"
   expect_out "run without --dry-run to make the changes above"
   [ -z "$(cat "$FAKE_STATE"/pools "$FAKE_STATE"/guests 2>/dev/null)" ] || fail "state changed"
+}
+
+test_dry_run_on_a_clean_host_prints_no_errors() {
+  install --dry-run || fail "exit $?"
+  expect_no_out "no such user|malformed JSON"
+  expect_out "would run: pvesh set /cluster/sdn"
 }
 
 test_dry_run_on_a_complete_host_reports_nothing_to_do() {

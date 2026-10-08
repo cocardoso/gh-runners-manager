@@ -81,7 +81,9 @@ pvesh)
     "get /pools") list "$S/pools" poolid ;;
     "get /access/roles") list "$S/roles" roleid ;;
     "get /access/users") list "$S/users" userid ;;
-    "get /access/users/"*/token) u=${path#/access/users/}; u=${u%/token}; sed -n "s|^$u ||p" "$S/tokens" >"$S/.tmp"; list "$S/.tmp" tokenid ;;
+    "get /access/users/"*/token) u=${path#/access/users/}; u=${u%/token}
+      grep -qx "$u" "$S/users" 2>/dev/null || { echo "no such user ('$u')" >&2; exit 2; }
+      sed -n "s|^$u ||p" "$S/tokens" >"$S/.tmp"; list "$S/.tmp" tokenid ;;
     "get /storage") list "$S/storages" storage ;;
     "get /cluster/sdn/zones") list "$S/zones" zone ;;
     "get /cluster/sdn/vnets") list "$S/vnets" vnet ;;
@@ -104,6 +106,7 @@ pvesh)
     "create /cluster/firewall/groups") opt group "$@" >>"$S/groups" ;;
     "create /cluster/firewall/groups/"*) g=${path##*/}; d=$(opt dest "$@"); [ -n "$d" ] && echo "$d" >>"$S/group_$g" ;;
     "set /cluster/firewall/options") opt enable "$@" >"$S/fw_enable" ;;
+    "set /cluster/sdn") echo "pve: reloading network config"; echo "UPID:pve:000A4249:reloadnetworkall::root@pam:" ;;
   esac ;;
 pct)
   sub=$1 vmid=${2:-}
@@ -121,7 +124,7 @@ pct)
     resize) r=$(cat "$S/rootfs_$vmid"); echo "$r" | sed -E "s/size=[0-9]+G/size=${4%G}G/" >"$S/rootfs_$vmid" ;;
     start) sed -i.bak "s/^\($vmid [^ ]*\) stopped$/\1 running/" "$S/guests" ;;
     stop | shutdown) sed -i.bak "s/^\($vmid [^ ]*\) running$/\1 stopped/" "$S/guests" ;;
-    template) sed -i.bak "s/^\($vmid [^ ]*\) [a-z]*$/\1 template/" "$S/guests" ;;
+    template) sed -i.bak "s/^\($vmid [^ ]*\) [a-z]*$/\1 template/" "$S/guests"; echo "  Renamed \"vm-$vmid-disk-0\" to \"base-$vmid-disk-0\" in volume group \"pve\"" ;;
     destroy) sed -i.bak "/^$vmid /d" "$S/guests" ;;
     set) t=$(opt tags "${@:3}"); [ -n "$t" ] && sed -i.bak "s/^$vmid [^ ]*/$vmid $t/" "$S/guests" ;;
     push)
@@ -154,7 +157,7 @@ pct)
         *"ghrm secret set"*) cat >/dev/null; echo "$vmid ${line##* }" >>"$S/ct_secrets" ;;
         *"ghrm version") has ct_files "$vmid /usr/local/bin/ghrm" || exit 127; cat "$S/ct_version_$vmid" 2>/dev/null || echo "ghrm v0.0.0 (old)" ;;
         *"cat /var/lib/ghrm/setup-token") echo setup-token-xyz ;;
-        *"bash -s") cat >/dev/null ;;
+        *"bash -s") cat >/dev/null; echo "E: Unable to locate package libicu80" >&2; [ -z "${FAKE_PROVISION_FAIL:-}" ] || { echo "E: provisioning broke" >&2; exit 1; } ;;
         *"ip -4 -o addr"*) echo 192.0.2.20 ;;
       esac ;;
   esac ;;
