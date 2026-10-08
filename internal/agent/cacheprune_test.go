@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,11 +37,11 @@ func newPrune(t *testing.T, budget int64) *pruneHarness {
 	h := &pruneHarness{root: t.TempDir()}
 	h.prune = CachePrune{Root: h.root, BudgetBytes: budget, HighPercent: 85, LowPercent: 70,
 		Instances:  map[string]string{"docker.io": "/etc/ghrm-cache/docker.io.yml", "ghcr.io": "/etc/ghrm-cache/ghcr.io.yml"},
-		StatusPath: filepath.Join(h.root, "status"),
+		StatusPath: filepath.Join(h.root, "status"), Registry: "/usr/local/bin/registry",
 		Run: func(_ context.Context, name string, args ...string) error {
 			h.cmds = append(h.cmds, name+" "+strings.Join(args, " "))
 			// Garbage collection frees the blobs of deleted repositories.
-			if name == "registry" {
+			if name == h.prune.Registry {
 				_ = os.RemoveAll(filepath.Join(h.root, "docker.io/docker/registry/v2/blobs/sha256/old-data"))
 			}
 			return nil
@@ -76,9 +77,31 @@ func TestPruneEvictsLeastRecentlyUsedFirstAndCollectsGarbage(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(h.root, "ghcr.io/docker/registry/v2/repositories/recent")); err != nil {
 		t.Fatal("the recent repository must stay (usage is now below the low mark)")
 	}
-	want := []string{"systemctl stop ghrm-cache-registry@docker.io", "registry garbage-collect --delete-untagged /etc/ghrm-cache/docker.io.yml", "systemctl start ghrm-cache-registry@docker.io"}
+	want := []string{"systemctl stop ghrm-cache-registry@docker.io", "/usr/local/bin/registry garbage-collect --delete-untagged /etc/ghrm-cache/docker.io.yml", "systemctl start ghrm-cache-registry@docker.io"}
 	if strings.Join(h.cmds, "|") != strings.Join(want, "|") {
 		t.Fatalf("commands = %v, want %v (only the touched instance)", h.cmds, want)
+	}
+}
+
+func TestPruneRecordsTheUsageWhenGarbageCollectionFails(t *testing.T) {
+	h := newPrune(t, 1000)
+	repo(t, h.root, "docker.io", "old", 600, time.Now().Add(-72*time.Hour))
+	repo(t, h.root, "ghcr.io", "recent", 300, time.Now())
+	h.prune.Run = func(_ context.Context, name string, args ...string) error {
+		h.cmds = append(h.cmds, name+" "+strings.Join(args, " "))
+		if name == h.prune.Registry {
+			return errors.New("garbage-collect failed")
+		}
+		return nil
+	}
+	if err := h.prune.Once(context.Background()); err == nil {
+		t.Fatal("a failed garbage collection must be reported")
+	}
+	if h.cmds[len(h.cmds)-1] != "systemctl start ghrm-cache-registry@docker.io" {
+		t.Fatalf("commands = %v; the instance must be started again", h.cmds)
+	}
+	if b, _ := os.ReadFile(h.prune.StatusPath); !strings.Contains(string(b), "used_bytes ") {
+		t.Fatalf("status = %q; the usage must still be recorded for the exporter", b)
 	}
 }
 

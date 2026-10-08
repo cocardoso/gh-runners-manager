@@ -104,7 +104,8 @@ type fakeCache struct{ s cachemon.Status }
 func (f fakeCache) Status() cachemon.Status { return f.s }
 
 func TestCacheEndpointAndAlert(t *testing.T) {
-	down := cachemon.Status{Enabled: true, Address: "10.50.0.3", Up: false, CheckedAt: time.Now(),
+	since := time.Date(2026, 10, 8, 1, 36, 22, 0, time.UTC)
+	down := cachemon.Status{Enabled: true, Address: "10.50.0.3", Up: false, CheckedAt: time.Now(), DownSince: since,
 		Origins: []cachemon.OriginStatus{{Origin: "docker.io", Error: "connection refused"}}}
 	h := newHarnessWith(t, "", func(d *Deps) { d.Cache = fakeCache{down} })
 	tok := map[string]string{"Authorization": "Bearer " + harnessToken}
@@ -113,8 +114,8 @@ func TestCacheEndpointAndAlert(t *testing.T) {
 		t.Fatalf("cache = %s", b)
 	}
 	_, b = h.call(t, "GET", "/api/v1/overview", nil, tok)
-	if !strings.Contains(string(b), `"kind":"cache_down"`) {
-		t.Fatalf("overview lacks the cache alert: %s", b)
+	if !strings.Contains(string(b), `"kind":"cache_down"`) || !strings.Contains(string(b), `"time":"2026-10-08T01:36:22Z"`) {
+		t.Fatalf("overview lacks the cache alert, dated when the cache went down: %s", b)
 	}
 	none := newHarness(t, "")
 	_, b = none.call(t, "GET", "/api/v1/cache", nil, tok)

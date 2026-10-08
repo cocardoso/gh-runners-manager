@@ -933,6 +933,8 @@ export interface components {
             disk_budget_bytes: number;
             /** Format: int64 */
             disk_used_bytes: number;
+            /** Format: date-time */
+            down_since?: string;
             enabled: boolean;
             origins: components["schemas"]["OriginStatus"][] | null;
             up: boolean;

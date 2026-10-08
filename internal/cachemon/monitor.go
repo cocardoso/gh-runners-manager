@@ -42,6 +42,7 @@ type Status struct {
 	DiskUsed   int64          `json:"disk_used_bytes"`
 	DiskBudget int64          `json:"disk_budget_bytes"`
 	CheckedAt  time.Time      `json:"checked_at"`
+	DownSince  time.Time      `json:"down_since,omitzero"` // first check that found it down
 }
 
 // Monitor polls the cache.
@@ -136,12 +137,19 @@ func (m *Monitor) Poll(ctx context.Context) {
 	if !m.Cache.Enabled() {
 		return
 	}
-	s := Status{Up: true, CheckedAt: m.now()}
-	for _, origin := range config.CacheOrigins {
+	m.mu.Lock()
+	prev := m.status
+	m.mu.Unlock()
+	s := Status{Up: true, CheckedAt: m.now(), DiskUsed: prev.DiskUsed, DiskBudget: prev.DiskBudget}
+	for i, origin := range config.CacheOrigins {
 		o := OriginStatus{Origin: origin}
 		got, err := m.metrics(ctx, m.Cache.MetricsPorts[origin])
 		if err != nil {
-			o.Error = err.Error()
+			// The last counters stay: dropping to zero would read as a counter reset.
+			if i < len(prev.Origins) {
+				o = prev.Origins[i]
+			}
+			o.Up, o.Error = false, err.Error()
 			s.Up = false
 		} else {
 			o.Up = true
@@ -158,6 +166,12 @@ func (m *Monitor) Poll(ctx context.Context) {
 
 	m.mu.Lock()
 	wasUp, seen := m.status.Up, m.seen
+	if !s.Up {
+		s.DownSince = s.CheckedAt
+		if seen && !wasUp {
+			s.DownSince = m.status.DownSince
+		}
+	}
 	m.status, m.seen = s, true
 	m.mu.Unlock()
 	if m.Recorder == nil || (seen && wasUp == s.Up) {

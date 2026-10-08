@@ -11,7 +11,8 @@ func TestCachePruneFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	if p.Root != "/var/lib/ghrm-cache" || p.BudgetBytes != 100<<30 || p.HighPercent != 85 || p.LowPercent != 70 ||
-		len(p.Instances) != 2 || p.Instances["quay.io"] != "/etc/ghrm-cache/quay.io.yml" || p.StatusPath != "/var/lib/ghrm-cache/status" {
+		len(p.Instances) != 2 || p.Instances["quay.io"] != "/etc/ghrm-cache/quay.io.yml" || p.StatusPath != "/var/lib/ghrm-cache/status" ||
+		p.Registry != "/usr/local/bin/registry" {
 		t.Fatalf("prune = %+v", p)
 	}
 	if _, err := cachePruneFromArgs([]string{"--instance", "bad"}); err == nil {

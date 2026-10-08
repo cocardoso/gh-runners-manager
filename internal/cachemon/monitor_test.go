@@ -94,6 +94,28 @@ func TestMonitorRecordsDownAndUp(t *testing.T) {
 	}
 }
 
+func TestMonitorKeepsTheLastCountersWhileDown(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	at := time.Date(2026, 10, 8, 1, 0, 0, 0, time.UTC)
+	h.m.Now = func() time.Time { return at }
+	h.m.Poll(ctx)
+	h.reg.Close()
+	at = at.Add(30 * time.Second)
+	wentDown := at
+	h.m.Poll(ctx)
+	at = at.Add(30 * time.Second)
+	h.m.Poll(ctx)
+	s := h.m.Status()
+	// Counters going to zero would read as a counter reset in Prometheus.
+	if o := s.Origins[0]; o.Up || o.BlobHits != 1 || o.BlobMisses != 1 || o.ServedBytes != 4452326 {
+		t.Fatalf("docker.io while down = %+v; want the last counters kept", o)
+	}
+	if !s.DownSince.Equal(wentDown) || !s.CheckedAt.Equal(at) {
+		t.Fatalf("down since %v (want %v), checked at %v", s.DownSince, wentDown, s.CheckedAt)
+	}
+}
+
 func TestDisabledCacheIsNotPolled(t *testing.T) {
 	m := &Monitor{}
 	m.Poll(context.Background())

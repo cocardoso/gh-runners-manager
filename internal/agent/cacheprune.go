@@ -23,6 +23,7 @@ type CachePrune struct {
 	LowPercent  int               // until below this share
 	Instances   map[string]string // origin -> registry configuration file
 	StatusPath  string            // where used and budget bytes are written for the exporter
+	Registry    string            // the registry binary, by absolute path (pct exec has a short PATH)
 	// Run executes a command (systemctl, registry); exec when nil.
 	Run func(ctx context.Context, name string, args ...string) error
 }
@@ -136,11 +137,15 @@ func (p *CachePrune) Once(ctx context.Context) error {
 			if err := p.run(ctx, "systemctl", "stop", unit); err != nil {
 				return err
 			}
-			gcErr := p.run(ctx, "registry", "garbage-collect", "--delete-untagged", p.Instances[r.origin])
+			gcErr := p.run(ctx, p.Registry, "garbage-collect", "--delete-untagged", p.Instances[r.origin])
 			if err := p.run(ctx, "systemctl", "start", unit); err != nil {
 				return err
 			}
 			if gcErr != nil {
+				// What was deleted is gone; the exporter still gets the current usage.
+				if used, err := p.usage(); err == nil {
+					_ = p.writeStatus(used)
+				}
 				return gcErr
 			}
 			if used, err = p.usage(); err != nil {

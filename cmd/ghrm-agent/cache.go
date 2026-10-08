@@ -34,6 +34,7 @@ func cachePruneFromArgs(args []string) (agent.CachePrune, error) {
 	high := fs.Int("high", 85, "prune above this percent of the budget")
 	low := fs.Int("low", 70, "until below this percent")
 	status := fs.String("status", "", "status file for the exporter (default <root>/status)")
+	registry := fs.String("registry", "/usr/local/bin/registry", "the registry binary")
 	inst := instanceFlags{}
 	fs.Var(inst, "instance", "origin=registry configuration (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -45,7 +46,7 @@ func cachePruneFromArgs(args []string) (agent.CachePrune, error) {
 	if *status == "" {
 		*status = filepath.Join(*root, "status")
 	}
-	return agent.CachePrune{Root: *root, BudgetBytes: *budget << 30, HighPercent: *high, LowPercent: *low, Instances: inst, StatusPath: *status}, nil
+	return agent.CachePrune{Root: *root, BudgetBytes: *budget << 30, HighPercent: *high, LowPercent: *low, Instances: inst, StatusPath: *status, Registry: *registry}, nil
 }
 
 // cacheCommand runs "cache-prune" or "cache-exporter" on the registry cache container.
