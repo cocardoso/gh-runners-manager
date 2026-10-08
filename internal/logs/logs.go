@@ -375,3 +375,11 @@ func (s *Store) Follow(ctx context.Context, envID, stream string, offset int64) 
 	}()
 	return ch
 }
+
+// RemoveEnvironment deletes the log files of an environment (a missing directory is fine).
+func (s *Store) RemoveEnvironment(envID string) error {
+	if err := validate(envID, Streams[0]); err != nil {
+		return err
+	}
+	return os.RemoveAll(filepath.Join(s.dir, envID))
+}
