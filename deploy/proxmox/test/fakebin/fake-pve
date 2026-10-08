@@ -145,7 +145,7 @@ pct)
         *"ghrm secret set"*) cat >/dev/null; echo "$vmid ${line##* }" >>"$S/ct_secrets" ;;
         *"ghrm version") has ct_files "$vmid /usr/local/bin/ghrm" || exit 127; cat "$S/ct_version_$vmid" 2>/dev/null || echo "ghrm v0.0.0 (old)" ;;
         *"cat /var/lib/ghrm/setup-token") echo setup-token-xyz ;;
-        "bash -s") cat >/dev/null ;;
+        *"bash -s") cat >/dev/null ;;
         *"ip -4 -o addr"*) echo 192.0.2.20 ;;
       esac ;;
   esac ;;

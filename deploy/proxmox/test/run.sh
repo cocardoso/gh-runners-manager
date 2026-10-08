@@ -194,7 +194,7 @@ test_cache_is_created() {
   ct_file 102 /etc/systemd/system/ghrm-cache-registry@.service | grep -q 'registry serve /etc/ghrm-cache/%i.yml' || fail "registry unit"
   ct_file 102 /etc/systemd/system/ghrm-cache-prune.service | grep -q 'cache-prune --root /var/lib/ghrm-cache --budget-gb 90' || fail "prune unit (90% of the disk)"
   ct_file 102 /etc/systemd/system/ghrm-cache-exporter.service | grep -q 'cache-exporter --listen :5199' || fail "exporter unit"
-  ct_file 102 /usr/local/bin/registry | grep -q 'v3.1.2' || fail "registry binary"
+  ct_file 102 /usr/local/bin/registry | grep -q '3.1.2' || fail "registry binary"
   ct_file 100 /etc/ghrm/ghrm.yaml | grep -q '^  address: 10.50.0.3' || fail "control plane configuration lacks the cache"
   grep -qx 10.50.0.3 "$FAKE_STATE/group_ghrm-job" || fail "security group lacks the cache rule"
   last_two=$(grep 'pvesh create /cluster/firewall/groups/ghrm-job' "$FAKE_LOG" | tail -n 2 | head -n 1)

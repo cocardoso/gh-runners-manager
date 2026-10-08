@@ -395,7 +395,7 @@ control_plane() {
   if [ -n "$LAN_GW" ]; then net0="$net0,gw=$LAN_GW"; fi
   run pct create "$CT_VMID" "$image" --hostname ghrm --unprivileged 1 --features nesting=1 --cores 1 --memory 2048 --swap 512 \
     --rootfs "$ROOTFS_STORAGE:16" --net0 "$net0" --net1 "name=eth1,bridge=$VNET,ip=$INGEST_IP/24" \
-    --onboot 1 --tags ghrm-control-plane --description "gh-runners-manager control plane"
+    --onboot 1 --tags ghrm-control-plane --description "gh-runners-manager control plane" >/dev/null
   run pct start "$CT_VMID"
   created "container $CT_VMID (Debian 13, 1 vCPU, 2 GiB; LAN on $LAN_BRIDGE, ingest $INGEST_IP on $VNET)"
 }
@@ -498,7 +498,7 @@ install_ghrm() {
   if [ -n "$want" ] && [ "$want" = "$have" ]; then
     exists "ghrm $want (current)"
   else
-    pct exec "$CT_VMID" -- sh -c 'command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null)'
+    pct exec "$CT_VMID" -- env LC_ALL=C DEBIAN_FRONTEND=noninteractive sh -c 'command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null 2>&1)'
     pct exec "$CT_VMID" -- mkdir -p /etc/ghrm /var/lib/ghrm
     pct exec "$CT_VMID" -- sh -c 'systemctl stop ghrm 2>/dev/null || true'
     pct push "$CT_VMID" "$tmp/ghrm" /usr/local/bin/ghrm --perms 0755
@@ -603,7 +603,7 @@ cache() {
     image=$(os_image 'debian-13-standard')
     run pct create "$CACHE_VMID" "$image" --hostname ghrm-cache --unprivileged 1 --features nesting=1 --cores 1 --memory 512 --swap 0 \
       --rootfs "$ROOTFS_STORAGE:$CACHE_DISK_GB" --net0 "name=eth0,bridge=$VNET,ip=$CACHE_IP/24,gw=$GATEWAY" --nameserver "$DNS" \
-      --onboot 1 --tags ghrm-cache --description "gh-runners-manager registry cache"
+      --onboot 1 --tags ghrm-cache --description "gh-runners-manager registry cache" >/dev/null
     run pct start "$CACHE_VMID"
     created "container $CACHE_VMID (registry cache on $CACHE_IP, $CACHE_DISK_GB GB)"
   fi
@@ -615,7 +615,8 @@ cache() {
   local tmp changed="" entry origin url port metrics i=0
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' RETURN
-  if ! pct exec "$CACHE_VMID" -- /usr/local/bin/registry --version 2>/dev/null | grep -q "v$REGISTRY_VERSION"; then
+  # "registry github.com/distribution/distribution/v3 3.1.2": the last word is the version.
+  if [ "$(pct exec "$CACHE_VMID" -- /usr/local/bin/registry --version 2>/dev/null | awk '{print $NF}')" != "$REGISTRY_VERSION" ]; then
     curl -fsSL -o "$tmp/registry.tar.gz" \
       "https://github.com/distribution/distribution/releases/download/v$REGISTRY_VERSION/registry_${REGISTRY_VERSION}_linux_amd64.tar.gz"
     echo "$REGISTRY_SHA256  $tmp/registry.tar.gz" | sha256sum -c --quiet - || die "the registry download does not match its SHA-256"
@@ -770,7 +771,7 @@ bootstrap_template() {
   image=$(os_image 'ubuntu-24.04-standard')
   run pct create "$TEMPLATE_VMID" "$image" --hostname ghrm-template --unprivileged 1 --features nesting=1 --cores 2 --memory 2048 \
     --rootfs "$ROOTFS_STORAGE:8" --net0 "name=eth0,bridge=$VNET,ip=dhcp,firewall=1" --nameserver "$DNS" --ostype ubuntu --pool "$POOL" \
-    --tags ghrm-template-building
+    --tags ghrm-template-building >/dev/null
   run pvesh set "/nodes/$NODE/lxc/$TEMPLATE_VMID/firewall/options" --enable 1
   run pvesh create "/nodes/$NODE/lxc/$TEMPLATE_VMID/firewall/rules" --type group --action "$SECURITY_GROUP" --enable 1
   if [ "$DRY_RUN" = 1 ]; then
@@ -788,7 +789,7 @@ bootstrap_template() {
   printf '%s\n' "$GHRM_AGENT_SERVICE" >"$tmp/ghrm-agent.service"
   pct push "$TEMPLATE_VMID" "$tmp/ghrm-agent" /usr/local/bin/ghrm-agent --perms 0755
   pct push "$TEMPLATE_VMID" "$tmp/ghrm-agent.service" /etc/systemd/system/ghrm-agent.service --perms 0644
-  printf '%s\n' "$PROVISION" | pct exec "$TEMPLATE_VMID" -- bash -s
+  printf '%s\n' "$PROVISION" | pct exec "$TEMPLATE_VMID" -- env LC_ALL=C bash -s
   pct shutdown "$TEMPLATE_VMID" --timeout 60
   pct template "$TEMPLATE_VMID"
   pct set "$TEMPLATE_VMID" --tags ghrm-template
