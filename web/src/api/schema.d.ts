@@ -698,6 +698,11 @@ export interface components {
             id: string;
             ip?: string;
             job_id?: string;
+            /**
+             * @description job (empty in older records), or a template build or self-test
+             * @enum {string}
+             */
+            kind?: "job" | "build" | "verify" | "";
             log_streams?: components["schemas"]["LogStream"][] | null;
             /** Format: int64 */
             memory_mb: number;
@@ -857,7 +862,17 @@ export interface components {
             /** Format: int64 */
             jobs_24h: number;
             /** Format: double */
+            median_duration_seconds_24h: number;
+            /** Format: double */
             median_queue_seconds_24h: number;
+            /** Format: date-time */
+            oldest_queued_at?: string;
+            /** Format: int64 */
+            preparing_runners: number;
+            /** Format: int64 */
+            queued_jobs: number;
+            /** Format: int64 */
+            ready_runners: number;
             /** Format: int64 */
             running_jobs: number;
             /** Format: double */

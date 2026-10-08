@@ -36,7 +36,7 @@ export function scaleSet(over: Partial<ScaleSet> = {}): ScaleSet {
 }
 
 export const emptyOverview: Overview = {
-  kpis: { running_jobs: 0, waiting_demand: 0, jobs_24h: 0, success_rate_24h: 0, median_queue_seconds_24h: 0 },
+  kpis: { running_jobs: 0, waiting_demand: 0, jobs_24h: 0, success_rate_24h: 0, median_queue_seconds_24h: 0, median_duration_seconds_24h: 0, queued_jobs: 0, preparing_runners: 0, ready_runners: 0 },
   capacity: {
     environments_live: 0,
     environments_max: 6,

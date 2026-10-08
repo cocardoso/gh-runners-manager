@@ -373,6 +373,12 @@ func TestOverviewAndStats(t *testing.T) {
 	_ = h.db.UpsertJob(ctx, store.Job{ID: "j1", ScaleSet: "lab", Status: "completed", Result: "succeeded", QueuedAt: now.Add(-10 * time.Minute), StartedAt: now.Add(-9 * time.Minute), FinishedAt: now.Add(-5 * time.Minute)})
 	_ = h.db.UpsertJob(ctx, store.Job{ID: "j2", ScaleSet: "lab", Status: "completed", Result: "failed", QueuedAt: now.Add(-4 * time.Minute), StartedAt: now.Add(-3 * time.Minute), FinishedAt: now.Add(-time.Minute)})
 	_ = h.db.UpsertJob(ctx, store.Job{ID: "j3", ScaleSet: "lab", Status: "running", QueuedAt: now.Add(-time.Minute), StartedAt: now})
+	oldest := now.Add(-90 * time.Second).Truncate(time.Millisecond)
+	_ = h.db.UpsertJob(ctx, store.Job{ID: "q1", ScaleSet: "lab", Status: "assigned", QueuedAt: oldest})
+	_ = h.db.UpsertJob(ctx, store.Job{ID: "q2", ScaleSet: "lab", Status: "assigned", QueuedAt: now.Add(-10 * time.Second)})
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "e3", ScaleSet: "lab", State: "booting", MemoryMB: 2048})
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "e4", ScaleSet: "lab", State: "idle", MemoryMB: 2048})
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "b1", ScaleSet: "", State: "connected", Kind: store.KindBuild, MemoryMB: 8192})
 	var ov map[string]any
 	if code := h.getJSON(t, "/api/v1/overview", &ov); code != 200 {
 		t.Fatalf("overview = %d", code)
@@ -381,8 +387,15 @@ func TestOverviewAndStats(t *testing.T) {
 	if k["running_jobs"] != 1.0 || k["jobs_24h"] != 2.0 || k["success_rate_24h"] != 0.5 || k["median_queue_seconds_24h"] != 60.0 {
 		t.Fatalf("kpis = %+v", k)
 	}
+	// Durations 4 and 2 minutes: the median is 3. A build environment is no runner.
+	if k["median_duration_seconds_24h"] != 180.0 || k["queued_jobs"] != 2.0 || k["preparing_runners"] != 1.0 || k["ready_runners"] != 1.0 {
+		t.Fatalf("live kpis = %+v", k)
+	}
+	if at, _ := time.Parse(time.RFC3339Nano, k["oldest_queued_at"].(string)); !at.Equal(oldest) {
+		t.Fatalf("oldest_queued_at = %v, want %v", k["oldest_queued_at"], oldest)
+	}
 	c := ov["capacity"].(map[string]any)
-	if c["environments_live"] != 1.0 || c["memory_committed_mb"] != 2048.0 {
+	if c["environments_live"] != 4.0 || c["memory_committed_mb"] != 14336.0 {
 		t.Fatalf("capacity = %+v", c)
 	}
 	if alerts, _ := ov["alerts"].([]any); len(alerts) == 0 {
