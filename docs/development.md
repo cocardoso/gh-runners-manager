@@ -94,7 +94,7 @@ Useful API calls (with the admin token from `/etc/ghrm/admin-token`):
 
 With `cache.address` set (the installer sets it up and creates the container), job environments pull Docker Hub, GHCR, MCR and Quay images through a pull-through cache on the job network (`<subnet>.3`), with unchanged workflows. The cache is an unprivileged Debian container (`ghrm-cache`, not in the ghrm pool) running one CNCF Distribution proxy per registry on ports 5000–5003, their metrics on 5100–5103 and `ghrm-agent cache-exporter` on 5199; jobs can reach only 5000–5003.
 
-- Disk: `install.sh --cache-disk-gb N` (default 100). Eviction keeps the cache under 90 % of it: above 85 % of that budget the least recently used repositories are deleted and the registry's garbage collection runs (`ghrm-cache-prune.timer`, every 15 minutes).
+- Disk: `install.sh --cache-disk-gb N` (default 100). Eviction keeps the cache under 90 % of it: above 85 % of that budget the least recently used repositories are deleted and the registry's garbage collection runs (`ghrm-cache-prune.timer`, every 15 minutes) until usage is below 70 % of the budget. Each eviction is logged (`journalctl -u ghrm-cache-prune` in the cache container); the disk use shown in Settings is the one the last run measured.
 - Docker Hub limits anonymous pulls per address, and every job leaves through the same address. `install.sh --dockerhub-user NAME` (access token on standard input) configures an account in the cache only.
 - Tags are checked with the registry on every pull; a cached tag is served only when the registry cannot be reached.
 - Settings shows the cache (each registry, the share served from the cache, disk use); the overview alerts while it does not answer, and jobs then pull from the registries directly.
