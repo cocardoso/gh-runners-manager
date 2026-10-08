@@ -14,6 +14,7 @@ import { JobStatusBadge, toneFor } from "@/components/status-badge";
 import { Timeline } from "@/components/timeline";
 import { buildTimeline } from "@/lib/timeline";
 import { durationBetween, formatDuration } from "@/lib/format";
+import { useT } from "@/i18n";
 import type { LogStreamName } from "@/lib/use-log-stream";
 import type { DetailSearch } from "@/router";
 import { JobDuration } from "./jobs";
@@ -21,11 +22,12 @@ import { JobDuration } from "./jobs";
 const STREAMS: LogStreamName[] = ["job", "runner", "agent", "control-plane", "runtime"];
 
 function sentence(s: string) {
-  const t = s.charAt(0).toUpperCase() + s.slice(1);
-  return /[.!?]$/.test(t) ? t : `${t}.`;
+  const text = s.charAt(0).toUpperCase() + s.slice(1);
+  return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
 function Steps({ details, loading, error, onOpen }: { details?: JobDetails; loading: boolean; error: unknown; onOpen: (name: string) => void }) {
+  const t = useT();
   if (loading) return <Loading />;
   if (error) return <ErrorState error={error} />;
   if (!details?.available)
@@ -33,33 +35,33 @@ function Steps({ details, loading, error, onOpen }: { details?: JobDetails; load
       <Banner
         variant="secondary"
         icon={<LockKeyIcon weight="fill" />}
-        title="Steps are not available"
-        description={sentence(details?.reason || "GitHub did not return this job")}
+        title={t("overview.job.steps.unavailable")}
+        description={sentence(details?.reason || t("overview.job.steps.notReturned"))}
       />
     );
   const steps = details.steps ?? [];
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between">
-        <span>Steps</span>
+        <span>{t("overview.job.steps.title")}</span>
         {details.url && (
           <LinkButton href={details.url} external variant="ghost" size="sm" icon={ArrowSquareOutIcon}>
-            View on GitHub
+            {t("overview.job.steps.viewOnGitHub")}
           </LinkButton>
         )}
       </LayerCard.Secondary>
       <LayerCard.Primary className="p-0">
         {steps.length === 0 ? (
-          <p className="p-4 text-sm text-kumo-subtle">GitHub has not reported any step yet.</p>
+          <p className="p-4 text-sm text-kumo-subtle">{t("overview.job.steps.none")}</p>
         ) : (
           <div className="overflow-x-auto">
             <Table>
               <Table.Header>
                 <Table.Row>
                   <Table.Head>#</Table.Head>
-                  <Table.Head>Step</Table.Head>
-                  <Table.Head>Result</Table.Head>
-                  <Table.Head>Duration</Table.Head>
+                  <Table.Head>{t("overview.job.steps.step")}</Table.Head>
+                  <Table.Head>{t("overview.job.steps.result")}</Table.Head>
+                  <Table.Head>{t("overview.job.steps.duration")}</Table.Head>
                 </Table.Row>
               </Table.Header>
               <Table.Body>
@@ -89,12 +91,13 @@ function Steps({ details, loading, error, onOpen }: { details?: JobDetails; load
 }
 
 function Summary({ job, now }: { job: Job; now: Date }) {
+  const t = useT();
   const items: [string, React.ReactNode][] = [
-    ["Status", <JobStatusBadge key="s" status={job.status} result={job.result} />],
-    ["Repository", job.repository],
-    ["Scale set", job.scale_set],
-    ["Queued", <RelativeTime key="q" value={job.queued_at} />],
-    ["Duration", <JobDuration key="d" job={job} now={now} />],
+    [t("overview.jobs.columns.status"), <JobStatusBadge key="s" status={job.status} result={job.result} />],
+    [t("overview.jobs.columns.repository"), job.repository],
+    [t("overview.jobs.columns.scaleSet"), job.scale_set],
+    [t("overview.jobs.columns.queued"), <RelativeTime key="q" value={job.queued_at} />],
+    [t("overview.jobs.columns.duration"), <JobDuration key="d" job={job} now={now} />],
   ];
   return (
     <dl className="flex flex-wrap gap-x-8 gap-y-2">
@@ -118,6 +121,7 @@ export function JobDetailPage() {
   const { id } = useParams({ strict: false }) as { id: string };
   const { tab = "timeline" } = useSearch({ strict: false }) as DetailSearch;
   const navigate = useNavigate();
+  const t = useT();
   const now = useNow();
   const job = useJob(id);
   const envId = job.data?.environment_id || undefined;
@@ -132,30 +136,36 @@ export function JobDetailPage() {
     [job.data, environment.data, jobEvents.data, envEvents.data, now],
   );
 
-  if (job.isLoading) return <Page title="Job" crumbs={[{ label: "Jobs", href: "/jobs" }]}><Loading /></Page>;
+  const crumbs = [{ label: t("overview.jobs.title"), href: "/jobs" }];
+  if (job.isLoading) return <Page title={t("overview.job.title")} crumbs={crumbs}><Loading /></Page>;
   if (job.error instanceof ApiError && job.error.status === 404)
     return (
-      <Page title="Job" crumbs={[{ label: "Jobs", href: "/jobs" }]}>
-        <Empty icon={<QuestionIcon size={48} className="text-kumo-inactive" />} title="Job not found" description={`No job has the id ${id}.`} contents={<Link href="/jobs">Back to jobs</Link>} />
+      <Page title={t("overview.job.title")} crumbs={crumbs}>
+        <Empty
+          icon={<QuestionIcon size={48} className="text-kumo-inactive" />}
+          title={t("overview.job.notFound.title")}
+          description={t("overview.job.notFound.description", { id })}
+          contents={<Link href="/jobs">{t("overview.job.notFound.back")}</Link>}
+        />
       </Page>
     );
-  if (job.error || !job.data) return <Page title="Job" crumbs={[{ label: "Jobs", href: "/jobs" }]}><ErrorState error={job.error} /></Page>;
+  if (job.error || !job.data) return <Page title={t("overview.job.title")} crumbs={crumbs}><ErrorState error={job.error} /></Page>;
 
   const j = job.data;
   const env = environment.data;
   const live = !!env && env.state !== "destroyed";
   const tabs = [
-    { value: "timeline", label: "Timeline" },
-    { value: "steps", label: "Steps" },
-    { value: "logs", label: "Logs" },
-    { value: "resources", label: "Resources" },
-    { value: "environment", label: "Environment" },
+    { value: "timeline", label: t("overview.job.tabs.timeline") },
+    { value: "steps", label: t("overview.job.tabs.steps") },
+    { value: "logs", label: t("overview.job.tabs.logs") },
+    { value: "resources", label: t("overview.job.tabs.resources") },
+    { value: "environment", label: t("overview.job.tabs.environment") },
   ];
 
   return (
-    <Page title={j.display_name || j.id} description={j.workflow_ref} crumbs={[{ label: "Jobs", href: "/jobs" }]}>
+    <Page title={j.display_name || j.id} description={j.workflow_ref} crumbs={crumbs}>
       <Summary job={j} now={now} />
-      <DetailTabs tabs={tabs} value={tabs.some((t) => t.value === tab) ? tab : "timeline"} />
+      <DetailTabs tabs={tabs} value={tabs.some((x) => x.value === tab) ? tab : "timeline"} />
       {tab === "steps" ? (
         <Steps
           details={github.data}
@@ -170,15 +180,15 @@ export function JobDetailPage() {
         envId ? (
           <LiveLog key={logSearch} envId={envId} streams={STREAMS} defaultStream="job" live={live} initialSearch={logSearch} />
         ) : (
-          <p className="text-sm text-kumo-subtle">This job has no environment yet, so there are no logs.</p>
+          <p className="text-sm text-kumo-subtle">{t("overview.job.noLogs")}</p>
         )
       ) : tab === "resources" ? (
-        envId ? <ResourcesPanel envId={envId} live={live} memoryLimitMB={env?.memory_mb} /> : <p className="text-sm text-kumo-subtle">No environment yet.</p>
+        envId ? <ResourcesPanel envId={envId} live={live} memoryLimitMB={env?.memory_mb} /> : <p className="text-sm text-kumo-subtle">{t("overview.job.noEnvironment")}</p>
       ) : tab === "environment" ? (
-        env ? <EnvironmentPanel environment={env} jobLink={false} /> : <p className="text-sm text-kumo-subtle">No environment was assigned to this job yet.</p>
+        env ? <EnvironmentPanel environment={env} jobLink={false} /> : <p className="text-sm text-kumo-subtle">{t("overview.job.noEnvironmentAssigned")}</p>
       ) : (
         <LayerCard>
-          <LayerCard.Secondary>Lifecycle</LayerCard.Secondary>
+          <LayerCard.Secondary>{t("overview.job.lifecycle")}</LayerCard.Secondary>
           <LayerCard.Primary>
             <Timeline stages={stages} />
           </LayerCard.Primary>

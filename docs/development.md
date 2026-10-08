@@ -113,6 +113,14 @@ With `cache.address` set (the installer sets it up and creates the container), j
 - To disable it, remove the `cache:` section (templates are rebuilt without the mirror settings), or install with `--no-cache`.
 - What is not cached: GitHub's Actions cache (`actions/cache`, `setup-node`'s `cache:`, BuildKit `type=gha`) and package registries (npm, PyPI, apt).
 
+## UI languages
+
+The interface text lives in `web/src/i18n/areas/<area>.ts`, one file per area of the UI with every language in it; English is the source, and TypeScript fails when another language misses or adds a key. Components use `useT()` (or `tr()` outside React), and dates and numbers go through `Intl` in the chosen language. Text that comes from the server (events, failure reasons, logs, API errors) is shown as it is. The browser's language decides (`pt*`, `es*`, `fr*`, `it*`, otherwise English) until someone picks one in the language menu, which this browser remembers.
+
+- `pnpm lint` reports English written straight into JSX (`eslint-rules/no-jsx-literals.js`; product names and code examples are listed in `eslint.config.js`).
+- `src/i18n/parity.test.ts` checks that every language has every key, with the same `{parameters}`, and no sentence left in English.
+- Adding a language: add it to `web/src/i18n/locales.ts` (with its name in its own language), add its block to every area file, and run the tests.
+
 ## Docker
 
 `docker build -t ghrm .` builds the control plane image (the web UI embedded, plus `ghrm-agent` for template builds; distroless, non-root). `deploy/docker/compose.yaml` runs it against a remote Proxmox host: put `ghrm.yaml` next to it with `data_dir: /var/lib/ghrm`, `listen: 0.0.0.0:8080`, `ingest.listen: 0.0.0.0:8443`, and an `ingest.advertise_url` that job environments can reach (allow it in the job security group), then store the secrets with `docker compose run --rm ghrm secret set proxmox/token-secret` and start it with `docker compose up -d`.

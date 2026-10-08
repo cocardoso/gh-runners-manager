@@ -1,4 +1,6 @@
 import { Badge } from "@cloudflare/kumo";
+import { tr, type Key } from "@/i18n";
+import { en } from "@/i18n/en";
 
 export type Tone = "success" | "error" | "warning" | "info" | "neutral";
 
@@ -35,6 +37,11 @@ export function toneFor(kind: keyof typeof tones, value: string | undefined): To
   return (value && tones[kind]?.[value]) || "neutral";
 }
 
+/** A state, status, result or level in the language in use; values the UI does not know show raw. */
+export function stateLabel(value: string): string {
+  return Object.hasOwn(en.shell.state, value) ? tr(`shell.state.${value}` as Key) : value;
+}
+
 function ToneBadge({ tone, children }: { tone: Tone; children: string }) {
   return (
     // Kumo draws a status dot for success, warning, error and neutral; info is a filled badge.
@@ -45,18 +52,18 @@ function ToneBadge({ tone, children }: { tone: Tone; children: string }) {
 }
 
 export function EnvironmentStateBadge({ state }: { state: string }) {
-  return <ToneBadge tone={toneFor("environment", state)}>{state || "unknown"}</ToneBadge>;
+  return <ToneBadge tone={toneFor("environment", state)}>{stateLabel(state || "unknown")}</ToneBadge>;
 }
 
 export function JobStatusBadge({ status, result }: { status: string; result?: string }) {
-  if (status === "completed" && result) return <ToneBadge tone={toneFor("result", result)}>{result}</ToneBadge>;
-  return <ToneBadge tone={toneFor("job", status)}>{status || "unknown"}</ToneBadge>;
+  if (status === "completed" && result) return <ToneBadge tone={toneFor("result", result)}>{stateLabel(result)}</ToneBadge>;
+  return <ToneBadge tone={toneFor("job", status)}>{stateLabel(status || "unknown")}</ToneBadge>;
 }
 
 export function LevelBadge({ level }: { level: string }) {
-  return <ToneBadge tone={toneFor("level", level)}>{level || "info"}</ToneBadge>;
+  return <ToneBadge tone={toneFor("level", level)}>{stateLabel(level || "info")}</ToneBadge>;
 }
 
 export function TemplateStateBadge({ state }: { state: string }) {
-  return <ToneBadge tone={toneFor("template", state)}>{state || "unknown"}</ToneBadge>;
+  return <ToneBadge tone={toneFor("template", state)}>{stateLabel(state || "unknown")}</ToneBadge>;
 }

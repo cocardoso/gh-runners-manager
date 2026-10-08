@@ -3,6 +3,8 @@ import { useVirtualizer, type Rect } from "@tanstack/react-virtual";
 import { Button, cn } from "@cloudflare/kumo";
 import { ArrowDownIcon, ArrowUpIcon } from "@phosphor-icons/react";
 import type { LogEntry } from "@/api/client";
+import { tr } from "@/i18n";
+import { formatNumber } from "@/lib/format";
 import { parseAnsi, stripAnsi, type AnsiSegment } from "@/lib/ansi";
 
 export interface LogViewProps {
@@ -152,6 +154,8 @@ export function LogView({
   initialRect,
   firstLineNumber = 1,
 }: LogViewProps) {
+  // tr, not useT: the viewer also renders outside the i18n provider, as in its tests.
+  const t = tr;
   const scroller = useRef<HTMLDivElement>(null);
   const v = useVirtualizer({
     count: lines.length,
@@ -194,11 +198,11 @@ export function LogView({
     <div className={cn("relative flex min-h-0 flex-col overflow-hidden rounded-lg border border-kumo-line bg-kumo-recessed", className)}>
       {(hasEarlier || dropped > 0) && (
         <div className="flex flex-wrap items-center gap-2 border-b border-kumo-line px-3 py-1.5 text-sm text-kumo-subtle">
-          {hasEarlier ? <span>Earlier lines are not loaded.</span> : null}
-          {dropped > 0 && <span>{dropped.toLocaleString()} lines were trimmed to keep memory bounded.</span>}
+          {hasEarlier ? <span>{t("environments.log.earlierNotLoaded")}</span> : null}
+          {dropped > 0 && <span>{t("environments.log.trimmed", { count: dropped, n: formatNumber(dropped) })}</span>}
           {hasEarlier && onLoadEarlier && (
             <Button size="xs" variant="secondary" icon={ArrowUpIcon} loading={loadingEarlier} onClick={onLoadEarlier}>
-              Load earlier
+              {t("environments.log.loadEarlier")}
             </Button>
           )}
         </div>
@@ -212,7 +216,7 @@ export function LogView({
         className="min-h-0 flex-1 overflow-auto font-mono text-[13px] leading-5 text-kumo-default focus:outline-none"
       >
         {lines.length === 0 ? (
-          <div className="p-4 font-sans text-sm text-kumo-subtle">{empty ?? "No lines yet."}</div>
+          <div className="p-4 font-sans text-sm text-kumo-subtle">{empty ?? t("environments.log.noLinesYet")}</div>
         ) : (
           <div role="list" style={{ height: v.getTotalSize(), position: "relative", minWidth: "100%", width: wrap ? "100%" : "max-content" }}>
             {v.getVirtualItems().map((item) => {
@@ -242,7 +246,7 @@ export function LogView({
       {!follow && canFollow && lines.length > 0 && (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
           <Button className="pointer-events-auto shadow-md" size="sm" variant="primary" icon={ArrowDownIcon} onClick={() => onFollowChange(true)}>
-            Jump to latest
+            {t("environments.log.jumpToLatest")}
           </Button>
         </div>
       )}

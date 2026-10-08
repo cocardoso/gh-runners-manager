@@ -11,6 +11,7 @@ import { LiveIndicator } from "./live-indicator";
 import { navItems } from "./nav";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { LanguageMenu } from "./language-menu";
+import { useT } from "@/i18n";
 
 function isActive(pathname: string, href: string) {
   return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
@@ -20,16 +21,18 @@ const nextTheme: Record<ThemePreference, ThemePreference> = { system: "light", l
 const themeIcon = { system: MonitorIcon, light: SunIcon, dark: MoonIcon };
 
 function ThemeToggle() {
+  const t = useT();
   const [pref, setPref] = useTheme();
   const Icon = themeIcon[pref];
-  const label = `Theme: ${pref} (switch to ${nextTheme[pref]})`;
+  const label = t("shell.theme.label", { current: t(`shell.theme.${pref}`), next: t(`shell.theme.${nextTheme[pref]}`) });
   return <Tooltip content={label} render={<Button variant="ghost" shape="square" icon={Icon} aria-label={label} onClick={() => setPref(nextTheme[pref])} />} />;
 }
 
 function MobileMenuButton() {
+  const t = useT();
   const { isMobile, setOpenMobile } = useSidebar();
   if (!isMobile) return null;
-  return <Button variant="ghost" shape="square" icon={ListIcon} aria-label="Open navigation" onClick={() => setOpenMobile(true)} />;
+  return <Button variant="ghost" shape="square" icon={ListIcon} aria-label={t("shell.header.openNavigation")} onClick={() => setOpenMobile(true)} />;
 }
 
 function Logo() {
@@ -42,8 +45,9 @@ function Logo() {
 }
 
 function AccountButton({ username }: { username?: string }) {
+  const t = useT();
   const navigate = useNavigate();
-  const label = username ? `Account: ${username}` : "Account";
+  const label = username ? t("shell.header.accountOf", { username }) : t("shell.header.account");
   return (
     <Tooltip
       content={label}
@@ -65,10 +69,11 @@ export function Shell() {
 function AppShell({ username }: { username?: string }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [searchOpen, setSearchOpen] = useState(false);
+  const t = useT();
   return (
     <LinkProvider component={AppLink}>
       <Sidebar.Provider defaultOpen collapsible="icon" className="min-h-dvh">
-        <Sidebar aria-label="Main navigation" className="sticky top-0 h-dvh">
+        <Sidebar aria-label={t("shell.header.mainNavigation")} className="sticky top-0 h-dvh">
           <Sidebar.Header>
             <Logo />
           </Sidebar.Header>
@@ -77,8 +82,8 @@ function AppShell({ username }: { username?: string }) {
               <Sidebar.Menu>
                 {navItems.map((n) => (
                   <Sidebar.MenuItem key={n.href}>
-                    <Sidebar.MenuButton icon={n.icon} href={n.href} active={isActive(pathname, n.href)} tooltip={n.label}>
-                      {n.label}
+                    <Sidebar.MenuButton icon={n.icon} href={n.href} active={isActive(pathname, n.href)} tooltip={t(n.labelKey)}>
+                      {t(n.labelKey)}
                     </Sidebar.MenuButton>
                   </Sidebar.MenuItem>
                 ))}
@@ -98,7 +103,7 @@ function AppShell({ username }: { username?: string }) {
               className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-kumo-line bg-kumo-base px-3 text-left text-sm text-kumo-subtle hover:bg-kumo-tint sm:max-w-sm"
             >
               <MagnifyingGlassIcon size={16} className="shrink-0" />
-              <span className="truncate">Search…</span>
+              <span className="truncate">{t("shell.header.search")}</span>
               <kbd className="ml-auto hidden rounded border border-kumo-hairline px-1.5 text-xs sm:inline">⌘K</kbd>
             </button>
             <div className="ml-auto flex items-center gap-1">

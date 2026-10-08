@@ -23,6 +23,7 @@ This document holds the architecture diagrams of gh-runners-manager (`ghrm`). It
 | `ghrm version`, `smoke`, `serve`, `openapi`, `demo` | `cmd/ghrm` |
 | Simulated fleet for UI work and browser tests | `internal/demo` |
 | Web UI (React, Kumo), embedded in the binary | `web/` |
+| UI languages (typed dictionaries, one file per area with every language) | `web/src/i18n` |
 | Template builder (`ubuntu-slim`): build, verify, activate, retain, release checks | `internal/template`, `template/layer` |
 | Agent build and self-test modes | `internal/agent` (`build.go`, `selftest.go`) |
 | Sign-in: admin account (argon2id), sessions, CSRF, audit | `internal/auth`, `internal/api/auth.go` |

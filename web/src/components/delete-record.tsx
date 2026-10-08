@@ -4,23 +4,17 @@ import { TrashIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { api, unwrap } from "@/api/client";
+import { useT } from "@/i18n";
 
 const kinds = {
-  template: {
-    button: "Delete",
-    text: "Only the record is deleted; nothing changes on Proxmox. If the build failed, the next check may build the same version again.",
-    back: "/templates",
-  },
-  environment: {
-    button: "Delete from history",
-    text: "Its jobs, events and logs are deleted too.",
-    back: "/environments",
-  },
+  template: { back: "/templates" },
+  environment: { back: "/environments" },
 };
 
 /** Deletes a finished record (a failed or deleted template, a destroyed environment) after a confirmation. */
 export function DeleteRecord({ kind, id }: { kind: keyof typeof kinds; id: string }) {
   const k = kinds[kind];
+  const t = useT();
   const qc = useQueryClient();
   const toast = useKumoToastManager();
   const navigate = useNavigate();
@@ -34,7 +28,7 @@ export function DeleteRecord({ kind, id }: { kind: keyof typeof kinds; id: strin
       if (kind === "template") unwrap(await api.DELETE("/api/v1/templates/{id}", { params: { path: { id } } }));
       else unwrap(await api.DELETE("/api/v1/environments/{id}", { params: { path: { id } } }));
       setOpen(false);
-      toast.add({ title: "Record deleted", description: id, variant: "success" });
+      toast.add({ title: t("environments.deleteRecord.deleted"), description: id, variant: "success" });
       for (const key of ["templates", "template", "environments", "environment", "jobs", "job", "stats", "overview"]) void qc.invalidateQueries({ queryKey: [key] });
       void navigate({ to: k.back });
     } catch (e) {
@@ -53,19 +47,19 @@ export function DeleteRecord({ kind, id }: { kind: keyof typeof kinds; id: strin
           setOpen(true);
         }}
       >
-        {k.button}
+        {t(`environments.deleteRecord.${kind}.button`)}
       </Button>
       <DialogRoot open={open} onOpenChange={setOpen}>
         <Dialog size="sm" className="flex flex-col gap-4 p-6">
-          <DialogTitle className="text-lg font-semibold">Delete {id}?</DialogTitle>
-          <p className="text-sm text-kumo-subtle">{k.text}</p>
+          <DialogTitle className="text-lg font-semibold">{t("environments.deleteRecord.title", { id })}</DialogTitle>
+          <p className="text-sm text-kumo-subtle">{t(`environments.deleteRecord.${kind}.text`)}</p>
           {error && <Banner variant="error" title={error} />}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setOpen(false)}>
-              Cancel
+              {t("environments.deleteRecord.cancel")}
             </Button>
             <Button variant="destructive" loading={busy} onClick={() => void remove()}>
-              Delete
+              {t("environments.deleteRecord.delete")}
             </Button>
           </div>
         </Dialog>

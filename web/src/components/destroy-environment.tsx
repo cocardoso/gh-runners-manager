@@ -3,10 +3,12 @@ import { Button, useKumoToastManager } from "@cloudflare/kumo";
 import { TrashIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "@/api/client";
+import { useT } from "@/i18n";
 import { DeleteResource } from "@/blocks/delete-resource/delete-resource";
 
 /** The destroy action, behind a type-the-name confirmation. */
 export function DestroyEnvironment({ id, disabled }: { id: string; disabled?: boolean }) {
+  const t = useT();
   const qc = useQueryClient();
   const toast = useKumoToastManager();
   const [open, setOpen] = useState(false);
@@ -18,7 +20,7 @@ export function DestroyEnvironment({ id, disabled }: { id: string; disabled?: bo
     try {
       unwrap(await api.POST("/api/v1/environments/{id}/destroy", { params: { path: { id } } }));
       setOpen(false);
-      toast.add({ title: "Destroy requested", description: `${id} is being destroyed.`, variant: "success" });
+      toast.add({ title: t("environments.destroy.requested"), description: t("environments.destroy.requestedDescription", { id }), variant: "success" });
       void qc.invalidateQueries({ queryKey: ["environment", id] });
       void qc.invalidateQueries({ queryKey: ["environments"] });
     } catch (e) {
@@ -38,16 +40,16 @@ export function DestroyEnvironment({ id, disabled }: { id: string; disabled?: bo
           setOpen(true);
         }}
       >
-        Destroy
+        {t("environments.destroy.button")}
       </Button>
       <DeleteResource
         open={open}
         onOpenChange={setOpen}
-        resourceType="Environment"
+        resourceType={t("environments.destroy.resourceType")}
         resourceName={id}
         onDelete={destroy}
         isDeleting={busy}
-        deleteButtonText="Destroy environment"
+        deleteButtonText={t("environments.destroy.confirm")}
         errorMessage={error}
       />
     </>

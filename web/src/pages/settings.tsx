@@ -5,7 +5,8 @@ import { DefinitionList } from "@/components/definition-list";
 import { CredentialsEditor } from "@/components/credentials-editor";
 import { CacheCard } from "@/components/cache-card";
 import { HistoryCard } from "@/components/history-card";
-import { formatMB } from "@/lib/format";
+import { formatMB, formatPercent } from "@/lib/format";
+import { useT } from "@/i18n";
 
 type Map = Record<string, unknown>;
 const text = (v: unknown) => (v === undefined || v === null || v === "" ? "—" : String(v));
@@ -20,60 +21,68 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export function SettingsPage() {
+  const t = useT();
   const settings = useSettings();
-  if (settings.isLoading) return <Page title="Settings"><Loading /></Page>;
-  if (settings.error || !settings.data) return <Page title="Settings"><ErrorState error={settings.error} /></Page>;
+  if (settings.isLoading) return <Page title={t("settings.title")}><Loading /></Page>;
+  if (settings.error || !settings.data) return <Page title={t("settings.title")}><ErrorState error={settings.error} /></Page>;
   const s = settings.data;
   const p = (s.proxmox ?? {}) as Map;
   const c = (s.capacity ?? {}) as Map;
   const i = (s.ingest ?? {}) as Map;
   const range = Array.isArray(p.vmid_range) ? `${p.vmid_range[0]}–${p.vmid_range[1]}` : "—";
   return (
-    <Page title="Settings" description="The running configuration, without secrets. Credentials and scale sets can be added here; the rest comes from ghrm.yaml.">
-      <Section title="GitHub credentials">
+    <Page title={t("settings.title")} description={t("settings.description")}>
+      <Section title={t("settings.sections.credentials")}>
         <CredentialsEditor />
       </Section>
       <CacheCard />
       <HistoryCard />
-      <Section title="Control plane">
+      <Section title={t("settings.sections.controlPlane")}>
         <DefinitionList
           items={[
-            ["Version", s.version],
-            ["Admin actions", s.admin_actions ? <Badge variant="success" appearance="dot">Enabled</Badge> : <Badge variant="neutral" appearance="dot">Disabled</Badge>],
+            [t("settings.fields.version"), s.version],
+            [
+              t("settings.fields.adminActions"),
+              s.admin_actions ? (
+                <Badge variant="success" appearance="dot">{t("settings.fields.enabled")}</Badge>
+              ) : (
+                <Badge variant="neutral" appearance="dot">{t("settings.fields.disabled")}</Badge>
+              ),
+            ],
           ]}
         />
       </Section>
       <Section title="Proxmox">
         <DefinitionList
           items={[
-            ["API URL", text(p.url)],
-            ["Node", text(p.node)],
-            ["API token", text(p.token_id)],
-            ["TLS certificate", p.tls_pinned ? "Pinned by fingerprint" : "System trust store"],
-            ["Template", text(p.template_vmid)],
-            ["Pool", text(p.pool)],
-            ["VMID range", range],
-            ["Storage", text(p.storage)],
-            ["Thin pool", text(p.thin_pool)],
-            ["Firewall settle time", text(p.firewall_settle)],
+            [t("settings.fields.apiUrl"), text(p.url)],
+            [t("settings.fields.node"), text(p.node)],
+            [t("settings.fields.apiToken"), text(p.token_id)],
+            [t("settings.fields.tlsCertificate"), p.tls_pinned ? t("settings.fields.tlsPinned") : t("settings.fields.tlsSystem")],
+            [t("settings.fields.template"), text(p.template_vmid)],
+            [t("settings.fields.pool"), text(p.pool)],
+            [t("settings.fields.vmidRange"), range],
+            [t("settings.fields.storage"), text(p.storage)],
+            [t("settings.fields.thinPool"), text(p.thin_pool)],
+            [t("settings.fields.firewallSettle"), text(p.firewall_settle)],
           ]}
         />
       </Section>
-      <Section title="Capacity">
+      <Section title={t("settings.sections.capacity")}>
         <DefinitionList
           items={[
-            ["Max environments", text(c.max_environments)],
-            ["Memory budget", typeof c.memory_budget_mb === "number" ? formatMB(c.memory_budget_mb) : "—"],
-            ["Host memory margin", typeof c.memory_margin_mb === "number" ? formatMB(c.memory_margin_mb) : "—"],
-            ["Max disk use", typeof c.max_disk_percent === "number" ? `${c.max_disk_percent}%` : "—"],
+            [t("settings.fields.maxEnvironments"), text(c.max_environments)],
+            [t("settings.fields.memoryBudget"), typeof c.memory_budget_mb === "number" ? formatMB(c.memory_budget_mb) : "—"],
+            [t("settings.fields.memoryMargin"), typeof c.memory_margin_mb === "number" ? formatMB(c.memory_margin_mb) : "—"],
+            [t("settings.fields.maxDisk"), typeof c.max_disk_percent === "number" ? formatPercent(c.max_disk_percent / 100) : "—"],
           ]}
         />
       </Section>
-      <Section title="Agent ingest">
+      <Section title={t("settings.sections.ingest")}>
         <DefinitionList
           items={[
-            ["Listen address", text(i.listen)],
-            ["Address given to environments", text(i.advertise_url)],
+            [t("settings.fields.listen"), text(i.listen)],
+            [t("settings.fields.advertise"), text(i.advertise_url)],
           ]}
         />
       </Section>

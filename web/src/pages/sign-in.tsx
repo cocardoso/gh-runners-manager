@@ -4,10 +4,23 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "@/api/client";
 import { setCsrfToken } from "@/api/auth-state";
 import { LanguageMenu } from "@/components/language-menu";
+import { useT } from "@/i18n";
 
 export const MIN_PASSWORD = 12;
 
 const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^auth: /, "") : String(e));
+
+/** Puts node where placeholder is in a translated text. */
+function withNode(text: string, placeholder: string, node: ReactNode): ReactNode {
+  const [before, after = ""] = text.split(placeholder);
+  return (
+    <>
+      {before}
+      {node}
+      {after}
+    </>
+  );
+}
 
 function Centered({ title, description, children }: { title: string; description: ReactNode; children: ReactNode }) {
   return (
@@ -29,6 +42,7 @@ function Centered({ title, description, children }: { title: string; description
 
 /** The sign-in form; the page that was asked for shows once signed in. */
 export function LoginPage() {
+  const t = useT();
   const qc = useQueryClient();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -50,13 +64,13 @@ export function LoginPage() {
     }
   };
   return (
-    <Centered title="Sign in" description="gh-runners-manager">
+    <Centered title={t("settings.signIn.title")} description="gh-runners-manager">
       {error && <Banner variant="error" title={error} />}
       <form className="flex flex-col gap-4" onSubmit={submit}>
-        <Input label="Username" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
-        <Input label="Password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <Input label={t("settings.signIn.username")} autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
+        <Input label={t("settings.signIn.password")} type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
         <Button variant="primary" type="submit" loading={busy} disabled={!username || !password}>
-          Sign in
+          {t("settings.signIn.submit")}
         </Button>
       </form>
     </Centered>
@@ -65,6 +79,7 @@ export function LoginPage() {
 
 /** First run: create the admin account with the setup token the installer printed. */
 export function SetupPage() {
+  const t = useT();
   const qc = useQueryClient();
   const [token, setToken] = useState("");
   const [username, setUsername] = useState("admin");
@@ -90,36 +105,32 @@ export function SetupPage() {
   };
   return (
     <Centered
-      title="Create the admin account"
-      description={
-        <>
-          The setup token is in <code>setup-token</code> in the control plane's data directory; the installer and the service log print it.
-        </>
-      }
+      title={t("settings.setup.title")}
+      description={withNode(t("settings.setup.description"), "{file}", <code>setup-token</code>)}
     >
       {error && <Banner variant="error" title={error} />}
       <form className="flex flex-col gap-4" onSubmit={submit}>
-        <SensitiveInput label="Setup token" value={token} onValueChange={setToken} autoFocus />
-        <Input label="Username" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} />
+        <SensitiveInput label={t("settings.setup.token")} value={token} onValueChange={setToken} autoFocus />
+        <Input label={t("settings.setup.username")} autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} />
         <Input
-          label="Password"
+          label={t("settings.setup.password")}
           type="password"
           autoComplete="new-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          description={`At least ${MIN_PASSWORD} characters.`}
-          error={tooShort ? `Use at least ${MIN_PASSWORD} characters.` : undefined}
+          description={t("settings.password.atLeast", { min: MIN_PASSWORD })}
+          error={tooShort ? t("settings.password.useAtLeast", { min: MIN_PASSWORD }) : undefined}
         />
         <Input
-          label="Confirm password"
+          label={t("settings.setup.confirm")}
           type="password"
           autoComplete="new-password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
-          error={mismatch ? "The passwords differ." : undefined}
+          error={mismatch ? t("settings.password.differ") : undefined}
         />
         <Button variant="primary" type="submit" loading={busy} disabled={!valid}>
-          Create account
+          {t("settings.setup.submit")}
         </Button>
       </form>
     </Centered>

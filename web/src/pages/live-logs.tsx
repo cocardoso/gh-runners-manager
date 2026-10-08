@@ -7,14 +7,18 @@ import { api, unwrap, type ApiEvent } from "@/api/client";
 import { Page } from "@/components/common";
 import { ListToolbar } from "@/components/list-toolbar";
 import { LevelBadge } from "@/components/status-badge";
+import { currentLocale, tr, useT } from "@/i18n";
+import { formatNumber } from "@/lib/format";
 import { useLiveEvents } from "@/lib/live";
 import type { ListSearch } from "@/router";
 
 export const EVENT_CAP = 5000;
 const PAGE = 500;
 
-const levelOptions = { info: "Info", warn: "Warning", error: "Error" };
-const kindOptions = { environment: "Environments", job: "Jobs", scaleset: "Scale sets", agent: "Agent", reaper: "Reaper", controller: "Controller", audit: "Audit" };
+const levels = ["info", "warn", "error"] as const;
+const kinds = ["environment", "job", "scaleset", "agent", "reaper", "controller", "audit"] as const;
+const levelOptions = () => Object.fromEntries(levels.map((l) => [l, tr(`environments.liveLogs.level.${l}`)]));
+const kindOptions = () => Object.fromEntries(kinds.map((k) => [k, tr(`environments.liveLogs.kind.${k}`)]));
 
 function mergeSorted(a: ApiEvent[], b: ApiEvent[]) {
   const map = new Map<number, ApiEvent>();
@@ -24,10 +28,11 @@ function mergeSorted(a: ApiEvent[], b: ApiEvent[]) {
 }
 
 function Row({ e }: { e: ApiEvent }) {
+  const t = useT();
   return (
     <div role="listitem" className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-kumo-line px-3 py-1.5 text-sm sm:flex-nowrap">
       <time className="shrink-0 font-mono text-xs text-kumo-subtle tabular-nums" dateTime={e.time}>
-        {new Date(e.time).toLocaleTimeString(undefined, { hour12: false })}
+        {new Date(e.time).toLocaleTimeString(currentLocale(), { hour12: false })}
       </time>
       <span className="shrink-0">
         <LevelBadge level={e.level} />
@@ -38,8 +43,8 @@ function Row({ e }: { e: ApiEvent }) {
       <span className={cn("min-w-0 flex-1 break-words", e.level === "error" && "text-kumo-danger")}>{e.message}</span>
       <span className="flex shrink-0 gap-2 text-xs">
         {e.scale_set && <span className="text-kumo-subtle">{e.scale_set}</span>}
-        {e.environment_id && <Link href={`/environments/${encodeURIComponent(e.environment_id)}`}>env</Link>}
-        {e.job_id && <Link href={`/jobs/${encodeURIComponent(e.job_id)}`}>job</Link>}
+        {e.environment_id && <Link href={`/environments/${encodeURIComponent(e.environment_id)}`}>{t("environments.liveLogs.envLink")}</Link>}
+        {e.job_id && <Link href={`/jobs/${encodeURIComponent(e.job_id)}`}>{t("environments.liveLogs.jobLink")}</Link>}
       </span>
     </div>
   );
@@ -49,6 +54,7 @@ function Row({ e }: { e: ApiEvent }) {
 export function LiveLogsPage() {
   const search = useSearch({ strict: false }) as ListSearch;
   const navigate = useNavigate();
+  const t = useT();
   const set = (patch: Partial<ListSearch>) => void navigate({ to: "/logs", search: (prev: ListSearch) => ({ ...prev, ...patch }), replace: true });
   const [events, setEvents] = useState<ApiEvent[]>([]);
   const [paused, setPaused] = useState(false);
@@ -124,28 +130,28 @@ export function LiveLogsPage() {
 
   return (
     <Page
-      title="Live logs"
-      description="Every event from the control plane as it happens, newest first."
+      title={t("environments.liveLogs.title")}
+      description={t("environments.liveLogs.description")}
       actions={
         <Button variant="secondary" icon={paused ? PlayIcon : PauseIcon} onClick={togglePause}>
-          {paused ? "Resume" : "Pause"}
+          {paused ? t("environments.liveLogs.resume") : t("environments.liveLogs.pause")}
         </Button>
       }
     >
       <ListToolbar
         search={search.q ?? ""}
         onSearch={(q) => set({ q: q || undefined })}
-        searchLabel="Search events"
+        searchLabel={t("environments.liveLogs.search")}
         filters={[
-          { key: "level", label: "Level", value: search.level, options: levelOptions },
-          { key: "kind", label: "Kind", value: search.kind, options: kindOptions },
-          { key: "scale_set", label: "Scale set", value: search.scale_set, options: scaleSets },
+          { key: "level", label: t("environments.liveLogs.filter.level"), value: search.level, options: levelOptions() },
+          { key: "kind", label: t("environments.liveLogs.filter.kind"), value: search.kind, options: kindOptions() },
+          { key: "scale_set", label: t("environments.liveLogs.filter.scaleSet"), value: search.scale_set, options: scaleSets },
         ]}
         onFilter={(key, value) => set({ [key]: value })}
         onClear={() => void navigate({ to: "/logs", search: {}, replace: true })}
       >
         <span className="text-sm text-kumo-subtle" aria-live="polite">
-          {paused ? `Paused · ${pending} new` : `${filtered.length.toLocaleString()} events`}
+          {paused ? t("environments.liveLogs.paused", { n: formatNumber(pending) }) : t("environments.liveLogs.count", { count: filtered.length, n: formatNumber(filtered.length) })}
         </span>
       </ListToolbar>
       {error && <p className="text-sm text-kumo-danger">{error}</p>}
@@ -160,7 +166,7 @@ export function LiveLogsPage() {
             onScroll={(e) => e.currentTarget.scrollTop > 0 && pause()}
           >
             {filtered.length === 0 ? (
-              <p className="p-4 text-sm text-kumo-subtle">No events match. New events appear here as the fleet works.</p>
+              <p className="p-4 text-sm text-kumo-subtle">{t("environments.liveLogs.empty")}</p>
             ) : (
               <div role="list" style={{ height: v.getTotalSize(), position: "relative" }}>
                 {v.getVirtualItems().map((item) => (
@@ -173,9 +179,9 @@ export function LiveLogsPage() {
           </div>
           {hasEarlier && (
             <div className="flex items-center gap-2 border-t border-kumo-line px-3 py-1.5 text-sm text-kumo-subtle">
-              Older events are not loaded.
+              {t("environments.liveLogs.olderNotLoaded")}
               <Button size="xs" variant="secondary" icon={ArrowDownIcon} loading={loadingEarlier} onClick={loadEarlier}>
-                Load older
+                {t("environments.liveLogs.loadOlder")}
               </Button>
             </div>
           )}

@@ -4,6 +4,7 @@ import { QuestionIcon } from "@phosphor-icons/react";
 import { useParams, useSearch } from "@tanstack/react-router";
 import { ApiError } from "@/api/client";
 import { useEnvironment, useJob, useJobEvents, useSettings } from "@/api/queries";
+import { useT } from "@/i18n";
 import { ErrorState, Loading, Page, useNow } from "@/components/common";
 import { DeleteRecord } from "@/components/delete-record";
 import { DestroyEnvironment } from "@/components/destroy-environment";
@@ -18,9 +19,10 @@ import type { LogStreamName } from "@/lib/use-log-stream";
 import type { DetailSearch } from "@/router";
 
 const STREAMS: LogStreamName[] = ["control-plane", "runtime", "agent", "runner", "job"];
-const crumbs = [{ label: "Environments", href: "/environments" }];
 
 export function EnvironmentDetailPage() {
+  const t = useT();
+  const crumbs = [{ label: t("environments.list.title"), href: "/environments" }];
   const { id } = useParams({ strict: false }) as { id: string };
   const { tab = "timeline" } = useSearch({ strict: false }) as DetailSearch;
   const now = useNow();
@@ -34,23 +36,23 @@ export function EnvironmentDetailPage() {
     [jobId, job.data, environment.data, events.data, now],
   );
 
-  if (environment.isLoading) return <Page title="Environment" crumbs={crumbs}><Loading /></Page>;
+  if (environment.isLoading) return <Page title={t("environments.detail.title")} crumbs={crumbs}><Loading /></Page>;
   if (environment.error instanceof ApiError && environment.error.status === 404)
     return (
-      <Page title="Environment" crumbs={crumbs}>
-        <Empty icon={<QuestionIcon size={48} className="text-kumo-inactive" />} title="Environment not found" description={`No environment has the id ${id}.`} contents={<Link href="/environments">Back to environments</Link>} />
+      <Page title={t("environments.detail.title")} crumbs={crumbs}>
+        <Empty icon={<QuestionIcon size={48} className="text-kumo-inactive" />} title={t("environments.detail.notFoundTitle")} description={t("environments.detail.notFoundDescription", { id })} contents={<Link href="/environments">{t("environments.detail.back")}</Link>} />
       </Page>
     );
-  if (environment.error || !environment.data) return <Page title="Environment" crumbs={crumbs}><ErrorState error={environment.error} /></Page>;
+  if (environment.error || !environment.data) return <Page title={t("environments.detail.title")} crumbs={crumbs}><ErrorState error={environment.error} /></Page>;
 
   const e = environment.data;
   const live = e.state !== "destroyed";
   const streams = STREAMS.filter((s) => s !== "job" || e.job_id);
   const tabs = [
-    { value: "timeline", label: "Timeline" },
-    { value: "logs", label: "Logs" },
-    { value: "resources", label: "Resources" },
-    { value: "environment", label: "Details" },
+    { value: "timeline", label: t("environments.detail.tabs.timeline") },
+    { value: "logs", label: t("environments.detail.tabs.logs") },
+    { value: "resources", label: t("environments.detail.tabs.resources") },
+    { value: "environment", label: t("environments.detail.tabs.details") },
   ];
   return (
     <Page
@@ -68,7 +70,7 @@ export function EnvironmentDetailPage() {
         </>
       }
     >
-      <DetailTabs tabs={tabs} value={tabs.some((t) => t.value === tab) ? tab : "timeline"} />
+      <DetailTabs tabs={tabs} value={tabs.some((x) => x.value === tab) ? tab : "timeline"} />
       {tab === "logs" ? (
         <LiveLog envId={e.id} streams={streams} defaultStream={e.job_id ? "job" : "control-plane"} live={live} />
       ) : tab === "resources" ? (
@@ -77,7 +79,7 @@ export function EnvironmentDetailPage() {
         <EnvironmentPanel environment={e} />
       ) : (
         <LayerCard>
-          <LayerCard.Secondary>Lifecycle</LayerCard.Secondary>
+          <LayerCard.Secondary>{t("environments.detail.lifecycle")}</LayerCard.Secondary>
           <LayerCard.Primary>
             <Timeline stages={stages} />
           </LayerCard.Primary>

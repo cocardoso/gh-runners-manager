@@ -4,11 +4,13 @@ import { PlusIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type CredentialView } from "@/api/client";
 import { useCredentials } from "@/api/queries";
+import { useT } from "@/i18n";
 import { ErrorState, Loading } from "./common";
 
 const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^settings: /, "") : String(e));
 
 function CredentialDialog({ open, name: fixedName, onClose }: { open: boolean; name?: string; onClose: () => void }) {
+  const t = useT();
   const qc = useQueryClient();
   const [name, setName] = useState(fixedName ?? "");
   const [token, setToken] = useState("");
@@ -31,21 +33,24 @@ function CredentialDialog({ open, name: fixedName, onClose }: { open: boolean; n
   return (
     <DialogRoot open={open} onOpenChange={(o) => !o && onClose()}>
       <Dialog size="sm" className="flex flex-col gap-4 p-6">
-        <DialogTitle className="text-lg font-semibold">{fixedName ? `Replace the token of ${fixedName}` : "Add a GitHub credential"}</DialogTitle>
-        <p className="text-sm text-kumo-subtle">
-          A fine-grained personal access token with Administration: read and write on the repositories (Actions: read shows job steps). It is stored
-          encrypted and never shown again.
-        </p>
+        <DialogTitle className="text-lg font-semibold">{fixedName ? t("settings.credentials.replaceTitle", { name: fixedName }) : t("settings.credentials.addTitle")}</DialogTitle>
+        <p className="text-sm text-kumo-subtle">{t("settings.credentials.help")}</p>
         {error && <Banner variant="error" title={error} />}
         <form className="flex flex-col gap-4" onSubmit={submit}>
-          <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} disabled={!!fixedName} description="Lower-case letters, digits and dashes." />
-          <SensitiveInput label="Token" value={token} onValueChange={setToken} />
+          <Input
+            label={t("settings.credentials.name")}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={!!fixedName}
+            description={t("settings.credentials.nameHint")}
+          />
+          <SensitiveInput label={t("settings.credentials.token")} value={token} onValueChange={setToken} />
           <div className="flex justify-end gap-2">
             <Button variant="secondary" type="button" onClick={onClose}>
-              Cancel
+              {t("settings.credentials.cancel")}
             </Button>
             <Button variant="primary" type="submit" loading={busy} disabled={!name.trim() || !token.trim()}>
-              Save credential
+              {t("settings.credentials.save")}
             </Button>
           </div>
         </form>
@@ -55,6 +60,7 @@ function CredentialDialog({ open, name: fixedName, onClose }: { open: boolean; n
 }
 
 function DeleteDialog({ name, onClose }: { name?: string; onClose: () => void }) {
+  const t = useT();
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -75,15 +81,15 @@ function DeleteDialog({ name, onClose }: { name?: string; onClose: () => void })
   return (
     <DialogRoot open={!!name} onOpenChange={(o) => !o && onClose()}>
       <Dialog size="sm" className="flex flex-col gap-4 p-6">
-        <DialogTitle className="text-lg font-semibold">Delete {name}?</DialogTitle>
-        <p className="text-sm text-kumo-subtle">The token is removed from the control plane. Revoke it on GitHub too if nothing else uses it.</p>
+        <DialogTitle className="text-lg font-semibold">{t("settings.credentials.deleteTitle", { name: name ?? "" })}</DialogTitle>
+        <p className="text-sm text-kumo-subtle">{t("settings.credentials.deleteBody")}</p>
         {error && <Banner variant="error" title={error} />}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>
-            Cancel
+            {t("settings.credentials.cancel")}
           </Button>
           <Button variant="destructive" loading={busy} onClick={() => void remove()}>
-            Delete credential
+            {t("settings.credentials.deleteConfirm")}
           </Button>
         </div>
       </Dialog>
@@ -102,6 +108,7 @@ function TestResult({ result }: { result?: { ok: boolean; text: string } }) {
 
 /** Lists the GitHub credentials; the ones created here can be replaced, tested and deleted. */
 export function CredentialsEditor() {
+  const t = useT();
   const creds = useCredentials();
   const [editing, setEditing] = useState<{ name?: string } | null>(null);
   const [deleting, setDeleting] = useState<string>();
@@ -109,9 +116,10 @@ export function CredentialsEditor() {
   const test = async (c: CredentialView) => {
     try {
       const r = unwrap(await api.POST("/api/v1/credentials/{name}/test", { params: { path: { name: c.name } } }));
-      setTests((t) => ({ ...t, [c.name]: r.ok ? { ok: true, text: `Works: signed in as ${r.login}` } : { ok: false, text: `Failed: ${r.error}` } }));
+      const result = r.ok ? { ok: true, text: t("settings.credentials.works", { login: r.login ?? "" }) } : { ok: false, text: t("settings.credentials.failed", { error: r.error ?? "" }) };
+      setTests((all) => ({ ...all, [c.name]: result }));
     } catch (err) {
-      setTests((t) => ({ ...t, [c.name]: { ok: false, text: `Failed: ${message(err)}` } }));
+      setTests((all) => ({ ...all, [c.name]: { ok: false, text: t("settings.credentials.failed", { error: message(err) }) } }));
     }
   };
   if (creds.isLoading) return <Loading />;
@@ -120,17 +128,17 @@ export function CredentialsEditor() {
     <div className="flex flex-col gap-3 p-4">
       <div>
         <Button variant="secondary" icon={PlusIcon} onClick={() => setEditing({})}>
-          Add credential
+          {t("settings.credentials.add")}
         </Button>
       </div>
-      <Table aria-label="GitHub credentials">
+      <Table aria-label={t("settings.sections.credentials")}>
         <Table.Header>
           <Table.Row>
-            <Table.Head>Name</Table.Head>
-            <Table.Head>Source</Table.Head>
-            <Table.Head>Used by</Table.Head>
-            <Table.Head>Token</Table.Head>
-            <Table.Head>Actions</Table.Head>
+            <Table.Head>{t("settings.credentials.name")}</Table.Head>
+            <Table.Head>{t("settings.credentials.source")}</Table.Head>
+            <Table.Head>{t("settings.credentials.usedBy")}</Table.Head>
+            <Table.Head>{t("settings.credentials.token")}</Table.Head>
+            <Table.Head>{t("settings.credentials.actions")}</Table.Head>
           </Table.Row>
         </Table.Header>
         <Table.Body>
@@ -139,30 +147,30 @@ export function CredentialsEditor() {
             const usedBy = c.used_by ?? [];
             const inUse = usedBy.length > 0;
             const del = (
-              <Button variant="ghost" size="sm" aria-label={`Delete ${c.name}`} disabled={file || inUse} onClick={() => setDeleting(c.name)}>
-                Delete
+              <Button variant="ghost" size="sm" aria-label={t("settings.credentials.deleteName", { name: c.name })} disabled={file || inUse} onClick={() => setDeleting(c.name)}>
+                {t("settings.credentials.delete")}
               </Button>
             );
             return (
               <Table.Row key={c.name}>
                 <Table.Cell className="font-medium">{c.name}</Table.Cell>
                 <Table.Cell>
-                  <Badge variant="outline">{file ? "ghrm.yaml" : "UI"}</Badge>
+                  <Badge variant="outline">{file ? "ghrm.yaml" : t("settings.credentials.sourceUi")}</Badge>
                 </Table.Cell>
                 <Table.Cell>{usedBy.length ? usedBy.join(", ") : "—"}</Table.Cell>
                 <Table.Cell className="font-mono text-sm">{c.token_hint ? `…${c.token_hint}` : "—"}</Table.Cell>
                 <Table.Cell>
                   <span className="flex flex-wrap items-center gap-1">
-                    <Button variant="ghost" size="sm" aria-label={`Test ${c.name}`} onClick={() => void test(c)}>
-                      Test
+                    <Button variant="ghost" size="sm" aria-label={t("settings.credentials.testName", { name: c.name })} onClick={() => void test(c)}>
+                      {t("settings.credentials.test")}
                     </Button>
                     {!file && (
-                      <Button variant="ghost" size="sm" aria-label={`Replace ${c.name}`} onClick={() => setEditing({ name: c.name })}>
-                        Replace
+                      <Button variant="ghost" size="sm" aria-label={t("settings.credentials.replaceName", { name: c.name })} onClick={() => setEditing({ name: c.name })}>
+                        {t("settings.credentials.replace")}
                       </Button>
                     )}
                     {file || inUse ? (
-                      <Tooltip content={file ? "Defined in ghrm.yaml" : `Used by ${usedBy.join(", ")}`} render={<span>{del}</span>} />
+                      <Tooltip content={file ? t("settings.credentials.definedInFile") : t("settings.credentials.usedByList", { names: usedBy.join(", ") })} render={<span>{del}</span>} />
                     ) : (
                       del
                     )}

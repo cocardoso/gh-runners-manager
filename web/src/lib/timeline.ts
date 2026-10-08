@@ -1,5 +1,7 @@
 import type { ApiEvent, Environment, Job } from "@/api/client";
 import { isSet } from "./format";
+import { tr } from "@/i18n";
+import { stateLabel } from "@/components/status-badge";
 
 export type StageStatus = "done" | "current" | "failed";
 
@@ -12,22 +14,15 @@ export interface Stage {
   detail?: string;
 }
 
-const labels: Record<string, string> = {
-  queued: "Queued on GitHub",
-  created: "Environment requested",
-  pending: "Pending",
-  provisioning: "Provisioning",
-  booting: "Booting",
-  connected: "Runner connected",
-  idle: "Waiting for a job",
-  running: "Running the job",
-  completing: "Completing",
-  destroying: "Destroying",
-  destroyed: "Destroyed",
-  failed: "Failed",
-  started: "Job started",
-  finished: "Job finished",
-};
+const knownStages = ["queued", "created", "pending", "provisioning", "booting", "connected", "idle", "running", "completing", "destroying", "destroyed", "failed", "started", "finished"] as const;
+type KnownStage = (typeof knownStages)[number];
+
+/** The stage name in the language in use; states the UI does not know keep their raw name. */
+function stageLabel(key: string): string {
+  return (knownStages as readonly string[]).includes(key) ? tr(`shell.timeline.stage.${key as KnownStage}`) : key;
+}
+
+const jobResult = (result: string) => tr("shell.timeline.jobResult", { result: stateLabel(result) });
 
 const terminal = new Set(["destroyed", "failed", "finished"]);
 
@@ -45,7 +40,7 @@ export function buildTimeline({
 }): Stage[] {
   const stages: Stage[] = [];
   const add = (key: string, at: string | undefined, detail?: string) => {
-    if (isSet(at)) stages.push({ key, label: labels[key] ?? key, at, status: "done", detail });
+    if (isSet(at)) stages.push({ key, label: stageLabel(key), at, status: "done", detail });
   };
   if (job) add("queued", job.queued_at, job.repository);
   if (environment) add("created", environment.created_at);
@@ -59,7 +54,7 @@ export function buildTimeline({
   // Without an environment, the job's own end closes the timeline.
   if (job && !environment && job.status === "completed") {
     add("started", job.started_at);
-    add("finished", job.finished_at, job.result ? `Job ${job.result}` : undefined);
+    add("finished", job.finished_at, job.result ? jobResult(job.result) : undefined);
   }
   stages.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 
@@ -74,14 +69,14 @@ export function buildTimeline({
 
   if (job?.status === "completed" && job.result) {
     const running = stages.find((s) => s.key === "running");
-    if (running) running.detail = `Job ${job.result}`;
+    if (running) running.detail = jobResult(job.result);
   }
   if (environment?.failure_stage) {
     for (const s of stages) {
       if (s.key === environment.failure_stage) s.status = "failed";
       if (s.key === "failed") {
         s.status = "failed";
-        s.detail = environment.failure_reason || `failed at ${environment.failure_stage}`;
+        s.detail = environment.failure_reason || tr("shell.timeline.failedAt", { stage: environment.failure_stage });
       }
     }
   }

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, type ReactNode } from "react";
 import { Dialog, DialogRoot, DialogTitle, DialogClose, Input, Button, cn, Banner } from "@cloudflare/kumo";
 import {
   CheckIcon,
@@ -6,6 +6,19 @@ import {
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
+import { tr } from "@/i18n";
+
+/** Places a node where {name} sits in a translated sentence. */
+function around(text: string, node: ReactNode): ReactNode {
+  const [before, after = ""] = text.split("{name}");
+  return (
+    <>
+      {before}
+      {node}
+      {after}
+    </>
+  );
+}
 
 export const KUMO_DELETE_RESOURCE_VARIANTS = {
   size: {
@@ -102,7 +115,7 @@ export function DeleteResource({
       <Dialog size={size} className={cn("p-0", className)}>
         <div className="flex items-center justify-between border-b border-kumo-line px-6 py-4">
           <DialogTitle className="text-lg font-semibold">
-            Delete {resourceName}
+            {tr("shell.deleteResource.title", { name: resourceName })}
           </DialogTitle>
           <DialogClose
             render={(props) => (
@@ -111,7 +124,7 @@ export function DeleteResource({
                 variant="ghost"
                 shape="square"
                 size="sm"
-                aria-label="Close"
+                aria-label={tr("shell.deleteResource.close")}
                 disabled={isDeleting}
               >
                 <XIcon size={18} />
@@ -128,40 +141,42 @@ export function DeleteResource({
               </Banner>
             )}
             <p className="max-w-prose text-base text-pretty text-kumo-subtle">
-              This action cannot be undone. This will permanently delete the{" "}
-              <span className="font-medium text-kumo-default">
-                {resourceName}
-              </span>{" "}
-              {resourceType.toLowerCase()}.
+              {around(
+                tr("shell.deleteResource.warning", { type: resourceType.toLowerCase() }),
+                <span className="font-medium text-kumo-default">
+                  {resourceName}
+                </span>,
+              )}
             </p>
           </div>
 
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-1.5 text-base">
               <span>
-                Type{" "}
-                <button
-                  className="group inline rounded-md bg-kumo-tint px-2 py-1 font-mono text-sm font-semibold hover:cursor-pointer hover:bg-kumo-fill"
-                  onClick={handleCopy}
-                  aria-label={`Copy ${resourceName} to clipboard`}
-                >
-                  {resourceName}
+                {around(
+                  tr("shell.deleteResource.typeToConfirm"),
+                  <button
+                    className="group inline rounded-md bg-kumo-tint px-2 py-1 font-mono text-sm font-semibold hover:cursor-pointer hover:bg-kumo-fill"
+                    onClick={handleCopy}
+                    aria-label={tr("shell.deleteResource.copy", { name: resourceName })}
+                  >
+                    {resourceName}
 
-                  {copied ? (
-                    <CheckIcon
-                      size={12}
-                      weight="bold"
-                      className="ml-1.5 inline"
-                    />
-                  ) : (
-                    <CopyIcon
-                      size={12}
-                      weight="bold"
-                      className="ml-1.5 inline text-kumo-subtle group-hover:text-kumo-default"
-                    />
-                  )}
-                </button>{" "}
-                to confirm:
+                    {copied ? (
+                      <CheckIcon
+                        size={12}
+                        weight="bold"
+                        className="ml-1.5 inline"
+                      />
+                    ) : (
+                      <CopyIcon
+                        size={12}
+                        weight="bold"
+                        className="ml-1.5 inline text-kumo-subtle group-hover:text-kumo-default"
+                      />
+                    )}
+                  </button>,
+                )}
               </span>
             </div>
             <Input
@@ -173,7 +188,7 @@ export function DeleteResource({
               autoCorrect="off"
               autoCapitalize="off"
               spellCheck={false}
-              aria-label={`Type ${resourceName} to confirm deletion`}
+              aria-label={tr("shell.deleteResource.inputLabel", { name: resourceName })}
               className="w-full"
             />
           </div>
@@ -183,7 +198,7 @@ export function DeleteResource({
           <DialogClose
             render={(props) => (
               <Button {...props} variant="secondary" disabled={isDeleting}>
-                Cancel
+                {tr("shell.deleteResource.cancel")}
               </Button>
             )}
           />
@@ -193,7 +208,7 @@ export function DeleteResource({
             disabled={!isConfirmed || isDeleting}
             loading={isDeleting}
           >
-            {deleteButtonText || `Delete ${resourceType}`}
+            {deleteButtonText || tr("shell.deleteResource.delete", { type: resourceType })}
           </Button>
         </div>
       </Dialog>

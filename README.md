@@ -24,7 +24,7 @@ It creates a dedicated Proxmox user and token, an isolated job network, the cont
 
 ## Web UI
 
-The UI is embedded in the `ghrm` binary and follows the Cloudflare dashboard patterns, built with [Kumo](https://github.com/cloudflare/kumo). Everything updates live over server-sent events.
+The UI is embedded in the `ghrm` binary and follows the Cloudflare dashboard patterns, built with [Kumo](https://github.com/cloudflare/kumo). Everything updates live over server-sent events. It speaks English, Portuguese (Brazil), Spanish, French and Italian: it follows the browser's language, and the language menu in the top bar changes it.
 
 | Overview | Jobs |
 | --- | --- |

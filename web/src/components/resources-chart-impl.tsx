@@ -1,16 +1,18 @@
 import * as echarts from "echarts";
 import { ChartPalette, TimeseriesChart } from "@cloudflare/kumo";
 import { useIsDark } from "@/lib/theme";
+import { currentLocale, useT } from "@/i18n";
 import type { ResourcesChartProps } from "./resources-chart";
 
-const time = (v: number) => new Date(v).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const time = (v: number) => new Date(v).toLocaleTimeString(currentLocale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 export default function ResourcesChartImpl({ cpu, memoryMB, memoryLimitMB }: ResourcesChartProps) {
   const dark = useIsDark();
+  const t = useT();
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <section aria-label="CPU">
-        <h3 className="mb-2 text-sm font-medium text-kumo-subtle">CPU (% of one core)</h3>
+        <h3 className="mb-2 text-sm font-medium text-kumo-subtle">{t("overview.resources.cpuTitle")}</h3>
         <TimeseriesChart
           echarts={echarts}
           isDarkMode={dark}
@@ -20,21 +22,21 @@ export default function ResourcesChartImpl({ cpu, memoryMB, memoryLimitMB }: Res
           xAxisTickFormat={time}
           yAxisTickFormat={(v) => `${v}%`}
           tooltipValueFormat={(v) => `${v}%`}
-          ariaDescription="CPU usage of the environment over time."
+          ariaDescription={t("overview.resources.cpuDescription")}
         />
       </section>
-      <section aria-label="Memory">
-        <h3 className="mb-2 text-sm font-medium text-kumo-subtle">Memory (MB)</h3>
+      <section aria-label={t("overview.resources.memory")}>
+        <h3 className="mb-2 text-sm font-medium text-kumo-subtle">{t("overview.resources.memoryTitle")}</h3>
         <TimeseriesChart
           echarts={echarts}
           isDarkMode={dark}
           height={220}
           gradient
-          data={[{ name: "Memory", color: ChartPalette.categorical(1, dark), data: memoryMB }]}
-          thresholds={memoryLimitMB ? [{ value: memoryLimitMB, label: "Limit", color: ChartPalette.semantic("Attention", dark) }] : undefined}
+          data={[{ name: t("overview.resources.memory"), color: ChartPalette.categorical(1, dark), data: memoryMB }]}
+          thresholds={memoryLimitMB ? [{ value: memoryLimitMB, label: t("overview.resources.limit"), color: ChartPalette.semantic("Attention", dark) }] : undefined}
           xAxisTickFormat={time}
           tooltipValueFormat={(v) => `${v} MB`}
-          ariaDescription="Memory used by the environment over time."
+          ariaDescription={t("overview.resources.memoryDescription")}
         />
       </section>
     </div>
