@@ -1,0 +1,50 @@
+[
+  {
+    "version": "1.24.13",
+    "stable": true,
+    "files": [
+      {
+        "filename": "go-1.24.13-linux-x64.tar.gz",
+        "arch": "x64",
+        "platform": "linux",
+        "download_url": "https://github.com/actions/go-versions/releases/download/1.24.13-21696107652/go-1.24.13-linux-x64.tar.gz"
+      }
+    ]
+  },
+  {
+    "version": "1.24.12",
+    "stable": true,
+    "files": [
+      {
+        "filename": "go-1.24.12-linux-x64.tar.gz",
+        "arch": "x64",
+        "platform": "linux",
+        "download_url": "https://github.com/actions/go-versions/releases/download/1.24.12-21053836768/go-1.24.12-linux-x64.tar.gz"
+      }
+    ]
+  },
+  {
+    "version": "1.24.11",
+    "stable": true,
+    "files": [
+      {
+        "filename": "go-1.24.11-linux-x64.tar.gz",
+        "arch": "x64",
+        "platform": "linux",
+        "download_url": "https://github.com/actions/go-versions/releases/download/1.24.11-19880504225/go-1.24.11-linux-x64.tar.gz"
+      }
+    ]
+  },
+  {
+    "version": "1.24.10",
+    "stable": true,
+    "files": [
+      {
+        "filename": "go-1.24.10-linux-x64.tar.gz",
+        "arch": "x64",
+        "platform": "linux",
+        "download_url": "https://github.com/actions/go-versions/releases/download/1.24.10-19122940106/go-1.24.10-linux-x64.tar.gz"
+      }
+    ]
+  }
+]

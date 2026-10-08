@@ -244,6 +244,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
       void qc.invalidateQueries({ queryKey: ["scale-sets"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
       void qc.invalidateQueries({ queryKey: ["repositories"] });
+      void qc.invalidateQueries({ queryKey: ["templates", "profiles"] }); // who uses each profile
       onClose();
     } catch (err) {
       setError(message(err));

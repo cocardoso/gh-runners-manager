@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Badge, Banner, Button, DropdownMenu, Empty, LayerCard, Link, Select, Table, Tooltip } from "@cloudflare/kumo";
 import {
   ArrowCounterClockwiseIcon,
@@ -13,7 +13,7 @@ import {
   QuestionIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
-import { useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type TemplateVersion } from "@/api/client";
 import { useSettings, useTemplateProfiles, useTemplates } from "@/api/queries";
@@ -382,7 +382,8 @@ const newestFirst = (a: TemplateView, b: TemplateView) => (b.updated_at ?? "").l
 
 export function TemplatesPage() {
   const tl = useT();
-  const { tab } = useSearch({ strict: false }) as ListSearch;
+  const { tab, profile: chosen } = useSearch({ strict: false }) as ListSearch;
+  const navigate = useNavigate();
   const list = useTemplates();
   const settings = useSettings();
   const qc = useQueryClient();
@@ -392,7 +393,10 @@ export function TemplatesPage() {
   const canAct = settings.data?.admin_actions === true;
   const profilesQuery = useTemplateProfiles();
   const profileNames = (profilesQuery.data?.profiles ?? []).map((p) => p.name);
-  const [profile, setProfile] = useState("default");
+  // The profile shown stays in the URL; a profile that is gone falls back to the default one.
+  const profile = chosen && (profilesQuery.isLoading || profileNames.includes(chosen)) ? chosen : "default";
+  const setProfile = (p: string) =>
+    void navigate({ to: ".", search: (prev: ListSearch) => ({ ...prev, profile: p === "default" ? undefined : p }), replace: true });
   const all: TemplateView[] = list.data?.templates ?? [];
   // Versions of the chosen profile (records from before profiles belong to the default one).
   const templates = all.filter((t) => (t.profile || "default") === profile);
@@ -451,7 +455,7 @@ export function TemplatesPage() {
         {inProgress.map((t) => (
           <BuildCard key={t.id} t={t} />
         ))}
-        {building && inProgress.length === 0 && <StartingCard />}
+        {building && all.filter((t) => IN_PROGRESS.includes(t.state)).length === 0 && <StartingCard />}
         <InUseCard t={active} actions={active && actionsFor(active)} />
         <AvailableCard templates={available} actions={actionsFor} />
       </>

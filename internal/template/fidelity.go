@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -254,7 +253,8 @@ func CompareReports(published, actual []byte, checks []ingest.Check) (FidelityRe
 }
 
 // ExplainProfile explains the differences a profile causes: the tools it leaves out of
-// GitHub's recipe, and the apt packages and tool cache versions it adds.
+// GitHub's recipe, and tool cache versions it adds, should the report list them. (The
+// report lists only the recipe's own apt packages, so extra packages make no difference.)
 func (r *FidelityReport) ExplainProfile(p Profile) {
 	removed := p.removedTools()
 	r.Unexpected = 0
@@ -267,7 +267,7 @@ func (r *FidelityReport) ExplainProfile(p Profile) {
 		case d.Explained:
 		case d.Kind == "missing" && removed[tool]:
 			r.Differences[i].Explained, r.Differences[i].Reason = true, "left out by the template profile"
-		case d.Kind == "extra" && (strings.HasPrefix(d.Name, "Cached Tools") || slices.Contains(p.Apt, tool)):
+		case d.Kind == "extra" && len(p.Toolcache) > 0 && strings.Contains(d.Name, "Cached Tools"):
 			r.Differences[i].Explained, r.Differences[i].Reason = true, "added by the template profile"
 		}
 		if !r.Differences[i].Explained {

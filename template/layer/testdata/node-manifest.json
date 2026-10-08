@@ -1,0 +1,50 @@
+[
+  {
+    "version": "24.21.0",
+    "stable": true,
+    "files": [
+      {
+        "filename": "node-24.21.0-linux-x64.tar.gz",
+        "arch": "x64",
+        "platform": "linux",
+        "download_url": "https://github.com/actions/node-versions/releases/download/24.21.0-34304089047/node-24.21.0-linux-x64.tar.gz"
+      }
+    ]
+  },
+  {
+    "version": "24.20.0",
+    "stable": true,
+    "files": [
+      {
+        "filename": "node-24.20.0-linux-x64.tar.gz",
+        "arch": "x64",
+        "platform": "linux",
+        "download_url": "https://github.com/actions/node-versions/releases/download/24.20.0-33034074684/node-24.20.0-linux-x64.tar.gz"
+      }
+    ]
+  },
+  {
+    "version": "22.23.3",
+    "stable": true,
+    "files": [
+      {
+        "filename": "node-22.23.3-linux-x64.tar.gz",
+        "arch": "x64",
+        "platform": "linux",
+        "download_url": "https://github.com/actions/node-versions/releases/download/22.23.3-35947643734/node-22.23.3-linux-x64.tar.gz"
+      }
+    ]
+  },
+  {
+    "version": "22.23.2",
+    "stable": true,
+    "files": [
+      {
+        "filename": "node-22.23.2-linux-x64.tar.gz",
+        "arch": "x64",
+        "platform": "linux",
+        "download_url": "https://github.com/actions/node-versions/releases/download/22.23.2-30508424155/node-22.23.2-linux-x64.tar.gz"
+      }
+    ]
+  }
+]

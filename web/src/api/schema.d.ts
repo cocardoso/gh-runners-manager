@@ -2353,7 +2353,10 @@ export interface operations {
     "put-template-profile": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description * creates the profile only if the name is free (412 otherwise) */
+                "If-None-Match"?: string;
+            };
             path: {
                 name: string;
             };

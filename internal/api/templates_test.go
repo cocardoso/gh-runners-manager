@@ -188,3 +188,31 @@ func TestATemplateProfileInUseIsNotDeleted(t *testing.T) {
 		t.Fatalf("delete a used profile = %d %s, want 409 naming the scale set", resp.StatusCode, b)
 	}
 }
+
+func TestCreatingATemplateProfileNeverReplacesOne(t *testing.T) {
+	ft := &fakeTemplates{profiles: []template.Profile{{Name: "lean"}}}
+	h := newHarnessWith(t, "admin", func(d *Deps) { d.Templates = ft })
+	create := map[string]string{"Authorization": "Bearer admin", "If-None-Match": "*"}
+	for _, name := range []string{"lean", "default"} {
+		if resp, _ := h.call(t, "PUT", "/api/v1/template-profiles/"+name, map[string]any{}, create); resp.StatusCode != http.StatusPreconditionFailed {
+			t.Errorf("create %s = %d, want 412", name, resp.StatusCode)
+		}
+	}
+	if resp, b := h.call(t, "PUT", "/api/v1/template-profiles/fresh", map[string]any{}, create); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("create fresh = %d %s", resp.StatusCode, b)
+	}
+}
+
+func TestAScaleSetNeedsAnExistingTemplateProfile(t *testing.T) {
+	ft := &fakeTemplates{profiles: []template.Profile{{Name: "lean"}}}
+	h := newHarnessWith(t, "admin", func(d *Deps) { d.Templates = ft })
+	admin := map[string]string{"Authorization": "Bearer admin"}
+	body := map[string]any{"url": "https://github.com/o/r", "credential": "c", "template_profile": "typo"}
+	if resp, b := h.call(t, "PUT", "/api/v1/scale-sets/x", body, admin); resp.StatusCode != 422 || !strings.Contains(string(b), "typo") {
+		t.Fatalf("unknown profile = %d %s, want 422", resp.StatusCode, b)
+	}
+	body["template_profile"] = "lean"
+	if resp, b := h.call(t, "PUT", "/api/v1/scale-sets/x", body, admin); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("known profile = %d %s", resp.StatusCode, b)
+	}
+}

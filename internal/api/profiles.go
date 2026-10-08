@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"slices"
@@ -93,8 +95,9 @@ func registerProfiles(a huma.API, d Deps) {
 		})
 
 	type putIn struct {
-		Name string `path:"name"`
-		Body TemplateProfileIn
+		Name        string `path:"name"`
+		IfNoneMatch string `header:"If-None-Match" doc:"* creates the profile only if the name is free (412 otherwise)"`
+		Body        TemplateProfileIn
 	}
 	huma.Register(a, huma.Operation{OperationID: "put-template-profile", Method: http.MethodPut, Path: "/api/v1/template-profiles/{name}",
 		Summary: "Create or change a template profile; its templates are rebuilt (admin)", Tags: tags, DefaultStatus: http.StatusNoContent},
@@ -106,10 +109,25 @@ func registerProfiles(a huma.API, d Deps) {
 			if err := p.Normalize().Validate(); err != nil {
 				return nil, huma.Error422UnprocessableEntity(err.Error())
 			}
-			if err := d.Templates.PutProfile(ctx, p); err != nil {
+			if in.IfNoneMatch == "*" {
+				existing, err := d.Templates.Profiles(ctx)
+				if err != nil {
+					return nil, err
+				}
+				if slices.ContainsFunc(existing, func(e template.Profile) bool { return e.Name == in.Name }) {
+					return nil, huma.Error412PreconditionFailed("a template profile named " + in.Name + " already exists")
+				}
+			}
+			switch err := d.Templates.PutProfile(ctx, p); {
+			case errors.Is(err, template.ErrNoRoom):
+				return nil, huma.Error422UnprocessableEntity(err.Error() + " (widen templates.vmid_range)")
+			case err != nil:
 				return nil, err
 			}
-			audit(ctx, d, "template_profile_put", "template profile "+in.Name+" saved by "+Actor(ctx), events.Refs{}, map[string]any{"profile": in.Name})
+			// The audit trail identifies what was saved: the profile's hash and its script's.
+			script := sha256.Sum256([]byte(p.Normalize().Script))
+			audit(ctx, d, "template_profile_put", "template profile "+in.Name+" saved by "+Actor(ctx), events.Refs{},
+				map[string]any{"profile": in.Name, "spec_sha256": p.Hash(), "script_sha256": hex.EncodeToString(script[:])})
 			return &struct{}{}, nil
 		})
 
@@ -127,7 +145,7 @@ func registerProfiles(a huma.API, d Deps) {
 			}
 			err := d.Templates.DeleteProfile(ctx, in.Name)
 			switch {
-			case errors.Is(err, template.ErrDefaultProfile):
+			case errors.Is(err, template.ErrDefaultProfile), errors.Is(err, template.ErrProfileBuilding):
 				return nil, huma.Error409Conflict(err.Error())
 			case err != nil:
 				return nil, templateError(err)
@@ -135,6 +153,22 @@ func registerProfiles(a huma.API, d Deps) {
 			audit(ctx, d, "template_profile_delete", "template profile "+in.Name+" deleted by "+Actor(ctx), events.Refs{}, map[string]any{"profile": in.Name})
 			return &struct{}{}, nil
 		})
+}
+
+// knownProfile refuses a scale set's template profile that does not exist: its
+// environments would clone the default profile's template without anyone noticing.
+func (d Deps) knownProfile(ctx context.Context, name string) error {
+	if name == "" || name == store.DefaultProfile || d.Templates == nil {
+		return nil
+	}
+	profiles, err := d.Templates.Profiles(ctx)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(profiles, func(p template.Profile) bool { return p.Name == name }) {
+		return huma.Error422UnprocessableEntity("there is no template profile named " + name)
+	}
+	return nil
 }
 
 func nonNil(xs []string) []string {

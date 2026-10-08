@@ -29,6 +29,8 @@ export interface ListSearch {
   page?: number;
   /** The list's tab: what exists now (default) or its history. */
   tab?: string;
+  /** The template profile shown (Templates). */
+  profile?: string;
 }
 
 const listSearch = (s: Record<string, unknown>): ListSearch => ({
@@ -42,6 +44,7 @@ const listSearch = (s: Record<string, unknown>): ListSearch => ({
   kind: str(s.kind),
   page: num(s.page),
   tab: str(s.tab),
+  profile: str(s.profile),
 });
 
 export interface DetailSearch {

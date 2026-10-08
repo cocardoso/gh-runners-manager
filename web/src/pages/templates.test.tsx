@@ -341,3 +341,29 @@ test("versions are shown and built per profile", async () => {
   await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
   expect(await calls.find((c) => c.method === "POST")!.request.json()).toEqual({ profile: "lean" });
 });
+
+test("the profile shown stays in the URL, and a new profile never replaces one", async () => {
+  const calls = mockApi({
+    "/api/v1/settings": settings,
+    "/api/v1/templates": { templates: [{ ...templates[0], id: "lean1", profile: "lean" }], building: false, enabled: true },
+    "/api/v1/template-profiles": {
+      profiles: [
+        { name: "default", remove: [], toolcache: {}, apt: [], used_by: [] },
+        { name: "lean", remove: [], toolcache: {}, apt: [], used_by: [] },
+      ],
+      components: [],
+      toolcache_tools: [],
+    },
+    "PUT /api/v1/template-profiles/fresh": noContent,
+  });
+  const user = userEvent.setup();
+  renderApp("/templates?profile=lean");
+  expect(await screen.findByRole("button", { name: "Build lean" })).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Profiles" }));
+  await user.click(await screen.findByRole("button", { name: "New profile" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(within(dialog).getByLabelText("Name"), "fresh");
+  await user.click(within(dialog).getByRole("button", { name: "Save profile" }));
+  await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+  expect(calls.find((c) => c.method === "PUT")!.headers.get("If-None-Match")).toBe("*");
+});

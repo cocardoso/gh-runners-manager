@@ -1,5 +1,5 @@
 # The ghrm layer (spec §8.2), built on top of the official ubuntu-slim image, which is
-# built unmodified from actions/runner-images. It adds only what an LXC job environment needs.
+# built from actions/runner-images, minus the install scripts the template profile leaves out. It adds only what an LXC job environment needs.
 ARG BASE=ghrm-slim
 FROM ${BASE}
 
@@ -47,7 +47,7 @@ COPY mirrors.sh /tmp/mirrors.sh
 RUN /tmp/mirrors.sh / "$CACHE_MIRRORS" && rm /tmp/mirrors.sh
 
 # The template profile: extra apt packages, tool cache versions, its script.
-COPY toolcache.sh profile.sh /tmp/ghrm-profile/
+COPY toolcache.sh profile.sh script.sh /tmp/ghrm-profile/
 RUN AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache /tmp/ghrm-profile/profile.sh && rm -rf /tmp/ghrm-profile
 
 COPY ghrm-agent /usr/local/bin/ghrm-agent

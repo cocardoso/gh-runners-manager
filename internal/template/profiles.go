@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
+	"github.com/cocardoso/gh-runners-manager/internal/events"
 	"github.com/cocardoso/gh-runners-manager/internal/runtime"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
@@ -15,6 +17,16 @@ var ErrNoProfile = errors.New("template: no such profile")
 
 // ErrDefaultProfile is returned when deleting the default profile.
 var ErrDefaultProfile = errors.New("template: the default profile cannot be deleted")
+
+// ErrProfileBuilding is returned when deleting a profile one of whose versions is being built.
+var ErrProfileBuilding = errors.New("template: a version of the profile is being built; delete it once the build ends")
+
+// ErrNoRoom is returned when templates.vmid_range cannot hold another profile's versions.
+var ErrNoRoom = errors.New("template: templates.vmid_range is too small for another profile")
+
+// vmidsPerProfile is how many template VMIDs a profile holds at most: the active version,
+// the previous one, a candidate awaiting review, and a build in flight.
+const vmidsPerProfile = 3
 
 // Profiles returns every profile: the default one first (stored, or DefaultProfile), then
 // the others by name.
@@ -27,6 +39,7 @@ func (s *Service) Profiles(ctx context.Context) ([]Profile, error) {
 	for _, sp := range stored {
 		p, err := decodeProfile(sp)
 		if err != nil {
+			_, _ = s.d.Recorder.Warn(ctx, "template.profile_invalid", err.Error(), events.Refs{}, map[string]any{"profile": sp.Name})
 			continue
 		}
 		if p.Name == store.DefaultProfile {
@@ -58,13 +71,32 @@ func decodeProfile(sp store.TemplateProfile) (Profile, error) {
 		return Profile{}, fmt.Errorf("template: profile %s: %w", sp.Name, err)
 	}
 	p.Name = sp.Name
-	return p.Normalize(), nil
+	p = p.Normalize()
+	p.SavedAt = sp.UpdatedAt
+	return p, nil
+}
+
+// profileOf is the profile a version was built from: as stored with it, or (versions from
+// before profiles) the current one.
+func (s *Service) profileOf(ctx context.Context, t store.Template) (Profile, error) {
+	if len(t.ProfileSpec) > 0 {
+		var p Profile
+		if err := json.Unmarshal(t.ProfileSpec, &p); err != nil {
+			return Profile{}, fmt.Errorf("template: version %s: profile: %w", t.ID, err)
+		}
+		p.Name = profileOrDefault(t.Profile)
+		return p.Normalize(), nil
+	}
+	return s.Profile(ctx, profileOrDefault(t.Profile))
 }
 
 // PutProfile creates or changes a profile. A change rebuilds its templates on the next check.
 func (s *Service) PutProfile(ctx context.Context, p Profile) error {
 	p = p.Normalize()
 	if err := p.Validate(); err != nil {
+		return err
+	}
+	if err := s.roomFor(ctx, p.Name); err != nil {
 		return err
 	}
 	b, err := json.Marshal(p)
@@ -78,11 +110,41 @@ func (s *Service) PutProfile(ctx context.Context, p Profile) error {
 	return nil
 }
 
+// roomFor checks that templates.vmid_range holds the versions of every profile, a new one
+// included (builds disabled: nothing to hold).
+func (s *Service) roomFor(ctx context.Context, name string) error {
+	r := s.d.Config.VMIDRange
+	if !s.d.Config.Enabled() {
+		return nil
+	}
+	profiles, err := s.Profiles(ctx)
+	if err != nil {
+		return err
+	}
+	n := len(profiles)
+	if !slices.ContainsFunc(profiles, func(p Profile) bool { return p.Name == name }) {
+		n++
+	}
+	if size := r.End - r.Start + 1; n*vmidsPerProfile+1 > size {
+		return fmt.Errorf("%w: %d profiles need %d VMIDs, the range %d-%d has %d", ErrNoRoom, n, n*vmidsPerProfile+1, r.Start, r.End, size)
+	}
+	return nil
+}
+
 // DeleteProfile removes a profile and retires its versions; the caller makes sure no scale
 // set uses it. The versions are deleted once no environment depends on them.
 func (s *Service) DeleteProfile(ctx context.Context, name string) error {
 	if name == store.DefaultProfile {
 		return ErrDefaultProfile
+	}
+	all, err := s.d.Store.ListTemplates(ctx)
+	if err != nil {
+		return err
+	}
+	for _, t := range all {
+		if t.Profile == name && inProgress(t.State) {
+			return ErrProfileBuilding
+		}
 	}
 	if err := s.d.Store.DeleteTemplateProfile(ctx, name); errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("%w: %q", ErrNoProfile, name)

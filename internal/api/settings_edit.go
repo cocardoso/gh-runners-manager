@@ -141,6 +141,9 @@ func registerSettingsEdit(a huma.API, d Deps) {
 			ss := config.ScaleSet{Name: in.Name, URL: b.URL, Credential: b.Credential, RunnerGroup: b.RunnerGroup, Labels: b.Labels,
 				MaxConcurrent: b.MaxConcurrent, Cores: b.Cores, MemoryMB: b.MemoryMB, KeepOnFailureMinutes: b.KeepOnFailureMinutes,
 				WarmRunners: b.WarmRunners, TemplateProfile: b.TemplateProfile}
+			if err := d.knownProfile(ctx, b.TemplateProfile); err != nil {
+				return nil, err
+			}
 			put := d.Settings.PutScaleSet
 			if in.IfNoneMatch == "*" {
 				put = d.Settings.CreateScaleSet

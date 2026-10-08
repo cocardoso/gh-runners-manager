@@ -155,3 +155,23 @@ func TestSelfTestProvesTheFirewallProbeIsDropped(t *testing.T) {
 		}
 	}
 }
+
+const reportScript = `$tools = $installedSoftware.AddHeader("Tools")
+$tools.AddToolVersion("AzCopy", $(Get-AzCopyVersion))
+$cliTools.AddToolVersion("Azure CLI", $(Get-AzureCliVersion))
+$cliTools.AddToolVersion("Azure CLI (azure-devops)", $(Get-AzureDevopsVersion))
+$packageManagement.AddToolVersion("Pip", $(Get-PipVersion))
+`
+
+func TestRemoveReportToolsDropsTheirLines(t *testing.T) {
+	got, err := RemoveReportTools(reportScript, []string{"Azure CLI", "Pip"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, `"Azure CLI",`) || strings.Contains(got, `"Pip",`) || !strings.Contains(got, `"Azure CLI (azure-devops)",`) || !strings.Contains(got, "AzCopy") {
+		t.Fatalf("script = %s", got)
+	}
+	if _, err := RemoveReportTools(reportScript, []string{"Bicep"}); err == nil || !strings.Contains(err.Error(), "Bicep") {
+		t.Fatalf("a tool the script lacks = %v", err)
+	}
+}

@@ -71,8 +71,10 @@ type Service struct {
 	wg sync.WaitGroup
 
 	lastCheck time.Time
-	recheck   atomic.Bool     // a profile changed: check before the interval passes
-	uploading map[string]bool // versions with a root filesystem upload in flight
+	recheck   atomic.Bool // a profile changed or a build ended: check before the interval passes
+	// lastProfile is the profile built last; the checker starts after it.
+	lastProfile string
+	uploading   map[string]bool // versions with a root filesystem upload in flight
 
 	cacheMu sync.Mutex
 	inUse   map[string]inUseEntry
@@ -212,7 +214,7 @@ func layerVersionPrefix() string { return layer.Version + "." }
 func (s *Service) layerVersion(p Profile) string {
 	sum, err := s.agentSHA256()
 	if err != nil {
-		return layer.Version
+		sum = "no-agent" // still tell profiles apart
 	}
 	h := sha256.Sum256([]byte(sum + "\n" + s.d.Cache.Mirrors() + "\n" + p.Hash()))
 	return layerVersionPrefix() + hex.EncodeToString(h[:])[:12]
@@ -240,7 +242,7 @@ func (s *Service) Build(ctx context.Context, trigger, profile string) (store.Tem
 	}
 	lv := s.layerVersion(prof)
 	t := store.Template{ID: ids.NewEnvironmentID(), SlimRelease: slim.Version, RunnerVersion: run.Version, LayerVersion: lv,
-		RunnerSHA256: run.SHA256, State: store.TemplateBuilding, Trigger: trigger, Profile: prof.Name}
+		RunnerSHA256: run.SHA256, State: store.TemplateBuilding, Trigger: trigger, Profile: prof.Name, ProfileSpec: prof.JSON()}
 	// The "building" row is the guard against concurrent builds; the lock covers only its creation,
 	// not the slow start of the builder environment.
 	s.mu.Lock()
@@ -313,12 +315,13 @@ func (s *Service) BuildSpec(ctx context.Context, envID string) (ingest.BuildSpec
 	if !ok {
 		return ingest.BuildSpec{}, ingest.ErrWrongKind
 	}
-	prof, err := s.Profile(ctx, profileOrDefault(t.Profile))
+	prof, err := s.profileOf(ctx, t)
 	if err != nil {
 		return ingest.BuildSpec{}, err
 	}
 	spec := ingest.BuildSpec{TemplateID: t.ID, SlimTag: slimPrefix + t.SlimRelease, RunnerVersion: t.RunnerVersion,
-		RunnerSHA256: t.RunnerSHA256, LayerVersion: t.LayerVersion, CacheMirrors: s.d.Cache.Mirrors(), Remove: prof.Remove}
+		RunnerSHA256: t.RunnerSHA256, LayerVersion: t.LayerVersion, CacheMirrors: s.d.Cache.Mirrors(), Remove: prof.Remove,
+		RemoveReport: prof.removedToolNames()}
 	if t.BuildEnvID == envID {
 		spec.AgentSHA256, _ = s.agentSHA256()
 	}
@@ -368,11 +371,11 @@ func (s *Service) WriteLayer(ctx context.Context, envID string, w io.Writer) err
 	if err != nil {
 		return err
 	}
-	prof, err := s.Profile(ctx, profileOrDefault(t.Profile))
+	prof, err := s.profileOf(ctx, t)
 	if err != nil {
 		return err
 	}
-	return layer.Tar(w, f, st.Size(), prof.BuildScript())
+	return layer.Tar(w, f, st.Size(), prof.BuildFiles())
 }
 
 func (s *Service) agentPath() string {
@@ -534,6 +537,7 @@ func (s *Service) ReceiveSelfTest(ctx context.Context, envID string, rep ingest.
 
 // conclude compares the reports, then makes the version ready (and active when allowed) or failed.
 func (s *Service) conclude(ctx context.Context, id string, rep ingest.SelfTestReport) {
+	defer s.recheck.Store(true) // the next profile may build now
 	var failed []string
 	for _, c := range rep.Checks {
 		if !c.OK {
@@ -554,7 +558,7 @@ func (s *Service) conclude(ctx context.Context, id string, rep ingest.SelfTestRe
 	default:
 		if fid, err = CompareReports(published, rep.Software, rep.Checks); err != nil {
 			fid = FidelityReport{Checks: rep.Checks, Differences: []Difference{}, Unexpected: -1, Note: err.Error()}
-		} else if prof, perr := s.Profile(ctx, profileOrDefault(t.Profile)); perr == nil {
+		} else if prof, perr := s.profileOf(ctx, t); perr == nil {
 			fid.ExplainProfile(prof)
 		}
 	}
@@ -695,6 +699,7 @@ func (s *Service) failLocked(ctx context.Context, id, stage, reason string) {
 	if err != nil || !inProgress(t.State) {
 		return
 	}
+	s.recheck.Store(true) // the next profile may build now
 	t.State, t.FailureStage, t.FailureReason = store.TemplateFailed, stage, reason
 	if err := s.d.Store.UpdateTemplate(ctx, t); err != nil {
 		return
@@ -893,15 +898,14 @@ func (s *Service) deleteRetired(ctx context.Context) {
 
 // check starts a build when a profile's active version is behind: a new slim release,
 // runner release or layer version (the layer includes the profile), or none built yet.
-// One build runs at a time; profiles are checked in order, the default one first.
+// One build runs at a time; when it ends the next profile is checked at once, starting
+// after the profile built last, so one failing profile cannot hold the others back.
 func (s *Service) check(ctx context.Context, now time.Time) {
 	iv := s.d.Config.CheckInterval.Std()
 	due := s.lastCheck.IsZero() || now.Sub(s.lastCheck) >= iv || s.recheck.Load()
 	if !s.d.Config.Enabled() || iv <= 0 || !due || s.Running(ctx) {
 		return
 	}
-	s.lastCheck = now
-	s.recheck.Store(false)
 	slim, err := s.d.Releases.LatestSlim(ctx)
 	if err != nil {
 		return
@@ -914,8 +918,17 @@ func (s *Service) check(ctx context.Context, now time.Time) {
 	if err != nil {
 		return
 	}
+	s.lastCheck = now
+	s.recheck.Store(false)
 	list, _ := s.d.Store.ListTemplates(ctx)
-	for _, p := range profiles {
+	start := 0
+	for i, p := range profiles {
+		if p.Name == s.lastProfile {
+			start = i + 1
+		}
+	}
+	for k := range profiles {
+		p := profiles[(start+k)%len(profiles)]
 		lv := s.layerVersion(p)
 		active, err := s.d.Store.ActiveTemplate(ctx, p.Name)
 		trigger := ""
@@ -935,23 +948,35 @@ func (s *Service) check(ctx context.Context, now time.Time) {
 		default:
 			continue
 		}
-		// Do not retry the same inputs over and over: a failed attempt waits a day, a held one forever.
-		tried := false
-		for _, t := range list {
-			if t.Profile == p.Name && t.SlimRelease == slim.Version && t.RunnerVersion == run.Version && t.LayerVersion == lv &&
-				(t.State != store.TemplateFailed || now.Sub(t.UpdatedAt) < 24*time.Hour) && t.State != store.TemplateDeleted && t.State != store.TemplateRetired {
-				tried = true
-				break
-			}
-		}
-		if tried {
+		if triedAlready(list, p, slim.Version, run.Version, lv, now) {
 			continue
 		}
 		tpl, err := s.Build(ctx, trigger, p.Name)
 		if err == nil {
+			s.lastProfile = p.Name
 			s.record(ctx, "info", "template.check", "new inputs found ("+trigger+"); building template "+tpl.ID+" of profile "+p.Name, tpl,
 				map[string]any{"trigger": trigger, "profile": p.Name})
 		}
 		return
 	}
+}
+
+// triedAlready reports whether a version of the profile with these inputs exists, so the
+// same build is not tried over and over: a failed attempt waits a day, a held one forever.
+// A version retired before the profile was last saved does not count (a profile deleted
+// and made again).
+func triedAlready(list []store.Template, p Profile, slim, runner, lv string, now time.Time) bool {
+	for _, t := range list {
+		if t.Profile != p.Name || t.SlimRelease != slim || t.RunnerVersion != runner || t.LayerVersion != lv || t.State == store.TemplateDeleted {
+			continue
+		}
+		if t.State == store.TemplateFailed && now.Sub(t.UpdatedAt) >= 24*time.Hour {
+			continue
+		}
+		if t.State == store.TemplateRetired && !p.SavedAt.IsZero() && p.SavedAt.After(t.UpdatedAt) {
+			continue
+		}
+		return true
+	}
+	return false
 }

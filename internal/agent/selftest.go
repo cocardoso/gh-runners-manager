@@ -197,6 +197,20 @@ func RunSelfTest(ctx context.Context, c *Client, cmd Commander, o SelfTestOption
 				return err
 			}
 		}
+		if len(spec.RemoveReport) > 0 {
+			script := filepath.Join(o.ScriptsDir, "docs-gen", "Generate-SoftwareReport.ps1")
+			b, err := os.ReadFile(script)
+			if err != nil {
+				return err
+			}
+			edited, err := RemoveReportTools(string(b), spec.RemoveReport)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(script, []byte(edited), 0o644); err != nil {
+				return err
+			}
+		}
 		out := filepath.Join(o.Work, "report")
 		if err := os.MkdirAll(out, 0o755); err != nil {
 			return err
@@ -239,4 +253,29 @@ func writeFile(path, content string) error {
 		return err
 	}
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+// RemoveReportTools drops the tools a template profile leaves out from GitHub's report
+// script: it runs every version command under "stop on error", so a missing tool would
+// abort the whole report. Each tool is one line: <header>.AddToolVersion("<name>", ...).
+// A name the script does not report is an error: the recipe changed under the profile.
+func RemoveReportTools(script string, names []string) (string, error) {
+	lines := strings.Split(script, "\n")
+	for _, name := range names {
+		call := `.AddToolVersion("` + name + `",`
+		found := false
+		kept := lines[:0:0]
+		for _, l := range lines {
+			if strings.Contains(l, call) {
+				found = true
+				continue
+			}
+			kept = append(kept, l)
+		}
+		if !found {
+			return "", fmt.Errorf("the software report does not list %q", name)
+		}
+		lines = kept
+	}
+	return strings.Join(lines, "\n"), nil
 }

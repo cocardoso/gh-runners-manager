@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Badge, Banner, Empty, Grid, LayerCard, Link, Meter, Text, CodeBlock, cn } from "@cloudflare/kumo";
 import { ArrowSquareOutIcon, InfoIcon, RocketLaunchIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import type { Alert, Environment, Job, Overview, ScaleSet } from "@/api/client";
-import { useCache, useEnvironments, useJobStats, useJobs, useOverview, useScaleSets, useSettings, useTemplates } from "@/api/queries";
+import { useCache, useEnvironments, useJobStats, useJobs, useOverview, useProfileFallback, useScaleSets, useSettings, useTemplates } from "@/api/queries";
 import { ErrorState, Loading, Page, RelativeTime, Truncate } from "@/components/common";
 import { JobStatusBadge } from "@/components/status-badge";
 import { JobsChart } from "@/components/jobs-chart";
@@ -260,6 +260,7 @@ function RecentCard({ done: finished }: { done: Job[] }) {
 
 function ScaleSetsCard({ sets, running, queued, environments }: { sets: ScaleSet[]; running: Job[]; queued: Job[]; environments: Environment[] }) {
   const t = useT();
+  const fallback = useProfileFallback();
   return (
     <section aria-label={t("overview.scaleSets.title")}>
       <LayerCard>
@@ -288,6 +289,9 @@ function ScaleSetsCard({ sets, running, queued, environments }: { sets: ScaleSet
                       max: s.settings?.max_concurrent ? formatNumber(s.settings.max_concurrent) : "—",
                     })}
                   </span>
+                  {fallback(s.settings?.template_profile) && (
+                    <span className="text-sm text-kumo-subtle">{t("templates.profiles.fallback", { name: s.settings?.template_profile ?? "" })}</span>
+                  )}
                 </li>
               );
             })}
@@ -304,7 +308,8 @@ function PlatformCard({ sets }: { sets: ScaleSet[] }) {
   const cache = useCache();
   const settings = useSettings();
   const actives = (templates.data?.templates ?? []).filter((v) => v.state === "active" && v.slim_release);
-  const several = new Set(actives.map((v) => v.profile || "default")).size > 1;
+  // A profile's name shows whenever the version is not the default profile's.
+  const labelled = (v: { profile?: string }) => actives.length > 1 || (v.profile || "default") !== "default";
   const listening = sets.filter((s) => s.listening).length;
   const rows: [string, ReactNode][] = [
     [
@@ -313,7 +318,7 @@ function PlatformCard({ sets }: { sets: ScaleSet[] }) {
         <span className="flex flex-col items-end gap-0.5">
           {actives.map((active) => (
             <span key={active.id} className="flex flex-wrap items-center justify-end gap-x-2">
-              {several && <span className="text-kumo-subtle">{active.profile || "default"}</span>}
+              {labelled(active) && <span className="text-kumo-subtle">{active.profile || "default"}</span>}
               <Link href={`/templates/${encodeURIComponent(active.id)}`}>{active.slim_release}</Link>
               <RelativeTime className="text-kumo-subtle" value={active.activated_at} />
             </span>

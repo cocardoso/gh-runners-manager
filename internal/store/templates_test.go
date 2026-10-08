@@ -95,7 +95,7 @@ func TestOneActiveTemplatePerProfile(t *testing.T) {
 	ctx := context.Background()
 	for _, tpl := range []Template{
 		{ID: "d1", State: TemplateReady, VMID: 950},
-		{ID: "n1", State: TemplateReady, VMID: 951, Profile: "node"},
+		{ID: "n1", State: TemplateReady, VMID: 951, Profile: "node", ProfileSpec: []byte(`{"apt":["zip"]}`)},
 		{ID: "n2", State: TemplateReady, VMID: 952, Profile: "node"},
 	} {
 		if err := s.CreateTemplate(ctx, tpl); err != nil {
@@ -113,7 +113,7 @@ func TestOneActiveTemplatePerProfile(t *testing.T) {
 	if a, err := s.ActiveTemplate(ctx, "node"); err != nil || a.ID != "n2" {
 		t.Fatalf("node active = %+v, %v", a, err)
 	}
-	if n1, _ := s.GetTemplate(ctx, "n1"); n1.State != TemplateReady {
+	if n1, _ := s.GetTemplate(ctx, "n1"); n1.State != TemplateReady || string(n1.ProfileSpec) != `{"apt":["zip"]}` {
 		t.Fatalf("n1 = %s, want ready after n2 took over its profile", n1.State)
 	}
 }

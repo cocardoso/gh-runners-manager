@@ -1,5 +1,5 @@
 import { useId, useState, type FormEvent } from "react";
-import { Banner, Button, Checkbox, Dialog, DialogRoot, DialogTitle, Empty, Input, LayerCard, Link, Textarea, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, Checkbox, Dialog, DialogRoot, DialogTitle, Empty, Input, LayerCard, Link, Textarea, Tooltip, useKumoToastManager } from "@cloudflare/kumo";
 import { PencilSimpleIcon, PlusIcon, StackIcon, TrashIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type TemplateComponent, type TemplateProfile } from "@/api/client";
@@ -69,17 +69,23 @@ function ProfileCard({
               <Button size="sm" variant="secondary" icon={PencilSimpleIcon} onClick={onEdit}>
                 {t("templates.profiles.edit")}
               </Button>
-              <Button
-                size="sm"
-                variant="secondary-destructive"
-                icon={TrashIcon}
-                aria-label={t("templates.profiles.deleteLabel", { name: p.name })}
-                disabled={!!keptReason}
-                title={keptReason || undefined}
-                onClick={onDelete}
-              >
-                {t("templates.profiles.delete")}
-              </Button>
+              {keptReason ? (
+                // A disabled button takes no focus: its wrapper carries the reason.
+                <Tooltip
+                  content={keptReason}
+                  render={
+                    <span tabIndex={0} aria-label={keptReason}>
+                      <Button size="sm" variant="secondary-destructive" icon={TrashIcon} aria-label={t("templates.profiles.deleteLabel", { name: p.name })} disabled>
+                        {t("templates.profiles.delete")}
+                      </Button>
+                    </span>
+                  }
+                />
+              ) : (
+                <Button size="sm" variant="secondary-destructive" icon={TrashIcon} aria-label={t("templates.profiles.deleteLabel", { name: p.name })} onClick={onDelete}>
+                  {t("templates.profiles.delete")}
+                </Button>
+              )}
             </span>
           )}
         </LayerCard.Secondary>
@@ -151,7 +157,9 @@ function ProfileEditor({ initial, components, tools, onClose }: { initial?: Temp
         apt: splitList(apt),
         script,
       };
-      unwrap(await api.PUT("/api/v1/template-profiles/{name}", { params: { path: { name: name.trim() } }, body }));
+      // A new profile never replaces one saved under the same name.
+      const header = initial ? {} : { "If-None-Match": "*" };
+      unwrap(await api.PUT("/api/v1/template-profiles/{name}", { params: { path: { name: name.trim() }, header }, body }));
       toast.add({ title: t("templates.profiles.saved", { name: name.trim() }), description: t("templates.profiles.savedHelp"), variant: "success" });
       void qc.invalidateQueries({ queryKey: ["templates"] });
       onClose();
@@ -189,8 +197,17 @@ function ProfileEditor({ initial, components, tools, onClose }: { initial?: Temp
               <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
                 {components.map((c) => (
                   <div key={c.id} className="flex min-w-0 flex-col">
-                    <Checkbox label={componentLabel(c)} checked={remove.has(c.id)} onCheckedChange={(on) => toggle(c, !!on)} />
-                    {HINTS.has(c.id) && <span className="pl-6 text-xs text-kumo-subtle">{t(`templates.profiles.hints.${c.id}` as Key)}</span>}
+                    <Checkbox
+                      label={componentLabel(c)}
+                      checked={remove.has(c.id)}
+                      onCheckedChange={(on) => toggle(c, !!on)}
+                      aria-describedby={HINTS.has(c.id) ? `${id}-hint-${c.id}` : undefined}
+                    />
+                    {HINTS.has(c.id) && (
+                      <span id={`${id}-hint-${c.id}`} className="pl-6 text-xs text-kumo-subtle">
+                        {t(`templates.profiles.hints.${c.id}` as Key)}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -222,8 +239,19 @@ function ProfileEditor({ initial, components, tools, onClose }: { initial?: Temp
               <label htmlFor={`${id}-script`} className="text-base font-medium text-kumo-default">
                 {t("templates.profiles.field.script")}
               </label>
-              <Textarea id={`${id}-script`} className="min-h-32 font-mono text-sm" value={script} onChange={(e) => setScript(e.target.value)} />
-              <span className="text-sm text-kumo-subtle">{t("templates.profiles.field.scriptHelp")}</span>
+              <Textarea
+                id={`${id}-script`}
+                className="min-h-32 font-mono text-sm"
+                value={script}
+                onChange={(e) => setScript(e.target.value)}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                aria-describedby={`${id}-script-help`}
+              />
+              <span id={`${id}-script-help`} className="text-sm text-kumo-subtle">
+                {t("templates.profiles.field.scriptHelp")}
+              </span>
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3 border-t border-kumo-line px-6 py-4">
