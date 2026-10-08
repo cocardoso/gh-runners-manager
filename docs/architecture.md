@@ -1,38 +1,36 @@
 # Architecture
 
-This document holds the architecture diagrams of gh-runners-manager (`ghrm`). It is updated in the same change as any code that alters components, flows, networking or states. The [design document](superpowers/specs/2026-10-07-gh-runners-manager-design.md) explains the reasoning behind the design.
+This document holds the architecture diagrams of gh-runners-manager (`ghrm`). It is updated in the same change as any code that alters components, flows, networking or states. The [design document](design.md) explains the reasoning behind the design.
 
-Legend used in the diagrams: **green** = implemented, **grey dashed** = planned (with its milestone).
+## Components
 
-## Implementation status
-
-| Component | Package / location | Status |
-|---|---|---|
-| Configuration | `internal/config` | Implemented (M1, M2) |
-| Environment state machine | `internal/environment` | Implemented (M1) |
-| Capacity scheduler (pure logic) | `internal/scheduler` | Implemented (M1) |
-| Runtime interface and in-memory fake | `internal/runtime`, `internal/runtime/runtimetest` | Implemented (M1) |
-| Proxmox API client and fake server | `internal/proxmox`, `internal/proxmox/proxmoxtest` | Implemented (M1) |
-| `proxmox-lxc` runtime | `internal/runtime/proxmoxlxc` | Implemented (M1) |
-| Store (SQLite) | `internal/store` | Implemented (M2) |
-| Event bus and recorder | `internal/events` | Implemented (M2) |
-| Log store (files + follow) | `internal/logs` | Implemented (M2) |
-| Scale set adapter (`actions/scaleset`) | `internal/github` | Implemented (M2) |
-| Controller and reaper | `internal/controller` | Implemented (M2) |
-| Ingest (TLS, per-environment tokens) | `internal/ingest` | Implemented (M2) |
-| Agent | `cmd/ghrm-agent`, `internal/agent` | Implemented (M2) |
-| REST API and SSE | `internal/api` | Implemented (M2, paging and heartbeats M3) |
-| `ghrm version`, `smoke`, `serve`, `openapi`, `demo` | `cmd/ghrm` | Implemented (M1–M3) |
-| Simulated fleet for UI work and browser tests | `internal/demo` | Implemented (M3) |
-| Web UI (React, Kumo), embedded in the binary | `web/` | Implemented (M3); template pages (M4); sign-in, account and settings editors (M5) |
-| Template builder (`ubuntu-slim`): build, verify, activate, retain, release checks | `internal/template`, `template/layer` | Implemented (M4); `deploy/proxmox/dev-template.sh` creates the bootstrap template |
-| Agent build and self-test modes | `internal/agent` (`build.go`, `selftest.go`) | Implemented (M4) |
-| Sign-in: admin account (argon2id), sessions, CSRF, audit | `internal/auth`, `internal/api/auth.go` | Implemented (M5) |
-| Secrets sealed at rest (AES-256-GCM, separate key file), `ghrm secret` | `internal/secrets` | Implemented (M5) |
-| Editable credentials and scale sets, listener supervisor | `internal/settings`, `cmd/ghrm/supervisor.go` | Implemented (M5) |
-| Prometheus metrics, daily backups | `internal/metrics`, `internal/backup` | Implemented (M5) |
-| Registry cache: proxies, eviction, disk exporter, monitor, mirror settings in templates | `internal/cachemon`, `internal/agent` (`cacheprune.go`, `cacheexporter.go`), `template/layer/mirrors.sh` | Implemented (M6) |
-| Installer, container image, releases | `deploy/proxmox/install.sh`, `Dockerfile`, `deploy/docker`, `.github/workflows/release.yml` | Implemented (M5) |
+| Component | Package / location |
+|---|---|
+| Configuration | `internal/config` |
+| Environment state machine | `internal/environment` |
+| Capacity scheduler (pure logic) | `internal/scheduler` |
+| Runtime interface and in-memory fake | `internal/runtime`, `internal/runtime/runtimetest` |
+| Proxmox API client and fake server | `internal/proxmox`, `internal/proxmox/proxmoxtest` |
+| `proxmox-lxc` runtime | `internal/runtime/proxmoxlxc` |
+| Store (SQLite) | `internal/store` |
+| Event bus and recorder | `internal/events` |
+| Log store (files + follow) | `internal/logs` |
+| Scale set adapter (`actions/scaleset`) | `internal/github` |
+| Controller and reaper | `internal/controller` |
+| Ingest (TLS, per-environment tokens) | `internal/ingest` |
+| Agent | `cmd/ghrm-agent`, `internal/agent` |
+| REST API and SSE | `internal/api` |
+| `ghrm version`, `smoke`, `serve`, `openapi`, `demo` | `cmd/ghrm` |
+| Simulated fleet for UI work and browser tests | `internal/demo` |
+| Web UI (React, Kumo), embedded in the binary | `web/` |
+| Template builder (`ubuntu-slim`): build, verify, activate, retain, release checks | `internal/template`, `template/layer` |
+| Agent build and self-test modes | `internal/agent` (`build.go`, `selftest.go`) |
+| Sign-in: admin account (argon2id), sessions, CSRF, audit | `internal/auth`, `internal/api/auth.go` |
+| Secrets sealed at rest (AES-256-GCM, separate key file), `ghrm secret` | `internal/secrets` |
+| Editable credentials and scale sets, listener supervisor | `internal/settings`, `cmd/ghrm/supervisor.go` |
+| Prometheus metrics, daily backups | `internal/metrics`, `internal/backup` |
+| Registry cache: proxies, eviction, disk exporter, monitor, mirror settings in templates | `internal/cachemon`, `internal/agent` (`cacheprune.go`, `cacheexporter.go`), `template/layer/mirrors.sh` |
+| Installer, container image, releases | `deploy/proxmox/install.sh`, `Dockerfile`, `deploy/docker`, `.github/workflows/release.yml` |
 
 ## 1. System overview
 
@@ -106,7 +104,6 @@ flowchart LR
     metrics --> store
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
-    classDef planned fill:#f1f3f5,stroke:#868e96,stroke-dasharray:5 5,color:#000
     class runtime,scheduler,listener,reaper,store,ingest,api,ui,templates,settings,vault,auth,metrics,cache done
 ```
 
@@ -437,7 +434,7 @@ Yellow packages are test doubles; `internal/demo` uses the fake runtime to serve
 
 ## 7. Template pipeline
 
-A build clones the **active template** into a builder environment (it already has Docker, systemd and `ghrm-agent`), because the Proxmox API cannot run commands inside a fresh stock container. The very first template comes from `deploy/proxmox/dev-template.sh` (the bootstrap template, `proxmox.template_vmid`). Since the builder runs the active template's agent, which can be older than the control plane, it first replaces itself with the control plane's agent, so fixes to the build take effect in the next build.
+A build clones the **active template** into a builder environment (it already has Docker, systemd and `ghrm-agent`), because the Proxmox API cannot run commands inside a fresh stock container. The very first template is the bootstrap template (`proxmox.template_vmid`), which the installer creates. Since the builder runs the active template's agent, which can be older than the control plane, it first replaces itself with the control plane's agent, so fixes to the build take effect in the next build.
 
 The fidelity report compares the template's software report with the one GitHub publishes as an asset of the same `ubuntu-slim` release (the recipe's `ubuntu-slim-Report.json` is not refreshed for every release, so it is only a fallback). The recipe installs the latest releases at build time, so a build made after GitHub's shows newer versions: those differences are listed with their reason but do not hold the version back. A missing tool, an older version than GitHub's, a new major version of a language runtime, or an extra tool the layer does not install does.
 

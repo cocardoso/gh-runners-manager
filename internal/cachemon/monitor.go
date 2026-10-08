@@ -1,4 +1,4 @@
-// Package cachemon watches the registry cache on the job network (M6): whether each
+// Package cachemon watches the registry cache on the job network: whether each
 // origin's proxy answers, how many blobs it served from the cache, and the cache's disk
 // usage. It reads the proxies' Prometheus metrics and the cache's disk exporter.
 package cachemon
