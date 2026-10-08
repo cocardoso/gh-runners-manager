@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "./client";
 import { setCsrfToken } from "./auth-state";
 
@@ -115,4 +115,26 @@ export function useCache() {
 
 export function useHistorySettings() {
   return useQuery({ queryKey: ["history-settings"], queryFn: async () => unwrap(await api.GET("/api/v1/history/settings")) });
+}
+
+/** The repositories and organizations a credential's token can reach (asked from GitHub). */
+export function useCredentialTargets(name: string) {
+  return useQuery({
+    queryKey: ["credential-targets", name],
+    enabled: !!name,
+    retry: false,
+    staleTime: 5 * 60_000,
+    queryFn: async () => credentialTargets(name, false),
+  });
+}
+
+async function credentialTargets(name: string, refresh: boolean) {
+  const r = unwrap(await api.GET("/api/v1/credentials/{name}/targets", { params: { path: { name }, query: refresh ? { refresh } : {} } }));
+  return { targets: r.targets ?? [], truncated: r.truncated };
+}
+
+/** Asks GitHub again for what a credential reaches, past both caches. */
+export function useRefreshCredentialTargets() {
+  const qc = useQueryClient();
+  return async (name: string) => qc.setQueryData(["credential-targets", name], await credentialTargets(name, true));
 }

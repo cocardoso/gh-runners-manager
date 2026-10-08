@@ -76,6 +76,14 @@ func TestScaleSetEndpoints(t *testing.T) {
 			t.Errorf("%s = %d, want 422", name, resp.StatusCode)
 		}
 	}
+	// Creating (If-None-Match: *) never replaces a scale set of the same name.
+	create := map[string]string{"Authorization": "Bearer " + harnessToken, "If-None-Match": "*"}
+	if code, b := h.callCode(t, "PUT", "/api/v1/scale-sets/new-set", body, create); code != 412 || !strings.Contains(string(b), "already exists") {
+		t.Fatalf("create over new-set = %d %s, want 412", code, b)
+	}
+	if code, b := h.callCode(t, "PUT", "/api/v1/scale-sets/other-set", body, create); code != 204 {
+		t.Fatalf("create = %d %s", code, b)
+	}
 	if resp, _ := h.call(t, "PUT", "/api/v1/scale-sets/lab", body, tok); resp.StatusCode != 409 {
 		t.Fatalf("file scale set = %d, want 409", resp.StatusCode)
 	}
@@ -94,7 +102,7 @@ func TestScaleSetEndpoints(t *testing.T) {
 	for _, e := range evs {
 		kinds[e.Kind]++
 	}
-	if kinds["audit.scale_set_put"] != 1 || kinds["audit.scale_set_delete"] != 1 {
+	if kinds["audit.scale_set_put"] != 2 || kinds["audit.scale_set_delete"] != 1 {
 		t.Fatalf("audit = %v", kinds)
 	}
 }

@@ -167,3 +167,27 @@ func TestSubscribersHearChanges(t *testing.T) {
 		t.Fatal("no notification")
 	}
 }
+
+func TestCreatingAScaleSetNeverReplacesOne(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	r := e.registry(t)
+	if err := r.PutCredential(ctx, "ui-cred", "github_pat_ui"); err != nil {
+		t.Fatal(err)
+	}
+	ss := config.ScaleSet{Name: "ui-ss", URL: "https://github.com/o", Credential: "ui-cred", MaxConcurrent: 3}
+	if err := r.CreateScaleSet(ctx, ss); err != nil {
+		t.Fatal(err)
+	}
+	ss.MaxConcurrent = 9
+	if err := r.CreateScaleSet(ctx, ss); !errors.Is(err, ErrExists) {
+		t.Fatalf("err = %v, want ErrExists", err)
+	}
+	if got, _ := r.ScaleSet("ui-ss"); got.MaxConcurrent != 3 {
+		t.Fatalf("replaced: %+v", got)
+	}
+	ss.Name = "file-ss"
+	if err := r.CreateScaleSet(ctx, ss); !errors.Is(err, ErrExists) {
+		t.Fatalf("a file scale set's name: err = %v, want ErrExists", err)
+	}
+}

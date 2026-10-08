@@ -123,6 +123,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/credentials/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check a token before saving it: whose it is and what it can reach */
+        post: operations["check-token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/credentials/{name}": {
         parameters: {
             query?: never;
@@ -136,6 +153,23 @@ export interface paths {
         post?: never;
         /** Delete a GitHub credential that no scale set uses */
         delete: operations["delete-credential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/credentials/{name}/targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The repositories and organizations a credential's token can reach */
+        get: operations["list-credential-targets"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -566,6 +600,33 @@ export interface components {
             memory_budget_mb: number;
             /** Format: int64 */
             memory_committed_mb: number;
+        };
+        CheckInBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CheckInBody.json
+             */
+            readonly $schema?: string;
+            token: string;
+        };
+        CheckOutBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CheckOutBody.json
+             */
+            readonly $schema?: string;
+            /** @description Why the token failed, or why its repositories could not be listed */
+            error?: string;
+            login?: string;
+            ok: boolean;
+            /** Format: int64 */
+            organizations: number;
+            /** Format: int64 */
+            repositories: number;
+            /** @description The token reaches more repositories than were counted */
+            truncated: boolean;
         };
         CleanupInBody: {
             /**
@@ -1099,6 +1160,25 @@ export interface components {
             started_at?: string;
             status: string;
         };
+        Target: {
+            full_name: string;
+            /** @enum {string} */
+            kind: "repository" | "organization";
+            name?: string;
+            owner: string;
+            private: boolean;
+            url: string;
+        };
+        TargetList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/TargetList.json
+             */
+            readonly $schema?: string;
+            targets: components["schemas"]["Target"][] | null;
+            truncated: boolean;
+        };
         Template: {
             /**
              * Format: uri
@@ -1367,6 +1447,39 @@ export interface operations {
             };
         };
     };
+    "check-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckInBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckOutBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "put-credential": {
         parameters: {
             query?: never;
@@ -1417,6 +1530,40 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-credential-targets": {
+        parameters: {
+            query?: {
+                /** @description Bypass the 5-minute cache and ask GitHub again (a list under 10 seconds old is reused) */
+                refresh?: boolean;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetList"];
+                };
             };
             /** @description Error */
             default: {
@@ -1937,7 +2084,10 @@ export interface operations {
     "put-scale-set": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description * creates the scale set only if the name is free (412 otherwise) */
+                "If-None-Match"?: string;
+            };
             path: {
                 name: string;
             };

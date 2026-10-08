@@ -43,6 +43,8 @@ func settingsError(err error) error {
 	switch {
 	case errors.Is(err, settings.ErrReadOnly), errors.Is(err, settings.ErrInUse):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, settings.ErrExists):
+		return huma.Error412PreconditionFailed(err.Error())
 	case errors.Is(err, store.ErrNotFound):
 		return huma.Error404NotFound("not found")
 	}
@@ -122,8 +124,9 @@ func registerSettingsEdit(a huma.API, d Deps) {
 		})
 
 	type putScaleSetIn struct {
-		Name string `path:"name"`
-		Body ScaleSetSettings
+		Name        string `path:"name"`
+		IfNoneMatch string `header:"If-None-Match" doc:"* creates the scale set only if the name is free (412 otherwise)"`
+		Body        ScaleSetSettings
 	}
 	huma.Register(a, huma.Operation{OperationID: "put-scale-set", Method: http.MethodPut, Path: "/api/v1/scale-sets/{name}",
 		Summary: "Create or change a scale set; running environments keep their settings", Tags: tags, DefaultStatus: http.StatusNoContent},
@@ -134,7 +137,11 @@ func registerSettingsEdit(a huma.API, d Deps) {
 			b := in.Body
 			ss := config.ScaleSet{Name: in.Name, URL: b.URL, Credential: b.Credential, RunnerGroup: b.RunnerGroup, Labels: b.Labels,
 				MaxConcurrent: b.MaxConcurrent, Cores: b.Cores, MemoryMB: b.MemoryMB, KeepOnFailureMinutes: b.KeepOnFailureMinutes}
-			if err := d.Settings.PutScaleSet(ctx, ss); err != nil {
+			put := d.Settings.PutScaleSet
+			if in.IfNoneMatch == "*" {
+				put = d.Settings.CreateScaleSet
+			}
+			if err := put(ctx, ss); err != nil {
 				return nil, settingsError(err)
 			}
 			audit(ctx, d, "scale_set_put", "scale set "+in.Name+" saved by "+Actor(ctx), events.Refs{ScaleSet: in.Name}, nil)

@@ -76,7 +76,7 @@ test("scale sets can be created, edited and removed; file ones are read-only", a
 
   const uiCard = screen.getByRole("heading", { name: "big" }).closest("section")!;
   await user.click(within(uiCard).getByRole("button", { name: "Edit big" }));
-  const memory = await screen.findByRole("combobox", { name: "Memory" });
+  const memory = await screen.findByRole("combobox", { name: /^Memory/ });
   expect(memory).toHaveTextContent("8 GB");
   await user.click(memory);
   await user.click(await screen.findByRole("option", { name: "16 GB" }));
@@ -88,4 +88,66 @@ test("scale sets can be created, edited and removed; file ones are read-only", a
   await user.type(await screen.findByRole("textbox", { name: "Type big to confirm deletion" }), "big");
   await user.click(screen.getByRole("button", { name: "Remove scale set" }));
   await waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
+});
+
+test("a token is checked in the dialog before it is saved, and GitHub's page to create one is linked", async () => {
+  const calls = mockApi({
+    "/api/v1/credentials": { credentials: [] },
+    "POST /api/v1/credentials/check": { ok: true, login: "octocat", repositories: 3, organizations: 1 },
+  });
+  const user = userEvent.setup();
+  renderApp("/settings");
+  await user.click(await screen.findByRole("button", { name: "Add credential" }));
+  const dialog = await screen.findByRole("dialog");
+  const create = within(dialog).getByRole("link", { name: /Create a token on GitHub/ });
+  expect(create.getAttribute("href")).toBe("https://github.com/settings/personal-access-tokens/new");
+  expect(create.getAttribute("target")).toBe("_blank");
+  await user.type(within(dialog).getByLabelText("Token"), "github_pat_x");
+  await user.click(within(dialog).getByRole("button", { name: "Test token" }));
+  expect(await within(dialog).findByText(/octocat/)).toBeInTheDocument();
+  expect(within(dialog).getByText(/3 repositories, 1 organization/)).toBeInTheDocument();
+  expect(await calls.find((c) => c.url.pathname === "/api/v1/credentials/check")!.request.json()).toEqual({ token: "github_pat_x" });
+});
+
+test("a token that works but cannot list its repositories says so, not a plain success", async () => {
+  mockApi({
+    "/api/v1/credentials": { credentials: [] },
+    "POST /api/v1/credentials/check": { ok: true, login: "octocat", repositories: 0, organizations: 0, truncated: false, error: "Resource not accessible by personal access token" },
+  });
+  const user = userEvent.setup();
+  renderApp("/settings");
+  await user.click(await screen.findByRole("button", { name: "Add credential" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(within(dialog).getByLabelText("Token"), "github_pat_x");
+  await user.click(within(dialog).getByRole("button", { name: "Test token" }));
+  const status = await within(dialog).findByRole("status");
+  expect(status).toHaveTextContent(/octocat/);
+  expect(status).toHaveTextContent(/could not list its repositories: Resource not accessible/);
+});
+
+test("a token check that answers after the token changed is dropped", async () => {
+  let answer: (r: Response) => void = () => {};
+  mockApi({
+    "/api/v1/credentials": { credentials: [] },
+    "POST /api/v1/credentials/check": () => new Promise<Response>((r) => (answer = r)),
+  });
+  const user = userEvent.setup();
+  renderApp("/settings");
+  await user.click(await screen.findByRole("button", { name: "Add credential" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(within(dialog).getByLabelText("Token"), "github_pat_old");
+  await user.click(within(dialog).getByRole("button", { name: "Test token" }));
+  await user.type(within(dialog).getByLabelText("Token"), "x");
+  answer(new Response(JSON.stringify({ ok: true, login: "octocat", repositories: 1, organizations: 0, truncated: false }), { headers: { "Content-Type": "application/json" } }));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(within(dialog).queryByText(/octocat/)).not.toBeInTheDocument();
+});
+
+test("the credential dialog's fields are named by their labels alone", async () => {
+  mockApi({ "/api/v1/credentials": { credentials: [] } });
+  const user = userEvent.setup();
+  renderApp("/settings");
+  await user.click(await screen.findByRole("button", { name: "Add credential" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("textbox", { name: "Name" })).toBeInTheDocument();
 });

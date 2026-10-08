@@ -102,3 +102,12 @@ test("a partial cleanup shows its warning", async () => {
 test("cleanup counts are written in the language's number format", () => {
   expect(describeCounts({ environments: 1, jobs: 0, events: 12345, audit_events: 0, templates: 0 })).toContain("12,345 events");
 });
+
+test("the history settings explain themselves", async () => {
+  mockApi({ "/api/v1/history/settings": { mode: "automatic", days: 30, audit_days: 365 } });
+  renderApp("/settings");
+  const card = await historyCard();
+  expect(await within(card).findAllByRole("button", { name: "More information" })).toHaveLength(3);
+  expect(within(card).getByRole("spinbutton", { name: "Keep history (days)" })).toBeInTheDocument();
+  expect(within(card).getByRole("group", { name: "Cleanup" })).toBeInTheDocument();
+});

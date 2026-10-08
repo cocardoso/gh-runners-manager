@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Banner, Button, Dialog, DialogRoot, DialogTitle, Input, LayerCard, Radio, useKumoToastManager } from "@cloudflare/kumo";
 import { BroomIcon } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -7,6 +7,7 @@ import type { components } from "@/api/schema";
 import { useHistorySettings } from "@/api/queries";
 import { formatNumber } from "@/lib/format";
 import { useAdminAction } from "@/components/admin-action";
+import { HelpLabel, helpField } from "@/components/help-tip";
 import { ErrorState, Loading } from "@/components/common";
 import { tr, useT } from "@/i18n";
 
@@ -101,6 +102,7 @@ function CleanupDialog({ days, onClose }: { days: number; onClose: () => void })
 
 function SettingsForm({ initial }: { initial: Settings }) {
   const t = useT();
+  const id = useId();
   const qc = useQueryClient();
   const admin = useAdminAction();
   const [mode, setMode] = useState<Settings["mode"]>(initial.mode);
@@ -114,17 +116,30 @@ function SettingsForm({ initial }: { initial: Settings }) {
     });
   return (
     <div className="flex flex-col gap-4">
-      <Radio.Group legend={t("settings.history.cleanup")} value={mode} onValueChange={(v) => setMode(v as Settings["mode"])}>
+      {/* The help sits outside the legend, so the group is named by its title alone. */}
+      <div className="-mb-2 text-base font-medium text-kumo-default">
+        <HelpLabel label={<span aria-hidden>{t("settings.history.cleanup")}</span>} help={t("settings.historyHelp.modeTip")} />
+      </div>
+      <Radio.Group value={mode} onValueChange={(v) => setMode(v as Settings["mode"])}>
+        <Radio.Legend className="sr-only">{t("settings.history.cleanup")}</Radio.Legend>
         <Radio.Item label={t("settings.history.automatic")} value="automatic" />
         <Radio.Item label={t("settings.history.manual")} value="manual" />
       </Radio.Group>
       <p className="text-sm text-kumo-subtle">
         {mode === "automatic" ? t("settings.history.automaticHint") : t("settings.history.manualHint")}
       </p>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Input label={t("settings.history.keepDays")} type="number" min={1} max={365} value={days} onChange={(e) => setDays(e.target.value)} />
+      {/* items-start: a field without a hint keeps its own height, so both inputs line up. */}
+      <div className="grid items-start gap-4 sm:grid-cols-2">
         <Input
-          label={t("settings.history.keepAuditDays")}
+          {...helpField(`${id}-days`, t("settings.history.keepDays"), t("settings.historyHelp.daysTip"))}
+          type="number"
+          min={1}
+          max={365}
+          value={days}
+          onChange={(e) => setDays(e.target.value)}
+        />
+        <Input
+          {...helpField(`${id}-audit`, t("settings.history.keepAuditDays"), t("settings.historyHelp.auditTip"))}
           type="number"
           min={1}
           max={3650}
