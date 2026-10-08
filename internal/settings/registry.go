@@ -28,6 +28,8 @@ var (
 	ErrReadOnly = errors.New("settings: defined in the configuration file; edit ghrm.yaml instead")
 	// ErrInUse means a scale set still uses the credential.
 	ErrInUse = errors.New("settings: the credential is used by a scale set")
+	// ErrExists means a scale set of that name already exists.
+	ErrExists = errors.New("settings: a scale set with this name already exists")
 )
 
 // Credential is a GitHub credential. Token is never serialized.
@@ -235,8 +237,22 @@ func (r *Registry) ScaleSet(name string) (ScaleSet, bool) {
 
 // PutScaleSet creates or replaces a UI scale set (defaults applied, then validated).
 func (r *Registry) PutScaleSet(ctx context.Context, ss config.ScaleSet) error {
+	return r.putScaleSet(ctx, ss, false)
+}
+
+// CreateScaleSet is PutScaleSet that never replaces a scale set: ErrExists if the name is taken.
+func (r *Registry) CreateScaleSet(ctx context.Context, ss config.ScaleSet) error {
+	return r.putScaleSet(ctx, ss, true)
+}
+
+func (r *Registry) putScaleSet(ctx context.Context, ss config.ScaleSet, create bool) error {
 	r.wmu.Lock()
 	defer r.wmu.Unlock()
+	if create {
+		if _, ok := r.ScaleSet(ss.Name); ok {
+			return ErrExists
+		}
+	}
 	if _, ok := r.fileScaleSet(ss.Name); ok {
 		return ErrReadOnly
 	}

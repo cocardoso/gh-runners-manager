@@ -58,9 +58,9 @@ test("memory is chosen in GB and failed environments are kept for a chosen time"
   const { calls, user, dialog } = await openNew({ "PUT /api/v1/scale-sets/big": noContent });
   await user.type(within(dialog).getByLabelText("Name"), "big");
   await user.type(within(dialog).getByLabelText("Repository or organization URL"), "https://github.com/octo/app");
-  await user.click(within(dialog).getByRole("combobox", { name: /^Memory/ }));
+  await user.click(within(dialog).getByRole("combobox", { name: "Memory" }));
   await user.click(await screen.findByRole("option", { name: "16 GB" }));
-  await user.click(within(dialog).getByRole("combobox", { name: /^Keep a failed environment/ }));
+  await user.click(within(dialog).getByRole("combobox", { name: "Keep a failed environment" }));
   await user.click(await screen.findByRole("option", { name: "1 h" }));
   await user.click(within(dialog).getByRole("button", { name: "Save scale set" }));
   await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
@@ -76,8 +76,8 @@ test("a memory size outside the list, set earlier, stays selected", async () => 
   renderApp("/scale-sets");
   await user.click(await screen.findByRole("button", { name: "Edit odd" }));
   const dialog = await screen.findByRole("dialog");
-  expect(within(dialog).getByRole("combobox", { name: /^Memory/ })).toHaveTextContent("6 GB");
-  expect(within(dialog).getByRole("combobox", { name: /^Keep a failed environment/ })).toHaveTextContent("30 min");
+  expect(within(dialog).getByRole("combobox", { name: "Memory" })).toHaveTextContent("6 GB");
+  expect(within(dialog).getByRole("combobox", { name: "Keep a failed environment" })).toHaveTextContent("30 min");
 });
 
 const targets = {
@@ -118,6 +118,88 @@ test("when GitHub cannot list the repositories, the URL is typed and the reason 
 test("sensitive fields explain themselves", async () => {
   const { dialog } = await openNew({ "/api/v1/credentials/personal/targets": targets });
   expect(within(dialog).getByText("Use in your workflow")).toBeInTheDocument();
-  // Kumo's labelTooltip: an info button next to the label.
-  expect(within(dialog).getAllByRole("button", { name: /more information|info/i }).length).toBeGreaterThanOrEqual(5);
+  // The help buttons next to the labels.
+  expect(within(dialog).getAllByRole("button", { name: "More information" }).length).toBeGreaterThanOrEqual(5);
+});
+
+const listed = { "/api/v1/credentials/personal/targets": targets };
+
+test("a URL being typed stays an input, even when it passes through a listed one or is cleared", async () => {
+  mockApi({
+    ...listed,
+    "/api/v1/scale-sets": { scale_sets: [{ name: "odd", github_id: 1, desired: 0, live: 0, listening: true, waiting_since: "0001-01-01T00:00:00Z", source: "ui", settings: { url: "https://github.com/o/r", credential: "personal", memory_mb: 4096, cores: 2, max_concurrent: 1, keep_on_failure_minutes: 0 } }] },
+    "/api/v1/credentials": { credentials: personal },
+  });
+  const user = userEvent.setup();
+  renderApp("/scale-sets");
+  await user.click(await screen.findByRole("button", { name: "Edit odd" }));
+  const dialog = await screen.findByRole("dialog");
+  // Not in the list: the URL is shown as typed.
+  const input = await within(dialog).findByLabelText("Repository or organization URL");
+  await user.clear(input);
+  expect(within(dialog).getByLabelText("Repository or organization URL")).toHaveFocus();
+  await user.type(within(dialog).getByLabelText("Repository or organization URL"), "https://github.com/acme");
+  expect(within(dialog).getByLabelText("Repository or organization URL")).toHaveFocus();
+  expect(within(dialog).queryByRole("combobox", { name: "Repository or organization" })).not.toBeInTheDocument();
+});
+
+test("going back to the list from a typed URL that is not in it shows the list", async () => {
+  const { user, dialog } = await openNew(listed);
+  await user.click(await within(dialog).findByRole("button", { name: "Type the URL instead" }));
+  await user.type(within(dialog).getByLabelText("Repository or organization URL"), "https://github.com/x/y");
+  await user.click(within(dialog).getByRole("button", { name: "Pick from the list" }));
+  expect(await within(dialog).findByRole("combobox", { name: "Repository or organization" })).toHaveValue("");
+});
+
+test("clearing the picked repository empties it", async () => {
+  const { user, dialog } = await openNew(listed);
+  await user.click(await within(dialog).findByRole("combobox", { name: "Repository or organization" }));
+  await user.click(await screen.findByRole("option", { name: /cocardoso\/zeropaper/ }));
+  await user.click(within(dialog).getByRole("button", { name: "Clear selection" }));
+  await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Repository or organization" })).toHaveValue(""));
+  expect(within(dialog).getByText(/Fill in the URL to save/)).toBeInTheDocument();
+});
+
+test("a suggested name never takes an existing scale set's, and a create never replaces one", async () => {
+  const { calls, user, dialog } = await openNew({
+    ...listed,
+    "/api/v1/scale-sets": { scale_sets: [{ name: "zeropaper", github_id: 1, desired: 0, live: 0, listening: true, waiting_since: "0001-01-01T00:00:00Z", source: "ui" }] },
+    "PUT /api/v1/scale-sets/zeropaper-2": noContent,
+  });
+  await user.type(within(dialog).getByLabelText("Name"), "zeropaper");
+  expect(within(dialog).getByText(/A scale set with this name already exists/)).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "Save scale set" })).toBeDisabled();
+  await user.clear(within(dialog).getByLabelText("Name"));
+  await user.click(await within(dialog).findByRole("combobox", { name: "Repository or organization" }));
+  await user.click(await screen.findByRole("option", { name: /cocardoso\/zeropaper/ }));
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("zeropaper-2"); // a cleared name is suggested again
+  await user.click(within(dialog).getByRole("button", { name: "Save scale set" }));
+  await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+  expect(calls.find((c) => c.method === "PUT")!.headers.get("If-None-Match")).toBe("*");
+});
+
+test("while the list loads, the field is there and the URL can be typed at once", async () => {
+  const { user, dialog } = await openNew({ "/api/v1/credentials/personal/targets": () => new Promise(() => {}) });
+  expect(await within(dialog).findByText(/Loading what the credential can reach/)).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Type the URL instead" }));
+  await user.type(within(dialog).getByLabelText("Repository or organization URL"), "https://github.com/octo/app");
+  expect(within(dialog).getByLabelText("Repository or organization URL")).toHaveValue("https://github.com/octo/app");
+});
+
+test("the list can be asked again from GitHub, and says when it is cut", async () => {
+  const { calls, user, dialog } = await openNew({ "/api/v1/credentials/personal/targets": { ...targets, truncated: true } });
+  expect(await within(dialog).findByText(/Only the first 1,000 repositories are listed/)).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Reload the list" }));
+  await waitFor(() => expect(calls.some((c) => c.url.pathname.endsWith("/targets") && c.url.searchParams.get("refresh") === "true")).toBe(true));
+});
+
+test("private repositories are marked for screen readers too", async () => {
+  const { user, dialog } = await openNew(listed);
+  await user.click(await within(dialog).findByRole("combobox", { name: "Repository or organization" }));
+  expect(await screen.findByRole("img", { name: "private" })).toBeInTheDocument();
+});
+
+test("the credential select is named by its label alone", async () => {
+  const { dialog } = await openNew(listed);
+  expect(within(dialog).getByRole("combobox", { name: "Credential" })).toBeInTheDocument();
 });

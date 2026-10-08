@@ -108,3 +108,46 @@ test("a token is checked in the dialog before it is saved, and GitHub's page to 
   expect(within(dialog).getByText(/3 repositories, 1 organization/)).toBeInTheDocument();
   expect(await calls.find((c) => c.url.pathname === "/api/v1/credentials/check")!.request.json()).toEqual({ token: "github_pat_x" });
 });
+
+test("a token that works but cannot list its repositories says so, not a plain success", async () => {
+  mockApi({
+    "/api/v1/credentials": { credentials: [] },
+    "POST /api/v1/credentials/check": { ok: true, login: "octocat", repositories: 0, organizations: 0, truncated: false, error: "Resource not accessible by personal access token" },
+  });
+  const user = userEvent.setup();
+  renderApp("/settings");
+  await user.click(await screen.findByRole("button", { name: "Add credential" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(within(dialog).getByLabelText("Token"), "github_pat_x");
+  await user.click(within(dialog).getByRole("button", { name: "Test token" }));
+  const status = await within(dialog).findByRole("status");
+  expect(status).toHaveTextContent(/octocat/);
+  expect(status).toHaveTextContent(/could not list its repositories: Resource not accessible/);
+});
+
+test("a token check that answers after the token changed is dropped", async () => {
+  let answer: (r: Response) => void = () => {};
+  mockApi({
+    "/api/v1/credentials": { credentials: [] },
+    "POST /api/v1/credentials/check": () => new Promise<Response>((r) => (answer = r)),
+  });
+  const user = userEvent.setup();
+  renderApp("/settings");
+  await user.click(await screen.findByRole("button", { name: "Add credential" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(within(dialog).getByLabelText("Token"), "github_pat_old");
+  await user.click(within(dialog).getByRole("button", { name: "Test token" }));
+  await user.type(within(dialog).getByLabelText("Token"), "x");
+  answer(new Response(JSON.stringify({ ok: true, login: "octocat", repositories: 1, organizations: 0, truncated: false }), { headers: { "Content-Type": "application/json" } }));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(within(dialog).queryByText(/octocat/)).not.toBeInTheDocument();
+});
+
+test("the credential dialog's fields are named by their labels alone", async () => {
+  mockApi({ "/api/v1/credentials": { credentials: [] } });
+  const user = userEvent.setup();
+  renderApp("/settings");
+  await user.click(await screen.findByRole("button", { name: "Add credential" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("textbox", { name: "Name" })).toBeInTheDocument();
+});

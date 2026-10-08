@@ -1,13 +1,15 @@
-import { useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { Badge, Banner, Button, Dialog, DialogRoot, DialogTitle, Input, Link, SensitiveInput, Table, Tooltip } from "@cloudflare/kumo";
 import { PlusIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type CredentialView } from "@/api/client";
 import { useCredentials } from "@/api/queries";
-import { HelpLabel } from "@/components/help-tip";
+import { helpField } from "@/components/help-tip";
 import { formatNumber } from "@/lib/format";
 import { useT } from "@/i18n";
 import { ErrorState, Loading } from "./common";
+
+const toneClass = { success: "text-kumo-success", warning: "text-kumo-warning", danger: "text-kumo-danger" } as const;
 
 const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^settings: /, "") : String(e));
 
@@ -15,13 +17,16 @@ const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^settin
  * next to how to create one. */
 export function CredentialDialog({ open, name: fixedName, onClose }: { open: boolean; name?: string; onClose: () => void }) {
   const t = useT();
+  const id = useId();
   const qc = useQueryClient();
   const [name, setName] = useState(fixedName ?? "");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const [check, setCheck] = useState<{ ok: boolean; text: string }>();
+  const [check, setCheck] = useState<{ tone: "success" | "warning" | "danger"; text: string }>();
   const [checking, setChecking] = useState(false);
+  // The token being checked: an answer for a token changed meanwhile is dropped.
+  const checked = useRef("");
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -38,26 +43,29 @@ export function CredentialDialog({ open, name: fixedName, onClose }: { open: boo
     }
   };
   const test = async () => {
+    const tok = token.trim();
+    checked.current = tok;
     setChecking(true);
     setCheck(undefined);
     try {
-      const r = unwrap(await api.POST("/api/v1/credentials/check", { body: { token: token.trim() } }));
-      setCheck(
-        r.ok
-          ? {
-              ok: true,
-              text: t("settings.credentialGuide.works", {
-                login: r.login ?? "",
-                repos: t("settings.credentialGuide.repos", { count: r.repositories, n: formatNumber(r.repositories) }),
-                orgs: t("settings.credentialGuide.orgs", { count: r.organizations, n: formatNumber(r.organizations) }),
-              }),
-            }
-          : { ok: false, text: r.error ?? "" },
-      );
+      const r = unwrap(await api.POST("/api/v1/credentials/check", { body: { token: tok } }));
+      if (checked.current !== tok) return;
+      const login = r.login ?? "";
+      if (!r.ok) setCheck({ tone: "danger", text: r.error ?? "" });
+      else if (r.error) setCheck({ tone: "warning", text: t("settings.credentialGuide.listFailed", { login, error: r.error }) });
+      else if (r.repositories === 0 && r.organizations === 0) setCheck({ tone: "warning", text: t("settings.credentialGuide.noRepos", { login }) });
+      else {
+        const works = t("settings.credentialGuide.works", {
+          login,
+          repos: t("settings.credentialGuide.repos", { count: r.repositories, n: formatNumber(r.repositories) }),
+          orgs: t("settings.credentialGuide.orgs", { count: r.organizations, n: formatNumber(r.organizations) }),
+        });
+        setCheck({ tone: "success", text: r.truncated ? `${works} ${t("settings.credentialGuide.more", { n: formatNumber(1000) })}` : works });
+      }
     } catch (err) {
-      setCheck({ ok: false, text: message(err) });
+      if (checked.current === tok) setCheck({ tone: "danger", text: message(err) });
     } finally {
-      setChecking(false);
+      if (checked.current === tok) setChecking(false);
     }
   };
   const guide = (
@@ -95,26 +103,29 @@ export function CredentialDialog({ open, name: fixedName, onClose }: { open: boo
             <div className="flex min-w-0 flex-col gap-4">
               {error && <Banner variant="error" title={error} />}
               <Input
-                label={<HelpLabel label={t("settings.credentials.name")} help={t("settings.credentialGuide.nameTip")} />}
+                {...helpField(`${id}-name`, t("settings.credentials.name"), t("settings.credentialGuide.nameTip"))}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 disabled={!!fixedName}
                 description={t("settings.credentials.nameHint")}
               />
               <SensitiveInput
-                label={<HelpLabel label={t("settings.credentials.token")} help={t("settings.credentialGuide.tokenTip")} />}
-                aria-label={t("settings.credentials.token")}
+                {...helpField(`${id}-token`, t("settings.credentials.token"), t("settings.credentialGuide.tokenTip"))}
                 value={token}
                 onValueChange={(v) => {
                   setToken(v);
                   setCheck(undefined);
+                  checked.current = "";
+                  setChecking(false);
                 }}
               />
               <div className="flex flex-wrap items-center gap-3">
                 <Button type="button" variant="secondary" loading={checking} disabled={!token.trim()} onClick={() => void test()}>
                   {t("settings.credentialGuide.test")}
                 </Button>
-                {check && <span className={check.ok ? "text-sm text-kumo-success" : "text-sm text-kumo-danger"}>{check.text}</span>}
+                <span role="status" className={check ? `text-sm ${toneClass[check.tone]}` : "sr-only"}>
+                  {check?.text}
+                </span>
               </div>
             </div>
             {guide}

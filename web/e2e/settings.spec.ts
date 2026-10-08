@@ -17,9 +17,9 @@ test("a credential and a scale set are created, tested and removed from the UI",
   await page.getByRole("button", { name: "New scale set" }).click();
   const form = page.getByRole("dialog");
   // The repository is picked from what the credential reaches (the demo answers like GitHub).
-  await form.getByRole("combobox", { name: /^Credential/ }).click();
+  await form.getByRole("combobox", { name: "Credential", exact: true }).click();
   await page.getByRole("option", { name: "e2e-cred" }).click();
-  await form.getByRole("combobox", { name: /^Repository or organization/ }).click();
+  await form.getByRole("combobox", { name: "Repository or organization", exact: true }).click();
   await page.getByRole("option", { name: /octo\/infra/ }).click();
   await expect(form.getByLabel("Name")).toHaveValue("infra");
   await form.getByLabel("Name").fill("e2e-set");
@@ -69,4 +69,10 @@ test("the scale set form keeps its buttons in view and fits a phone", async ({ p
   await expect(dialog.getByRole("button", { name: "Save scale set" })).toBeInViewport();
   expect(await dialog.evaluate((d) => d.scrollWidth <= d.clientWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("the history fields line up, with or without a hint below", async ({ page, demo }) => {
+  await page.goto(`${demo.url}/settings`);
+  const top = async (name: string) => (await page.getByRole("spinbutton", { name, exact: true }).boundingBox())!.y;
+  expect(await top("Keep history (days)")).toBe(await top("Keep audit events (days)"));
 });

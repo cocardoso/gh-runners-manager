@@ -63,7 +63,7 @@ type Deps struct {
 	// TestCredential checks a GitHub token and returns its login.
 	TestCredential func(ctx context.Context, token string) (string, error)
 	// CredentialTargets lists the repositories and organizations a GitHub token can reach.
-	CredentialTargets func(ctx context.Context, token string) ([]github.Target, error)
+	CredentialTargets func(ctx context.Context, token string) (github.TargetList, error)
 }
 
 // CacheStatus reports the registry cache on the job network (cachemon.Monitor).

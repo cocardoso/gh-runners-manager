@@ -75,7 +75,7 @@ Expected output: the host capacity, then creation (about 12–15 s including the
 
 To try a branch on a host that already has the setup (for example one made by the installer), build with `make build-linux`, copy `dist/linux-amd64/ghrm` and `ghrm-agent` to the host, stop the service in the control-plane container, `pct push` both binaries to `/usr/local/bin`, and start it again. `install.sh --binary-dir <dir>` does the same, and creates whatever is missing.
 
-GitHub credentials (a fine-grained PAT with **Administration: read and write** on the repository; **Actions: read** shows job steps) and scale sets are added in the UI (Settings, Scale sets), or in `ghrm.yaml`. Workflows use `runs-on: <scale set name>`.
+GitHub credentials (a fine-grained PAT with **Administration: read and write** on the repository; **Actions: read** shows job steps; for an organization's scale set, the organization permission **Self-hosted runners: read and write**) and scale sets are added in the UI (Settings, Scale sets), or in `ghrm.yaml`. Workflows use `runs-on: <scale set name>`.
 
 Useful API calls (with the admin token from `/etc/ghrm/admin-token`):
 

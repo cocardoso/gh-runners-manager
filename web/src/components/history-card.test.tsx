@@ -108,5 +108,6 @@ test("the history settings explain themselves", async () => {
   renderApp("/settings");
   const card = await historyCard();
   expect(await within(card).findAllByRole("button", { name: "More information" })).toHaveLength(3);
-  expect(within(card).getByRole("spinbutton", { name: /^Keep history \(days\)/ })).toBeInTheDocument();
+  expect(within(card).getByRole("spinbutton", { name: "Keep history (days)" })).toBeInTheDocument();
+  expect(within(card).getByRole("group", { name: "Cleanup" })).toBeInTheDocument();
 });

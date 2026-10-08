@@ -1,16 +1,18 @@
 import type { ReactNode } from "react";
-import { Button, Tooltip } from "@cloudflare/kumo";
+import { Button, Popover } from "@cloudflare/kumo";
 import { InfoIcon } from "@phosphor-icons/react";
 import { useT } from "@/i18n";
 
-/** A "?" next to a label that explains where a value is used. */
+/** A "?" next to a label that explains where a value is used. It opens on a click or a tap, as a phone has no hover. */
 export function HelpTip({ text }: { text: ReactNode }) {
   const t = useT();
   return (
-    <Tooltip
-      content={<span className="block max-w-xs">{text}</span>}
-      render={<Button type="button" variant="ghost" size="xs" shape="square" icon={InfoIcon} aria-label={t("shell.help.more")} />}
-    />
+    <Popover>
+      <Popover.Trigger render={<Button type="button" variant="ghost" size="xs" shape="square" icon={InfoIcon} aria-label={t("shell.help.more")} />} />
+      <Popover.Content>
+        <Popover.Description className="block max-w-xs text-sm">{text}</Popover.Description>
+      </Popover.Content>
+    </Popover>
   );
 }
 
@@ -22,4 +24,10 @@ export function HelpLabel({ label, help }: { label: ReactNode; help: ReactNode }
       <HelpTip text={help} />
     </span>
   );
+}
+
+/** A field's label with its help, named by the label's text alone: Kumo's field label wraps
+ * the help button too, which would read "Name More information". Pass a unique id. */
+export function helpField(id: string, label: string, help: ReactNode) {
+  return { label: <HelpLabel label={<span id={id}>{label}</span>} help={help} />, "aria-labelledby": id };
 }

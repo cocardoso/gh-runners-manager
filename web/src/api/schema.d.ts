@@ -617,6 +617,7 @@ export interface components {
              * @example https://example.com/api/schemas/CheckOutBody.json
              */
             readonly $schema?: string;
+            /** @description Why the token failed, or why its repositories could not be listed */
             error?: string;
             login?: string;
             ok: boolean;
@@ -624,6 +625,8 @@ export interface components {
             organizations: number;
             /** Format: int64 */
             repositories: number;
+            /** @description The token reaches more repositories than were counted */
+            truncated: boolean;
         };
         CleanupInBody: {
             /**
@@ -1166,14 +1169,15 @@ export interface components {
             private: boolean;
             url: string;
         };
-        TargetsOutBody: {
+        TargetList: {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/TargetsOutBody.json
+             * @example https://example.com/api/schemas/TargetList.json
              */
             readonly $schema?: string;
             targets: components["schemas"]["Target"][] | null;
+            truncated: boolean;
         };
         Template: {
             /**
@@ -1541,7 +1545,7 @@ export interface operations {
     "list-credential-targets": {
         parameters: {
             query?: {
-                /** @description Ask GitHub again instead of using the list of the last minutes */
+                /** @description Bypass the 5-minute cache and ask GitHub again (a list under 10 seconds old is reused) */
                 refresh?: boolean;
             };
             header?: never;
@@ -1558,7 +1562,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TargetsOutBody"];
+                    "application/json": components["schemas"]["TargetList"];
                 };
             };
             /** @description Error */
@@ -2080,7 +2084,10 @@ export interface operations {
     "put-scale-set": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description * creates the scale set only if the name is free (412 otherwise) */
+                "If-None-Match"?: string;
+            };
             path: {
                 name: string;
             };

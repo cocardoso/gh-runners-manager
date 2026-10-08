@@ -29,6 +29,7 @@ This document holds the architecture diagrams of gh-runners-manager (`ghrm`). It
 | Sign-in: admin account (argon2id), sessions, CSRF, audit | `internal/auth`, `internal/api/auth.go` |
 | Secrets sealed at rest (AES-256-GCM, separate key file), `ghrm secret` | `internal/secrets` |
 | Editable credentials and scale sets, listener supervisor | `internal/settings`, `cmd/ghrm/supervisor.go` |
+| Repository picker and token check: what a credential can register runners for (`GET /api/v1/credentials/{name}/targets`, `POST /api/v1/credentials/check`) | `internal/github/targets.go`, `internal/api/credential_targets.go` |
 | Prometheus metrics, daily backups | `internal/metrics`, `internal/backup` |
 | Repositories view: scale sets and job activity per GitHub repository or organization (`GET /api/v1/repositories`) | `internal/api/repositories.go`, `internal/store/activity.go` |
 | History retention: daily or manual cleanup of finished environments, jobs, events, logs and failed template records | `internal/retention`, `internal/store/history.go` |
@@ -187,10 +188,15 @@ flowchart LR
     reg -- "change" --> ctl["Controller: add, update, drain removed"]
     reg -- "change" --> sup["Supervisor: start, restart, stop listeners"]
     reg -- "current token" --> gh["GitHub client (rebuilt when URL or token change)"]
+    ui -- "GET credentials/{name}/targets, POST credentials/check" --> tgt["Targets (5-minute cache per credential and token)"]
+    reg -- "token" --> tgt
+    tgt -- "GET /user/repos, /user/memberships/orgs" --> ghrest["GitHub REST API"]
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
-    class file,reg,ui,vault,db,ctl,sup,gh done
+    class file,reg,ui,vault,db,ctl,sup,gh,tgt,ghrest done
 ```
+
+The scale set form picks the repository or organization from what the credential can register runners for: the repositories it administers (`/user/repos`, `permissions.admin`, up to 1,000, then the list says it is cut) and their organizations (only those it administers when the token may read its memberships). The list is cached for 5 minutes per credential and token hash (`?refresh=true` asks again unless the list is under 10 seconds old; two requests at once share one listing); a GitHub error answers 502 with GitHub's message, and the form falls back to typing the URL. `POST /api/v1/credentials/check` tests a token before it is saved: whose it is and how many repositories and organizations it reaches. A new scale set is saved with `If-None-Match: *`, so it never replaces one of the same name (412).
 
 A removed scale set drains: its running environments finish, it gets no new ones, and its listener keeps running (with the last GitHub client and token, so job messages and runner removal still work) until the last environment is gone; then it disappears. It stays registered on GitHub (without runners) until deleted there.
 

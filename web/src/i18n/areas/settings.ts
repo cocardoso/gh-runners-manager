@@ -149,6 +149,9 @@ const en = {
     step4: "Generate it, copy it and paste it here.",
     test: "Test token",
     works: "Works: signed in as {login} · {repos}, {orgs}",
+    listFailed: "Works: signed in as {login}, but GitHub could not list its repositories: {error}",
+    noRepos: "Works: signed in as {login}, but the token administers no repository, so it cannot register runners.",
+    more: "(the first {n} repositories counted)",
     repos: {
       one: "{n} repository",
       other: "{n} repositories",
@@ -318,6 +321,9 @@ export const settings: Record<Locale, typeof en> = {
       step4: "Gere-o, copie e cole aqui.",
       test: "Testar token",
       works: "Funciona: conectado como {login} · {repos}, {orgs}",
+      listFailed: "Funciona: conectado como {login}, mas o GitHub não listou os repositórios: {error}",
+      noRepos: "Funciona: conectado como {login}, mas o token não administra nenhum repositório, então não registra runners.",
+      more: "(contados os primeiros {n} repositórios)",
       repos: {
         one: "{n} repositório",
         other: "{n} repositórios",
@@ -484,6 +490,9 @@ export const settings: Record<Locale, typeof en> = {
       step4: "Genéralo, cópialo y pégalo aquí.",
       test: "Probar token",
       works: "Funciona: conectado como {login} · {repos}, {orgs}",
+      listFailed: "Funciona: conectado como {login}, pero GitHub no pudo listar sus repositorios: {error}",
+      noRepos: "Funciona: conectado como {login}, pero el token no administra ningún repositorio, así que no puede registrar runners.",
+      more: "(se contaron los primeros {n} repositorios)",
       repos: {
         one: "{n} repositorio",
         other: "{n} repositorios",
@@ -639,7 +648,7 @@ export const settings: Record<Locale, typeof en> = {
       templateRecords: { one: "{n} enregistrement de template", other: "{n} enregistrements de templates" },
     },
     credentialGuide: {
-      title: "Créer le token",
+      title: "Comment créer le token",
       step1: "Ouvrez la page GitHub d'un nouveau token fine-grained :",
       create: "Créer un token sur GitHub",
       step2: "Resource owner : vous ou l'organisation. Repository access : les dépôts que servent les runners.",
@@ -650,6 +659,9 @@ export const settings: Record<Locale, typeof en> = {
       step4: "Générez-le, copiez-le et collez-le ici.",
       test: "Tester le token",
       works: "Fonctionne : connecté en tant que {login} · {repos}, {orgs}",
+      listFailed: "Fonctionne : connecté en tant que {login}, mais GitHub n'a pas pu lister ses dépôts : {error}",
+      noRepos: "Fonctionne : connecté en tant que {login}, mais le token n'administre aucun dépôt et ne peut donc pas enregistrer de runners.",
+      more: "(les {n} premiers dépôts comptés)",
       repos: {
         one: "{n} dépôt",
         other: "{n} dépôts",
@@ -816,6 +828,9 @@ export const settings: Record<Locale, typeof en> = {
       step4: "Generalo, copialo e incollalo qui.",
       test: "Prova il token",
       works: "Funziona: connesso come {login} · {repos}, {orgs}",
+      listFailed: "Funziona: connesso come {login}, ma GitHub non è riuscito a elencare i repository: {error}",
+      noRepos: "Funziona: connesso come {login}, ma il token non amministra alcun repository, quindi non può registrare runner.",
+      more: "(contati i primi {n} repository)",
       repos: {
         one: "{n} repository",
         other: "{n} repository",

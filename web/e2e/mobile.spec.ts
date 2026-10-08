@@ -29,3 +29,14 @@ test("a job detail page has no horizontal page scroll on a phone", async ({ page
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), url).toBeLessThanOrEqual(1);
   }
 });
+
+test("the credential dialog fits a phone, and a tap opens a field's help", async ({ page, demo }) => {
+  await page.goto(`${demo.url}/settings`);
+  await page.getByRole("button", { name: "Add credential" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("button", { name: "Save credential" })).toBeInViewport();
+  expect(await dialog.evaluate((d) => d.scrollWidth <= d.clientWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await dialog.getByRole("button", { name: "More information" }).first().tap();
+  await expect(page.getByText("A name for this token in ghrm; scale sets refer to it.")).toBeVisible();
+});
