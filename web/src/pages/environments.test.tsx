@@ -71,3 +71,32 @@ test("a refused destroy shows the server's reason", async () => {
   await user.click(screen.getByRole("button", { name: "Destroy environment" }));
   expect(await screen.findByText(/environment env-run is destroyed/)).toBeInTheDocument();
 });
+
+test("a destroyed environment can be deleted from history; a live one cannot", async () => {
+  const calls = mockApi({
+    "/api/v1/environments/env-old": env({ id: "env-old", state: "destroyed" }),
+    "/api/v1/environments/env-run": env({ id: "env-run", state: "running" }),
+    "/api/v1/settings": { version: "dev", admin_actions: true, proxmox: {}, ingest: {}, capacity: {}, scale_sets: [] },
+    "/api/v1/environments/env-old/logs/control-plane": { entries: [], next: 0 },
+    "/api/v1/environments/env-run/logs/control-plane": { entries: [], next: 0 },
+    "DELETE /api/v1/environments/env-old": () => new Response(null, { status: 204 }),
+  });
+  const user = userEvent.setup();
+  renderApp("/environments/env-old");
+  await user.click(await screen.findByRole("button", { name: "Delete from history" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText(/jobs, events and logs/)).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url.pathname === "/api/v1/environments/env-old")).toBe(true));
+});
+
+test("a running environment offers no Delete from history", async () => {
+  mockApi({
+    "/api/v1/environments/env-run": env({ id: "env-run", state: "running" }),
+    "/api/v1/settings": { version: "dev", admin_actions: true, proxmox: {}, ingest: {}, capacity: {}, scale_sets: [] },
+    "/api/v1/environments/env-run/logs/control-plane": { entries: [], next: 0 },
+  });
+  renderApp("/environments/env-run");
+  expect(await screen.findByRole("button", { name: "Destroy" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Delete from history" })).not.toBeInTheDocument();
+});

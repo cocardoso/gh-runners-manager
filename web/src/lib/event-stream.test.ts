@@ -137,6 +137,15 @@ describe("invalidationKeys", () => {
     expect(invalidationKeys(ev(1, "cache.down"))).toEqual(expect.arrayContaining([["cache"], ["overview"]]));
   });
 
+  test("history deletions refresh every list they can shrink", () => {
+    const lists = [["templates"], ["environments"], ["jobs"], ["stats"]];
+    expect(invalidationKeys(ev(1, "retention.cleaned"))).toEqual(expect.arrayContaining(lists));
+    for (const kind of ["audit.history_cleanup", "audit.template_delete", "audit.environment_delete"]) {
+      expect(invalidationKeys(ev(1, kind))).toEqual(expect.arrayContaining(lists));
+    }
+    expect(invalidationKeys(ev(1, "audit.history_settings"))).toEqual(expect.arrayContaining([["history-settings"]]));
+  });
+
   test("unknown kinds refresh only the overview", () => {
     expect(invalidationKeys(ev(1, "something.else"))).toEqual([["overview"]]);
   });

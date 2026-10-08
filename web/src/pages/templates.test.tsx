@@ -127,3 +127,22 @@ test("an unverified version does not claim to match", async () => {
   expect(await screen.findByText("Not verified yet")).toBeInTheDocument();
   expect(screen.queryByText("Matches GitHub's software report")).not.toBeInTheDocument();
 });
+
+test("a failed template record can be deleted after confirming", async () => {
+  const failed = { ...templates[0], id: "tplfail", state: "failed" };
+  const calls = mockApi({ "/api/v1/templates/tplfail": failed, "/api/v1/settings": settings, "DELETE /api/v1/templates/tplfail": () => new Response(null, { status: 204 }) });
+  const user = userEvent.setup();
+  renderApp("/templates/tplfail");
+  await user.click(await screen.findByRole("button", { name: "Delete" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText(/nothing changes on Proxmox/)).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url.pathname === "/api/v1/templates/tplfail")).toBe(true));
+});
+
+test("a ready template has no Delete action", async () => {
+  mockApi({ "/api/v1/templates/tplnew": templates[0], "/api/v1/settings": settings });
+  renderApp("/templates/tplnew");
+  expect(await screen.findByRole("button", { name: "Actions for tplnew" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+});

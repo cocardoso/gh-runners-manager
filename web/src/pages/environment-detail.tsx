@@ -5,6 +5,7 @@ import { useParams, useSearch } from "@tanstack/react-router";
 import { ApiError } from "@/api/client";
 import { useEnvironment, useJob, useJobEvents } from "@/api/queries";
 import { ErrorState, Loading, Page, useNow } from "@/components/common";
+import { DeleteRecord } from "@/components/delete-record";
 import { DestroyEnvironment } from "@/components/destroy-environment";
 import { DetailTabs } from "@/components/detail-tabs";
 import { EnvironmentPanel } from "@/components/environment-panel";
@@ -58,7 +59,11 @@ export function EnvironmentDetailPage() {
       actions={
         <>
           <EnvironmentStateBadge state={e.state} />
-          <DestroyEnvironment id={e.id} disabled={e.state === "destroyed" || e.state === "destroying"} />
+          {e.state === "destroyed" ? (
+            <DeleteRecord kind="environment" id={e.id} />
+          ) : (
+            <DestroyEnvironment id={e.id} disabled={e.state === "destroying"} />
+          )}
         </>
       }
     >
