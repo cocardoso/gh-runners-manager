@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -24,6 +25,7 @@ type CachePrune struct {
 	Instances   map[string]string // origin -> registry configuration file
 	StatusPath  string            // where used and budget bytes are written for the exporter
 	Registry    string            // the registry binary, by absolute path (pct exec has a short PATH)
+	Log         io.Writer         // one line per eviction; nil discards
 	// Run executes a command (systemctl, registry); exec when nil.
 	Run func(ctx context.Context, name string, args ...string) error
 }
@@ -150,6 +152,11 @@ func (p *CachePrune) Once(ctx context.Context) error {
 			}
 			if used, err = p.usage(); err != nil {
 				return err
+			}
+			if p.Log != nil {
+				name, _ := filepath.Rel(filepath.Join(p.Root, r.origin, "docker/registry/v2/repositories"), r.dir)
+				fmt.Fprintf(p.Log, "evicted %s/%s (last used %s); cache now %d of %d bytes\n",
+					r.origin, name, r.lastUsed.UTC().Format(time.RFC3339), used, p.BudgetBytes)
 			}
 		}
 	}

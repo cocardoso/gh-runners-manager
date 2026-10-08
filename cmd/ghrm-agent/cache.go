@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -46,7 +47,7 @@ func cachePruneFromArgs(args []string) (agent.CachePrune, error) {
 	if *status == "" {
 		*status = filepath.Join(*root, "status")
 	}
-	return agent.CachePrune{Root: *root, BudgetBytes: *budget << 30, HighPercent: *high, LowPercent: *low, Instances: inst, StatusPath: *status, Registry: *registry}, nil
+	return agent.CachePrune{Root: *root, BudgetBytes: *budget << 30, HighPercent: *high, LowPercent: *low, Instances: inst, StatusPath: *status, Registry: *registry, Log: os.Stdout}, nil
 }
 
 // cacheCommand runs "cache-prune" or "cache-exporter" on the registry cache container.

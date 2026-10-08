@@ -28,6 +28,7 @@ func repo(t *testing.T, root, origin, name string, size int, used time.Time) {
 }
 
 type pruneHarness struct {
+	log   strings.Builder
 	root  string
 	cmds  []string
 	prune CachePrune
@@ -35,7 +36,7 @@ type pruneHarness struct {
 
 func newPrune(t *testing.T, budget int64) *pruneHarness {
 	h := &pruneHarness{root: t.TempDir()}
-	h.prune = CachePrune{Root: h.root, BudgetBytes: budget, HighPercent: 85, LowPercent: 70,
+	h.prune = CachePrune{Root: h.root, BudgetBytes: budget, HighPercent: 85, LowPercent: 70, Log: &h.log,
 		Instances:  map[string]string{"docker.io": "/etc/ghrm-cache/docker.io.yml", "ghcr.io": "/etc/ghrm-cache/ghcr.io.yml"},
 		StatusPath: filepath.Join(h.root, "status"), Registry: "/usr/local/bin/registry",
 		Run: func(_ context.Context, name string, args ...string) error {
@@ -76,6 +77,9 @@ func TestPruneEvictsLeastRecentlyUsedFirstAndCollectsGarbage(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.root, "ghcr.io/docker/registry/v2/repositories/recent")); err != nil {
 		t.Fatal("the recent repository must stay (usage is now below the low mark)")
+	}
+	if !strings.Contains(h.log.String(), "evicted docker.io/old") || strings.Contains(h.log.String(), "recent") {
+		t.Fatalf("log = %q; each eviction is logged", h.log.String())
 	}
 	want := []string{"systemctl stop ghrm-cache-registry@docker.io", "/usr/local/bin/registry garbage-collect --delete-untagged /etc/ghrm-cache/docker.io.yml", "systemctl start ghrm-cache-registry@docker.io"}
 	if strings.Join(h.cmds, "|") != strings.Join(want, "|") {
