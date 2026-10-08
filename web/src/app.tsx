@@ -4,6 +4,7 @@ import { RouterProvider, type RouterHistory } from "@tanstack/react-router";
 import { Toasty, TooltipProvider } from "@cloudflare/kumo";
 import { LiveProvider } from "@/lib/live";
 import { onUnauthorized } from "@/api/auth-state";
+import { I18nProvider, type Locale } from "@/i18n";
 import { createAppRouter } from "./router";
 
 export function newQueryClient() {
@@ -23,10 +24,13 @@ export function App({
   history,
   queryClient,
   createEventSource,
+  locale,
 }: {
   history?: RouterHistory;
   queryClient?: QueryClient;
   createEventSource?: (url: string) => EventSource;
+  /** Fixes the language (tests); otherwise the stored choice or the browser's. */
+  locale?: Locale;
 }) {
   const [qc] = useState(() => queryClient ?? newQueryClient());
   const [router] = useState(() => createAppRouter(history));
@@ -36,14 +40,16 @@ export function App({
     return () => onUnauthorized(null);
   }, [qc]);
   return (
-    <QueryClientProvider client={qc}>
-      <LiveProvider createEventSource={createEventSource}>
-        <TooltipProvider>
-          <Toasty>
-            <RouterProvider router={router} />
-          </Toasty>
-        </TooltipProvider>
-      </LiveProvider>
-    </QueryClientProvider>
+    <I18nProvider initial={locale}>
+      <QueryClientProvider client={qc}>
+        <LiveProvider createEventSource={createEventSource}>
+          <TooltipProvider>
+            <Toasty>
+              <RouterProvider router={router} />
+            </Toasty>
+          </TooltipProvider>
+        </LiveProvider>
+      </QueryClientProvider>
+    </I18nProvider>
   );
 }
