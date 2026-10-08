@@ -586,6 +586,13 @@ put_file() {
   return 0
 }
 
+# push_binary VMID SRC DEST: replaces DEST even while it runs. pct push cannot write a
+# busy executable (and still exits 0); a rename next to it can.
+push_binary() {
+  pct push "$1" "$2" "$3.new" --perms 0755
+  pct exec "$1" -- mv -f "$3.new" "$3"
+}
+
 cache() {
   step "Registry cache (container $CACHE_VMID)"
   if [ "$NO_CACHE" = 1 ]; then
@@ -621,13 +628,13 @@ cache() {
       "https://github.com/distribution/distribution/releases/download/v$REGISTRY_VERSION/registry_${REGISTRY_VERSION}_linux_amd64.tar.gz"
     echo "$REGISTRY_SHA256  $tmp/registry.tar.gz" | sha256sum -c --quiet - || die "the registry download does not match its SHA-256"
     tar -xzf "$tmp/registry.tar.gz" -C "$tmp" registry
-    pct push "$CACHE_VMID" "$tmp/registry" /usr/local/bin/registry --perms 0755
+    push_binary "$CACHE_VMID" "$tmp/registry" /usr/local/bin/registry
     created "registry v$REGISTRY_VERSION"
     changed="$changed registry"
   fi
   binaries "$tmp"
   if [ "$(sha256sum "$tmp/ghrm-agent" | cut -d' ' -f1)" != "$(pct exec "$CACHE_VMID" -- sha256sum /usr/local/bin/ghrm-agent 2>/dev/null | cut -d' ' -f1 || true)" ]; then
-    pct push "$CACHE_VMID" "$tmp/ghrm-agent" /usr/local/bin/ghrm-agent --perms 0755
+    push_binary "$CACHE_VMID" "$tmp/ghrm-agent" /usr/local/bin/ghrm-agent
     created "ghrm-agent (eviction and disk exporter)"
     changed="$changed agent"
   fi

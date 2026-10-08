@@ -119,6 +119,8 @@ pct)
     destroy) sed -i.bak "/^$vmid /d" "$S/guests" ;;
     set) t=$(opt tags "${@:3}"); [ -n "$t" ] && sed -i.bak "s/^$vmid [^ ]*/$vmid $t/" "$S/guests" ;;
     push)
+      # Like the real pct push: a running binary cannot be overwritten, and the exit status is still 0.
+      if grep -qxF "$vmid $4" "$S/busy" 2>/dev/null; then echo "failed to create file: $4: Text file busy" >&2; exit 0; fi
       echo "$vmid $4" >>"$S/ct_files"
       /bin/mkdir -p "$(dirname "$S/files/$vmid$4")" && cp "$3" "$S/files/$vmid$4"
       [ "$4" = /usr/local/bin/ghrm ] && sh "$3" version >"$S/ct_version_$vmid"
@@ -134,6 +136,7 @@ pct)
         "sh -c umask 077; cat > "*) p=${line##*cat > }; /bin/mkdir -p "$(dirname "$f$p")"; cat >"$f$p"; echo "$vmid $p" >>"$S/ct_files"; exit 0 ;;
         "sh -c cat >> "*) p=${line##*cat >> }; /bin/mkdir -p "$(dirname "$f$p")"; cat >>"$f$p"; exit 0 ;;
         "cat /var/lib/ghrm/setup-token") echo setup-token-xyz; exit 0 ;;
+        "mv -f "*) set -- $line; /bin/mv -f "$f$3" "$f$4"; echo "$vmid $4" >>"$S/ct_files"; exit 0 ;;
         "cat "*) cat "$f${line#cat }" 2>/dev/null; exit $? ;;
         "grep -q ^cache: "*) grep -q '^cache:' "$f${line##* }" 2>/dev/null; exit $? ;;
         "sha256sum "*) [ -f "$f${line#sha256sum }" ] || exit 1; sha256sum "$f${line#sha256sum }" | sed "s| .*|  ${line#sha256sum }|"; exit 0 ;;

@@ -211,6 +211,14 @@ test_cache_rerun_changes_nothing() {
   expect_no_out '^  \+ .*cache'
 }
 
+test_cache_upgrades_its_running_agent() {
+  install || fail "first run: exit $?"
+  echo "102 /usr/local/bin/ghrm-agent" >"$FAKE_STATE/busy" # the disk exporter runs it
+  binaries v1.1.0
+  install || fail "second run: exit $?: $(tail -n 3 "$tmp/out")"
+  ct_file 102 /usr/local/bin/ghrm-agent | grep -q 'v1.1.0' || fail "the cache's ghrm-agent was not replaced while running"
+}
+
 test_existing_group_gets_the_cache_rule_once() {
   seed_dev_host
   install --vmid 310 --security-group gh-runner || fail "exit $?: $(tail -n 3 "$tmp/out")"
