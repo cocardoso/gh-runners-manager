@@ -190,9 +190,10 @@ func TestNotFoundMatchesOnlyMissingGuests(t *testing.T) {
 func TestWaitTaskRetriesTransientErrors(t *testing.T) {
 	srv, c := setup(t)
 	srv.AddGuest(proxmoxtest.Guest{VMID: 903, Type: "lxc"})
-	srv.TransientTaskErrors = 2
+	// More than one read's own attempts, so WaitTask's loop retries too.
+	srv.TransientTaskErrors = 4
 	if err := c.StartLXC(context.Background(), node, 903); err != nil {
-		t.Fatalf("StartLXC with 2 transient poll errors = %v, want nil", err)
+		t.Fatalf("StartLXC with 4 transient poll errors = %v, want nil", err)
 	}
 	srv.TransientTaskErrors = 100
 	if err := c.StopLXC(context.Background(), node, 903); err == nil {
@@ -211,6 +212,17 @@ func TestReadsRetryTransientServerErrors(t *testing.T) {
 	var apiErr *proxmox.APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != 500 {
 		t.Fatalf("ListLXC with persistent 500s = %v, want the 500", err)
+	}
+}
+
+func TestAMissingGuestIsAskedOnce(t *testing.T) {
+	srv, c := setup(t)
+	before := len(srv.Requests())
+	if _, err := c.LXCConfig(context.Background(), node, 4242); !errors.Is(err, proxmox.ErrNotFound) {
+		t.Fatalf("LXCConfig on a missing guest = %v, want ErrNotFound", err)
+	}
+	if n := len(srv.Requests()) - before; n != 1 {
+		t.Fatalf("a missing guest was asked %d times, want 1", n)
 	}
 }
 

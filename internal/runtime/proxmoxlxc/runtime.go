@@ -74,16 +74,24 @@ type Runtime struct {
 	cfg    Config
 	sleep  func(context.Context, time.Duration) error
 
-	allocMu    sync.Mutex  // held from VMID allocation until the clone exists
-	thinDenied atomic.Bool // the token may not read /disks/lvmthin: use the storage status
+	allocMu    sync.Mutex   // held from VMID allocation until the clone exists
+	thinDenied atomic.Int64 // unix ms of the last 403 on /disks/lvmthin: use the storage status
+	now        func() time.Time
 	idMu       sync.Mutex
 	idLocks    map[string]*sync.Mutex // per environment ID, for Create idempotency
 }
 
 // New returns a Runtime.
 func New(client *proxmox.Client, cfg Config) *Runtime {
-	return &Runtime{client: client, cfg: cfg, sleep: sleepContext, idLocks: map[string]*sync.Mutex{}}
+	return &Runtime{client: client, cfg: cfg, sleep: sleepContext, now: time.Now, idLocks: map[string]*sync.Mutex{}}
 }
+
+// SetClock replaces the clock (tests only).
+func (r *Runtime) SetClock(now func() time.Time) { r.now = now }
+
+// thinRecheck is how long a refused /disks/lvmthin is not asked again: the token's
+// permissions rarely change, but may be granted later.
+const thinRecheck = 10 * time.Minute
 
 // SetSleep replaces the firewall-settle sleep (tests only).
 func (r *Runtime) SetSleep(fn func(context.Context, time.Duration) error) { r.sleep = fn }
@@ -493,14 +501,19 @@ func (r *Runtime) Capacity(ctx context.Context) (runtime.Capacity, error) {
 func (r *Runtime) diskPercent(ctx context.Context) (float64, error) {
 	var pools []proxmox.ThinPool
 	var err error
-	if !r.thinDenied.Load() {
+	denied := false
+	if at := r.thinDenied.Load(); at != 0 && r.now().Sub(time.UnixMilli(at)) < thinRecheck {
+		denied = true
+	} else {
 		pools, err = r.client.ThinPools(ctx, r.cfg.Node)
+		var apiErr *proxmox.APIError
+		if denied = errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden; denied {
+			r.thinDenied.Store(r.now().UnixMilli())
+		} else {
+			r.thinDenied.Store(0)
+		}
 	}
-	var apiErr *proxmox.APIError
-	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
-		r.thinDenied.Store(true)
-	}
-	if r.thinDenied.Load() {
+	if denied {
 		st, err := r.client.StorageStatus(ctx, r.cfg.Node, r.cfg.Storage)
 		if err != nil {
 			return 0, fmt.Errorf("storage %s status: %w", r.cfg.Storage, err)

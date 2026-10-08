@@ -229,10 +229,20 @@ test_cache_rerun_changes_nothing() {
   install || fail "second run: exit $?: $(tail -n 3 "$tmp/out")"
   expect_no_log '^pct (create|push) 102'
   expect_no_log 'cat > /etc/ghrm-cache'
-  # An earlier install wrote the units private: a rerun makes them readable.
-  expect_log 'pct exec 102 -- chmod 0644 /etc/systemd/system/ghrm-cache-prune.timer'
+  # Modes already right are left alone.
+  expect_no_log 'chmod'
   expect_out "✓ container 102 (registry cache)"
   expect_no_out '^  \+ .*cache'
+}
+
+test_cache_units_written_private_are_made_readable() {
+  install || fail "first run: exit $?"
+  echo "102 /etc/systemd/system/ghrm-cache-prune.timer 600" >>"$FAKE_STATE/ct_modes" # as v0.5.0 left it
+  : >"$FAKE_LOG"
+  install || fail "second run: exit $?: $(tail -n 3 "$tmp/out")"
+  expect_log 'pct exec 102 -- chmod 0644 /etc/systemd/system/ghrm-cache-prune.timer'
+  expect_out "+ mode 0644 on /etc/systemd/system/ghrm-cache-prune.timer"
+  expect_no_log 'chmod 0644 /etc/systemd/system/ghrm-cache-exporter.service'
 }
 
 test_cache_upgrades_its_running_agent() {

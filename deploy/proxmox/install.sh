@@ -606,20 +606,22 @@ EOF
   fi
 }
 
-# put_file VMID PATH [MODE]: writes standard input to PATH in the container (0600, or
-# MODE, applied even when the content is unchanged) when it differs; it returns 0 when
-# it changed the content.
+# put_file VMID PATH [MODE]: writes standard input to PATH in the container (mode 0600)
+# when it differs, and returns 0 when it changed the content. MODE, when given, is set
+# whenever the file has another one (an earlier install wrote it 0600), and reported.
 put_file() {
-  local vmid=$1 path=$2 mode=${3:-} want have
+  local vmid=$1 path=$2 mode=${3:-} want have rc=1
   want=$(cat)
   have=$(pct exec "$vmid" -- cat "$path" 2>/dev/null || true)
-  if [ "$want" = "$have" ]; then
-    [ -z "$mode" ] || pct exec "$vmid" -- chmod "$mode" "$path"
-    return 1
+  if [ "$want" != "$have" ]; then
+    printf '%s\n' "$want" | pct exec "$vmid" -- sh -c "umask 077; cat > $path" || die "cannot write $path in container $vmid"
+    rc=0
   fi
-  printf '%s\n' "$want" | pct exec "$vmid" -- sh -c "umask 077; cat > $path"
-  [ -z "$mode" ] || pct exec "$vmid" -- chmod "$mode" "$path"
-  return 0
+  if [ -n "$mode" ] && [ "$(pct exec "$vmid" -- stat -c %a "$path" 2>/dev/null)" != "${mode#0}" ]; then
+    pct exec "$vmid" -- chmod "$mode" "$path" || die "cannot set mode $mode on $path in container $vmid"
+    [ $rc = 0 ] || created "mode $mode on $path (container $vmid)"
+  fi
+  return $rc
 }
 
 # push_binary VMID SRC DEST: replaces DEST even while it runs. pct push cannot write a

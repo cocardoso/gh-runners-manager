@@ -15,6 +15,7 @@ import (
 // Reap reconciles the store with the runtime and enforces state timeouts
 // (spec §9.1). It is idempotent and safe to run at any time.
 func (c *Controller) Reap(ctx context.Context) {
+	c.expireQueuedJobs(ctx)
 	guests, err := c.d.Runtime.List(ctx)
 	if err != nil {
 		_, _ = c.d.Recorder.Warn(ctx, "reaper.error", "listing runtime environments failed: "+err.Error(), events.Refs{}, nil)
@@ -87,4 +88,20 @@ func (c *Controller) liveRunning(ctx context.Context, ref runtime.Ref) bool {
 func (c *Controller) confirmedGone(ctx context.Context, ref runtime.Ref) bool {
 	_, err := c.d.Runtime.Status(ctx, ref)
 	return errors.Is(err, runtime.ErrNotFound)
+}
+
+// expireQueuedJobs closes jobs queued longer than GitHub keeps a job queued: GitHub has
+// canceled them, and a lost message must not leave them queued here for ever.
+func (c *Controller) expireQueuedJobs(ctx context.Context) {
+	stale, err := c.d.Store.ListJobs(ctx, store.JobFilter{Status: "assigned", QueuedBefore: c.now().Add(-maxQueue), Limit: 1000})
+	if err != nil {
+		return
+	}
+	for _, j := range stale {
+		if err := c.d.Store.UpsertJob(ctx, store.Job{ID: j.ID, Status: "completed", Result: "canceled", FinishedAt: c.now()}); err != nil {
+			continue
+		}
+		_, _ = c.d.Recorder.Warn(ctx, "job.completed", j.DisplayName+" completed: canceled (queued for more than 24 hours)",
+			events.Refs{ScaleSet: j.ScaleSet, JobID: j.ID}, map[string]any{"result": "canceled"})
+	}
 }

@@ -360,3 +360,40 @@ func TestCredentialAndSecretAreWrittenTogether(t *testing.T) {
 		t.Fatal("the record must stay when its secret could not be deleted")
 	}
 }
+
+func TestClaimJobOnlyTakesAQueuedJobOnce(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	_ = s.UpsertJob(ctx, Job{ID: "j1", ScaleSet: "lab", DisplayName: "build", QueuedAt: t0, Status: "assigned"})
+	ok, err := s.ClaimJob(ctx, "j1", "env-a", "ghrm-a", t0.Add(time.Minute))
+	if err != nil || !ok {
+		t.Fatalf("first claim = %v, %v, want true", ok, err)
+	}
+	j, _ := s.GetJob(ctx, "j1")
+	if j.Status != "running" || j.EnvironmentID != "env-a" || j.RunnerName != "ghrm-a" || !j.StartedAt.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("claimed job = %+v", j)
+	}
+	if ok, _ := s.ClaimJob(ctx, "j1", "env-b", "ghrm-b", t0); ok {
+		t.Fatal("a running job must not be claimed again")
+	}
+	if ok, _ := s.ClaimJob(ctx, "missing", "env-b", "ghrm-b", t0); ok {
+		t.Fatal("an unknown job cannot be claimed")
+	}
+}
+
+func TestListJobsByNameAndQueueTime(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	_ = s.UpsertJob(ctx, Job{ID: "old", DisplayName: "build", QueuedAt: t0.Add(-48 * time.Hour), Status: "assigned"})
+	_ = s.UpsertJob(ctx, Job{ID: "now", DisplayName: "build", QueuedAt: t0, Status: "assigned"})
+	_ = s.UpsertJob(ctx, Job{ID: "other", DisplayName: "test", QueuedAt: t0, Status: "assigned"})
+	got, err := s.ListJobs(ctx, JobFilter{DisplayName: "build", QueuedAfter: t0.Add(-24 * time.Hour)})
+	if err != nil || len(got) != 1 || got[0].ID != "now" {
+		t.Fatalf("jobs = %+v, %v, want only the recent build", got, err)
+	}
+	if got, _ := s.ListJobs(ctx, JobFilter{Status: "assigned", QueuedBefore: t0.Add(-24 * time.Hour)}); len(got) != 1 || got[0].ID != "old" {
+		t.Fatalf("stale queued jobs = %+v, want old", got)
+	}
+}

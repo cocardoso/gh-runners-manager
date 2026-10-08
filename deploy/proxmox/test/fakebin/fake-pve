@@ -142,7 +142,9 @@ pct)
       f="$S/files/$vmid"
       case $line in
         "test -x /usr/local/bin/ghrm") has ct_files "$vmid /usr/local/bin/ghrm"; exit $? ;;
-        "sh -c umask 077; cat > "*) p=${line##*cat > }; /bin/mkdir -p "$(dirname "$f$p")"; cat >"$f$p"; echo "$vmid $p" >>"$S/ct_files"; exit 0 ;;
+        "sh -c umask 077; cat > "*) p=${line##*cat > }; /bin/mkdir -p "$(dirname "$f$p")"; cat >"$f$p"; echo "$vmid $p" >>"$S/ct_files"; echo "$vmid $p 600" >>"$S/ct_modes"; exit 0 ;;
+        "chmod "*) set -- $line; echo "$vmid $3 ${2#0}" >>"$S/ct_modes"; exit 0 ;;
+        "stat -c %a "*) p=${line##* }; awk -v k="$vmid $p" '$1" "$2 == k { m = $3 } END { if (m == "") exit 1; print m }' "$S/ct_modes" 2>/dev/null; exit $? ;;
         "sh -c cat >> "*) p=${line##*cat >> }; /bin/mkdir -p "$(dirname "$f$p")"; cat >>"$f$p"; exit 0 ;;
         "cat /var/lib/ghrm/setup-token") echo setup-token-xyz; exit 0 ;;
         "mv -f "*) set -- $line; /bin/mv -f "$f$3" "$f$4"; echo "$vmid $4" >>"$S/ct_files"; exit 0 ;;

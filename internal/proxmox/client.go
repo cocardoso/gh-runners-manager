@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -144,13 +145,21 @@ func (c *Client) do(ctx context.Context, method, path string, params url.Values,
 	}
 }
 
-// retryableRead reports read failures worth sending again: server errors and network errors.
+// retryableRead reports read failures worth sending again: server errors that pass
+// (500 from a guest's command socket, proxy errors during a pveproxy reload) and a
+// connection the server dropped. A missing guest, an answer that did not decode, and
+// timeouts (a host that drops packets would only make the read wait three times
+// longer) are final.
 func retryableRead(err error) bool {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode >= 500
+		switch apiErr.StatusCode {
+		case 500, 502, 503, 504, 595, 596:
+			return !errors.Is(err, ErrNotFound)
+		}
+		return false
 	}
-	return transient(err)
+	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func (c *Client) doOnce(ctx context.Context, method, path string, params url.Values, out any) error {
