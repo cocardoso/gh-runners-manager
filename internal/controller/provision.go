@@ -46,6 +46,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 
 	c.mu.Lock()
 	var demands []scheduler.Demand
+	assigned := map[string]int{}
 	now := c.now()
 	for _, name := range c.order {
 		s := c.scaleSets[name]
@@ -60,7 +61,8 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		} else {
 			s.waitingSince = time.Time{}
 		}
-		demands = append(demands, scheduler.Demand{ScaleSet: cfg.Name, Desired: s.desired, Live: serving[cfg.Name],
+		assigned[cfg.Name] = s.desired
+		demands = append(demands, scheduler.Demand{ScaleSet: cfg.Name, Desired: withWarm(s.desired, cfg), Live: serving[cfg.Name],
 			MaxConcurrent: cfg.MaxConcurrent, MemoryMB: cfg.MemoryMB, WaitingSince: s.waitingSince})
 	}
 	c.mu.Unlock()
@@ -80,6 +82,11 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		HostAvailableMB: rc.HostMemoryAvailableMB, MemoryMarginMB: cp.MemoryMarginMB,
 		ThinPoolPercent: rc.ThinPoolPercent, MaxThinPoolPercent: cp.MaxDiskPercent,
 	})
+	for name := range plan.Waiting {
+		if assigned[name] <= serving[name] {
+			delete(plan.Waiting, name) // only warm runners are missing: no job waits
+		}
+	}
 	c.updateWaiting(ctx, plan)
 	for name, n := range plan.Create {
 		for range n {
@@ -89,6 +96,15 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// withWarm adds the warm runners to the assigned jobs. The warm runners fit within
+// max_concurrent; only jobs beyond it make the scale set wait for its limit.
+func withWarm(assigned int, cfg config.ScaleSet) int {
+	if assigned > cfg.MaxConcurrent {
+		return assigned
+	}
+	return min(assigned+cfg.WarmRunners, cfg.MaxConcurrent)
 }
 
 func isServing(state string) bool {

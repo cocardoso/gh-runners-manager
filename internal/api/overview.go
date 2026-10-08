@@ -267,7 +267,8 @@ func settingsView(d Deps) Settings {
 		"memory_margin_mb": c.Capacity.MemoryMarginMB, "max_disk_percent": c.Capacity.MaxDiskPercent}
 	for _, ss := range c.ScaleSets {
 		s.ScaleSets = append(s.ScaleSets, map[string]any{"name": ss.Name, "url": ss.URL, "credential": ss.Credential, "runner_group": ss.RunnerGroup,
-			"labels": ss.Labels, "max_concurrent": ss.MaxConcurrent, "cores": ss.Cores, "memory_mb": ss.MemoryMB, "keep_on_failure_minutes": ss.KeepOnFailureMinutes})
+			"labels": ss.Labels, "max_concurrent": ss.MaxConcurrent, "cores": ss.Cores, "memory_mb": ss.MemoryMB, "keep_on_failure_minutes": ss.KeepOnFailureMinutes,
+			"warm_runners": ss.WarmRunners})
 	}
 	return s
 }

@@ -60,6 +60,7 @@ scale_sets:
     cores: 2
     memory_mb: 4096
     keep_on_failure_minutes: 0
+    warm_runners: 0                  # runners kept online before a job arrives (faster start, holds memory)
 
 # Template builds (spec §8). ghrm builds templates from GitHub's ubuntu-slim recipe plus the
 # ghrm layer, verifies them and keeps the previous one for roll-back. Disabled until vmid_range is set;

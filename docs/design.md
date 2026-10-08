@@ -261,7 +261,7 @@ New environments use the `active` template. Environments that are already runnin
 For each scale set:
 
 ```
-desired = min(scale_set.max_concurrent, assigned_jobs + scale_set.warm_pool)
+desired = min(scale_set.max_concurrent, assigned_jobs + scale_set.warm_runners)   # assigned_jobs when it alone exceeds the limit
 ```
 
 Creation is gated by global limits, which are evaluated at creation time:
@@ -274,7 +274,7 @@ Creation is gated by global limits, which are evaluated at creation time:
 | CPU | Not limited; overcommit is allowed |
 
 - When capacity is short, waiting jobs are served first-in, first-out across scale sets. The UI shows why each job waits, for example "waiting for memory" or "scale set limit reached".
-- The warm pool defaults to 0. A warm pool trades idle memory for about 10 s less wait.
+- `warm_runners` defaults to 0. Warm runners trade idle memory for about 25 s less wait per job (measured: clone, firewall, boot and registration). Missing warm runners never count as waiting jobs. An idle runner past the idle timeout stays while its scale set has no more idle runners than `warm_runners`, and is replaced after an hour so it picks up a newer template.
 
 ### 9.1 Reaper
 

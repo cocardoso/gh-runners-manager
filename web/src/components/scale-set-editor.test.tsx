@@ -67,6 +67,22 @@ test("memory is chosen in GB and failed environments are kept for a chosen time"
   expect(await calls.find((c) => c.method === "PUT")!.request.json()).toMatchObject({ memory_mb: 16384, keep_on_failure_minutes: 60, credential: "personal" });
 });
 
+test("warm runners are saved and never exceed the jobs at a time", async () => {
+  const { calls, user, dialog } = await openNew({ "PUT /api/v1/scale-sets/fast": noContent });
+  await user.type(within(dialog).getByLabelText("Name"), "fast");
+  await user.type(within(dialog).getByLabelText("Repository or organization URL"), "https://github.com/octo/app");
+  const warm = within(dialog).getByRole("spinbutton", { name: "Warm runners" });
+  await user.clear(warm);
+  await user.type(warm, "3");
+  expect(within(dialog).getByText("At most the jobs at once (2).")).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "Save scale set" })).toBeDisabled();
+  await user.clear(warm);
+  await user.type(warm, "1");
+  await user.click(within(dialog).getByRole("button", { name: "Save scale set" }));
+  await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+  expect(await calls.find((c) => c.method === "PUT")!.request.json()).toMatchObject({ warm_runners: 1 });
+});
+
 test("a memory size outside the list, set earlier, stays selected", async () => {
   mockApi({
     "/api/v1/scale-sets": { scale_sets: [{ name: "odd", github_id: 1, desired: 0, live: 0, listening: true, waiting_since: "0001-01-01T00:00:00Z", source: "ui", settings: { url: "https://github.com/o/r", credential: "personal", memory_mb: 6144, cores: 2, max_concurrent: 1, keep_on_failure_minutes: 30 } }] },

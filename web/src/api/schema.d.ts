@@ -1082,6 +1082,11 @@ export interface components {
             runner_group?: string;
             /** @description https://github.com/<owner>[/<repo>] */
             url: string;
+            /**
+             * Format: int64
+             * @description Runners kept online before any job arrives (counts toward max_concurrent)
+             */
+            warm_runners?: number;
         };
         SessionState: {
             /**
