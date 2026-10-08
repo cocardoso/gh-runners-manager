@@ -192,6 +192,9 @@ preflight() {
   if [ "$major" -lt 9 ] || { [ "$major" -eq 9 ] && [ "$minor" -lt 1 ]; }; then
     die "Proxmox VE 9.1 or later is required (found $v): ghrm passes the runner bootstrap through the LXC env option"
   fi
+  local arch
+  arch=$(dpkg --print-architecture)
+  [ "$arch" = amd64 ] || die "ghrm ships amd64 binaries only (this host is $arch)"
   exists "Proxmox VE $v on node $NODE"
   if [ "$DRY_RUN" = 1 ]; then note "dry run: nothing will be changed"; fi
 }
@@ -337,10 +340,10 @@ firewall() {
 # os_image PATTERN prints the volume ID of a downloaded image, downloading it if needed.
 os_image() {
   local pattern=$1 name
-  name=$(pveam list "$OS_STORAGE" | awk '{print $1}' | grep -E "$pattern" | sort | tail -n 1 || true)
+  name=$(pveam list "$OS_STORAGE" | awk '{print $1}' | grep -E "$pattern" | grep '_amd64\.' | sort | tail -n 1 || true)
   if [ -n "$name" ]; then echo "$name"; return; fi
   run pveam update >/dev/null
-  name=$(pveam available --section system | awk '{print $2}' | grep -E "${pattern#*/}" | sort | tail -n 1)
+  name=$(pveam available --section system | awk '{print $2}' | grep -E "${pattern#*/}" | grep '_amd64\.' | sort | tail -n 1)
   [ -n "$name" ] || die "no container image matches $pattern"
   run pveam download "$OS_STORAGE" "$name" >/dev/null
   echo "$OS_STORAGE:vztmpl/$name"

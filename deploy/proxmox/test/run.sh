@@ -238,6 +238,19 @@ test_dockerhub_token_never_touches_the_host_disk() {
   ! grep -q dckr_pat_secret123 "$tmp/out" || fail "the token was printed"
 }
 
+test_container_images_match_the_host_architecture() {
+  printf 'local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst\nlocal:vztmpl/debian-13-standard_13.6-1_arm64.tar.zst\n' >"$FAKE_STATE/images"
+  install || fail "exit $?"
+  expect_no_log '^pct create .*_arm64'
+  expect_log '^pct create 100 local:vztmpl/debian-13-standard_13.6-1_amd64'
+  expect_log '^pveam download local ubuntu-24.04-standard_24.04-2_amd64'
+}
+
+test_install_refuses_other_architectures() {
+  if FAKE_ARCH=arm64 install; then fail "an arm64 host must be refused"; fi
+  expect_out "amd64 binaries only (this host is arm64)"
+}
+
 test_install_refuses_old_pve() {
   if FAKE_PVEVERSION="pve-manager/8.4.1/abc (running kernel: 6.8)" install; then fail "a Proxmox VE 8 host must be refused"; fi
   expect_out "Proxmox VE 9.1 or later is required (found 8.4)"

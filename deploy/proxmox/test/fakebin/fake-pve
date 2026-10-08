@@ -52,14 +52,16 @@ curl)
       *ghrm-linux-amd64) release ghrm >"$out" ;;
     esac
   fi ;;
-dpkg) [ -f "$S/dnsmasq" ]; exit $? ;;
+dpkg)
+  if [ "$1" = --print-architecture ]; then echo "${FAKE_ARCH:-amd64}"; exit 0; fi
+  [ -f "$S/dnsmasq" ]; exit $? ;;
 apt-get) [[ " $* " == *" dnsmasq "* ]] && touch "$S/dnsmasq"; exit 0 ;;
 systemctl | sleep | mkdir) exit 0 ;;
 pvesm) [ "$1" = add ] && echo "$3" >>"$S/storages"; exit 0 ;;
 pveam)
   case $1 in
     list) sed -n "s|^$2:\(.*\)|$2:\1 100MB|p" "$S/images" ;;
-    available) printf 'system          debian-13-standard_13.1-2_amd64.tar.zst\nsystem          ubuntu-24.04-standard_24.04-2_amd64.tar.zst\n' ;;
+    available) printf 'system          debian-13-standard_13.1-2_amd64.tar.zst\nsystem          debian-13-standard_13.1-2_arm64.tar.zst\nsystem          ubuntu-24.04-standard_24.04-2_amd64.tar.zst\nsystem          ubuntu-24.04-standard_24.04-2_arm64.tar.zst\n' ;;
     download) echo "$2:vztmpl/$3" >>"$S/images" ;;
   esac ;;
 pveum)
