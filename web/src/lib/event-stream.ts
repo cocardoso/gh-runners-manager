@@ -131,6 +131,9 @@ export class EventStream {
   }
 }
 
+// The lists a history deletion can shrink.
+const historyLists = [["templates"], ["environments"], ["jobs"], ["stats"], ["job"], ["environment"]];
+
 /** The query keys an event makes stale. Unknown kinds only refresh the overview. */
 export function invalidationKeys(e: ApiEvent): unknown[][] {
   const keys: unknown[][] = [["overview"]];
@@ -158,6 +161,11 @@ export function invalidationKeys(e: ApiEvent): unknown[][] {
     case "cache":
       keys.push(["cache"]);
       break;
+    case "retention":
+      keys.push(...historyLists);
+      break;
   }
+  if (["audit.history_cleanup", "audit.template_delete", "audit.environment_delete"].includes(e.kind)) keys.push(...historyLists);
+  if (e.kind === "audit.history_settings") keys.push(["history-settings"]);
   return keys;
 }

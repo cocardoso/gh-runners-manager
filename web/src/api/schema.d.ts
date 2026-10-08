@@ -186,7 +186,8 @@ export interface paths {
         get: operations["get-environment"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete a destroyed environment with its jobs, events and logs */
+        delete: operations["delete-environment-record"];
         options?: never;
         head?: never;
         patch?: never;
@@ -236,6 +237,41 @@ export interface paths {
         /** List events in sequence order */
         get: operations["list-events"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/history/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete (or count) history older than a date */
+        post: operations["cleanup-history"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/history/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** How long history is kept, and whether it is cleaned every day */
+        get: operations["get-history-settings"];
+        /** Change the history settings */
+        put: operations["put-history-settings"];
         post?: never;
         delete?: never;
         options?: never;
@@ -425,7 +461,8 @@ export interface paths {
         get: operations["get-template"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete a failed or deleted template's record */
+        delete: operations["delete-template-record"];
         options?: never;
         head?: never;
         patch?: never;
@@ -512,6 +549,45 @@ export interface components {
             memory_budget_mb: number;
             /** Format: int64 */
             memory_committed_mb: number;
+        };
+        CleanupInBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CleanupInBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description Delete audit events older than this (default: the audit retention, never later than before)
+             */
+            audit_before?: string;
+            /**
+             * Format: date-time
+             * @description Delete history older than this
+             */
+            before: string;
+            /** @description Only count */
+            dry_run?: boolean;
+        };
+        CleanupResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CleanupResult.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            audit_events: number;
+            /** Format: int64 */
+            environments: number;
+            /** Format: int64 */
+            events: number;
+            /** Format: int64 */
+            jobs: number;
+            /** Format: int64 */
+            templates: number;
+            warning?: string;
         };
         CredentialView: {
             name: string;
@@ -619,6 +695,20 @@ export interface components {
             seq: number;
             /** Format: date-time */
             time: string;
+        };
+        HistorySettings: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/HistorySettings.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            audit_days: number;
+            /** Format: int64 */
+            days: number;
+            /** @enum {string} */
+            mode: "automatic" | "manual";
         };
         Job: {
             /**
@@ -1376,6 +1466,35 @@ export interface operations {
             };
         };
     };
+    "delete-environment-record": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "destroy-environment": {
         parameters: {
             query?: never;
@@ -1469,6 +1588,99 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["List-eventsResponse"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "cleanup-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CleanupInBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CleanupResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-history-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistorySettings"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-history-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HistorySettings"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {
@@ -1833,6 +2045,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Template"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-template-record": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

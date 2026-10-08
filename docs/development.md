@@ -92,6 +92,16 @@ Useful API calls (with the admin token from `/etc/ghrm/admin-token`):
 - `/metrics` (Prometheus, unauthenticated): `ghrm_environments{scale_set,state}`, `ghrm_environment_failures_total{stage}`, `ghrm_jobs_total{scale_set,result}`, `ghrm_scale_set_desired` (queue depth) and `ghrm_scale_set_listening`, `ghrm_template_builds_total{result}`, `ghrm_stage_duration_seconds{stage}`, `ghrm_build_info{version}`, plus Go process metrics.
 - Backups: every day at `backup.hour` (default 3, local time) ghrm writes a consistent copy of the database with `VACUUM INTO` to `backup.dir` (default `<data_dir>/backups`, mode `0600`) and keeps `backup.keep` copies (default 7). Each run is a `backup.done` or `backup.failed` event. Keep `secret.key` with them, and back up the container with Proxmox backups too.
 
+## History
+
+Finished environments (with their jobs, events and log files), events and failed or deleted template records are history. Settings, History chooses how it is cleaned:
+
+- **Automatic** (default): every day at half past `backup.hour`, history older than the configured days (default 30) is deleted, and audit events (`audit.*`: sign-ins and administrators' changes) older than their own period (default 365 days, never shorter than the history). Each sweep is a `retention.cleaned` (or `retention.failed`) event with the counts, and the database is compacted afterwards.
+- **Manual**: nothing is deleted until someone uses **Clean up now…**, which shows how much would go before it deletes. It works in both modes.
+- Never deleted: environments that are not destroyed, the build and verification environments of templates that are kept (their logs are those templates' records), templates other than failed or deleted, and settings, credentials and accounts.
+- A failed or deleted template record, or a destroyed environment, can also be deleted on its own page. Deleting a failed template lets the next check build the same inputs again.
+- API: `GET`/`PUT /api/v1/history/settings`, `POST /api/v1/history/cleanup` (`before`, optional `audit_before`, `dry_run`), `DELETE /api/v1/templates/{id}`, `DELETE /api/v1/environments/{id}`. Manual deletions are audited.
+
 ## Registry cache
 
 With `cache.address` set (the installer sets it up and creates the container), job environments pull Docker Hub, GHCR, MCR and Quay images through a pull-through cache on the job network (`<subnet>.3`), with unchanged workflows. The cache is an unprivileged Debian container (`ghrm-cache`, not in the ghrm pool) running one CNCF Distribution proxy per registry on ports 5000–5003, their metrics on 5100–5103 and `ghrm-agent cache-exporter` on 5199; jobs can reach only 5000–5003.

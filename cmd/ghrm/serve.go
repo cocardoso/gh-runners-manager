@@ -27,6 +27,7 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
 	"github.com/cocardoso/gh-runners-manager/internal/metrics"
 	"github.com/cocardoso/gh-runners-manager/internal/proxmox"
+	"github.com/cocardoso/gh-runners-manager/internal/retention"
 	"github.com/cocardoso/gh-runners-manager/internal/runtime/proxmoxlxc"
 	"github.com/cocardoso/gh-runners-manager/internal/secrets"
 	"github.com/cocardoso/gh-runners-manager/internal/settings"
@@ -205,6 +206,12 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		defer wg.Done()
 		bk.Run(ctx)
 	}()
+	hist := &retention.Retention{Store: db, Logs: logStore, Recorder: rec, Hour: cfg.Backup.AtHour()}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		hist.Run(ctx)
+	}()
 	if cfg.Templates.Enabled() {
 		wg.Add(1)
 		go func() {
@@ -226,7 +233,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	apiSrv := &http.Server{
 		BaseContext: func(net.Listener) context.Context { return baseCtx },
 		Addr:        cfg.Listen,
-		Handler: api.New(api.Deps{Store: db, Recorder: rec, Logs: logStore, Controller: ctl, AdminToken: cfg.AdminToken,
+		Handler: api.New(api.Deps{Store: db, Recorder: rec, Logs: logStore, Controller: ctl, AdminToken: cfg.AdminToken, History: hist,
 			Config: cfg, Capacity: rt.Capacity, GitHubJobs: gh, UI: uiHandler(), Templates: tpl, Auth: signIn,
 			Settings: reg, TestCredential: (&github.REST{}).User, Metrics: mtr.Handler(), Cache: cacheMon,
 			Ready: func(ctx context.Context) error { _, err := rt.Capacity(ctx); return err }}),

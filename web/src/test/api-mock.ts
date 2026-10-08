@@ -56,6 +56,7 @@ export function defaultRoutes(): Routes {
   return {
     "/api/v1/auth/session": { state: "signed_in", username: "admin", csrf: "csrf-1" },
     "/api/v1/overview": emptyOverview,
+    "/api/v1/history/settings": { mode: "automatic", days: 30, audit_days: 365 },
     "/api/v1/cache": { enabled: false, up: false, origins: [], disk_used_bytes: 0, disk_budget_bytes: 0, checked_at: ZERO },
     "/api/v1/stats/jobs": { buckets: [] },
     "/api/v1/jobs": { jobs: [] },

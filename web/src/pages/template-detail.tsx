@@ -4,6 +4,7 @@ import { useParams, useSearch } from "@tanstack/react-router";
 import { ApiError } from "@/api/client";
 import { useEnvironment, useSettings, useTemplate } from "@/api/queries";
 import { useAdminAction } from "@/components/admin-action";
+import { DeleteRecord } from "@/components/delete-record";
 import { ErrorState, Loading, Page, RelativeTime } from "@/components/common";
 import { DefinitionList } from "@/components/definition-list";
 import { DetailTabs } from "@/components/detail-tabs";
@@ -240,6 +241,7 @@ export function TemplateDetailPage() {
         <>
           <TemplateStateBadge state={t.state} />
           {canAct && <TemplateActions t={t} run={admin.run} />}
+          {settings.data?.admin_actions === true && (t.state === "failed" || t.state === "deleted") && <DeleteRecord kind="template" id={t.id} />}
         </>
       }
     >

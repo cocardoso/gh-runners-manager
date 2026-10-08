@@ -4,6 +4,7 @@ import { ErrorState, Loading, Page } from "@/components/common";
 import { DefinitionList } from "@/components/definition-list";
 import { CredentialsEditor } from "@/components/credentials-editor";
 import { CacheCard } from "@/components/cache-card";
+import { HistoryCard } from "@/components/history-card";
 import { formatMB } from "@/lib/format";
 
 type Map = Record<string, unknown>;
@@ -33,6 +34,7 @@ export function SettingsPage() {
         <CredentialsEditor />
       </Section>
       <CacheCard />
+      <HistoryCard />
       <Section title="Control plane">
         <DefinitionList
           items={[

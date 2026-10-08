@@ -17,6 +17,7 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
+	"github.com/cocardoso/gh-runners-manager/internal/retention"
 	"github.com/cocardoso/gh-runners-manager/internal/runtime"
 	"github.com/cocardoso/gh-runners-manager/internal/settings"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
@@ -54,6 +55,8 @@ type Deps struct {
 	Settings *settings.Registry
 	// Cache reports the registry cache (nil: none).
 	Cache CacheStatus
+	// History cleans old history (nil: the history endpoints answer 503).
+	History *retention.Retention
 	// Metrics, when set, serves Prometheus metrics on /metrics (public, like /healthz).
 	Metrics http.Handler
 	// TestCredential checks a GitHub token and returns its login.
@@ -368,6 +371,7 @@ func New(d Deps) http.Handler {
 	registerTemplates(a, d)
 	registerAuth(a, d)
 	registerSettingsEdit(a, d)
+	registerHistory(a, d)
 	huma.Register(a, huma.Operation{OperationID: "get-cache", Method: http.MethodGet, Path: "/api/v1/cache",
 		Summary: "The registry cache on the job network", Tags: []string{"settings"}},
 		func(ctx context.Context, _ *struct{}) (*struct{ Body cachemon.Status }, error) {

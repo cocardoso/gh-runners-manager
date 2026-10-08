@@ -103,3 +103,7 @@ export function useCredentials() {
 export function useCache() {
   return useQuery({ queryKey: ["cache"], queryFn: async () => unwrap(await api.GET("/api/v1/cache")), refetchInterval: 30_000 });
 }
+
+export function useHistorySettings() {
+  return useQuery({ queryKey: ["history-settings"], queryFn: async () => unwrap(await api.GET("/api/v1/history/settings")) });
+}

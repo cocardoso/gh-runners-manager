@@ -29,6 +29,7 @@ This document holds the architecture diagrams of gh-runners-manager (`ghrm`). It
 | Secrets sealed at rest (AES-256-GCM, separate key file), `ghrm secret` | `internal/secrets` |
 | Editable credentials and scale sets, listener supervisor | `internal/settings`, `cmd/ghrm/supervisor.go` |
 | Prometheus metrics, daily backups | `internal/metrics`, `internal/backup` |
+| History retention: daily or manual cleanup of finished environments, jobs, events, logs and failed template records | `internal/retention`, `internal/store/history.go` |
 | Registry cache: proxies, eviction, disk exporter, monitor, mirror settings in templates | `internal/cachemon`, `internal/agent` (`cacheprune.go`, `cacheexporter.go`), `template/layer/mirrors.sh` |
 | Installer, container image, releases | `deploy/proxmox/install.sh`, `Dockerfile`, `deploy/docker`, `.github/workflows/release.yml` |
 
@@ -45,7 +46,7 @@ flowchart LR
         settings["Settings: file + UI credentials and scale sets"]
         vault["Vault: secrets sealed with a separate key file"]
         auth["Sign-in: account, sessions, CSRF"]
-        metrics["/metrics, daily backups"]
+        metrics["/metrics, daily backups, history cleanup"]
         listener["Scale set listeners (supervised)"]
         scheduler["Scheduler"]
         runtime["Runtime: proxmox-lxc"]
@@ -390,6 +391,9 @@ flowchart LR
     ghrm --> authp["internal/auth"]
     ghrm --> metricsp["internal/metrics"]
     ghrm --> backupp["internal/backup"]
+    ghrm --> retentionp["internal/retention"]
+    retentionp --> store
+    retentionp --> logs
     settingsp --> secretsp["internal/secrets"]
     settingsp --> store
     secretsp --> store
@@ -425,7 +429,7 @@ flowchart LR
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
     classDef testonly fill:#fff3bf,stroke:#e67700,color:#000
     classDef ext fill:#e7f5ff,stroke:#1971c2,color:#000
-    class ghrm,config,api,controller,ingest,github,proxmoxlxc,scheduler,environment,runtime,store,events,logs,proxmox,agentcmd,agent,ingestproto,demo,webui,template,layer,settingsp,authp,metricsp,backupp,secretsp done
+    class ghrm,config,api,controller,ingest,github,proxmoxlxc,scheduler,environment,runtime,store,events,logs,proxmox,agentcmd,agent,ingestproto,demo,webui,template,layer,settingsp,authp,metricsp,backupp,retentionp,secretsp done
     class runtimetest,proxmoxtest testonly
     class scaleset ext
 ```

@@ -6,7 +6,10 @@ async function runningJob(request: import("@playwright/test").APIRequestContext,
     .poll(
       async () => {
         const { jobs } = await (await request.get(`${url}/api/v1/jobs?status=running`)).json();
-        job = (jobs ?? []).find((j: { environment_id?: string }) => j.environment_id);
+        // The most recently started job has the most of its run ahead.
+        job = (jobs ?? [])
+          .filter((j: { environment_id?: string }) => j.environment_id)
+          .sort((a: { started_at: string }, b: { started_at: string }) => b.started_at.localeCompare(a.started_at))[0];
         return !!job;
       },
       { timeout: 30_000 },
@@ -25,13 +28,22 @@ test("a job progresses live without a reload", async ({ page, demo, request }) =
 });
 
 test("following a log appends lines", async ({ page, demo, request }) => {
-  const job = await runningJob(request, demo.url);
-  await page.goto(`${demo.url}/jobs/${job.id}?tab=logs`);
-  const counter = page.getByRole("status").filter({ hasText: / lines$/ });
-  await expect(counter).toBeVisible();
-  const count = async () => Number(((await counter.textContent()) ?? "").match(/([\d,]+) lines/)?.[1]?.replace(/,/g, "") ?? 0);
-  const first = await count();
-  await expect.poll(count, { timeout: 20_000 }).toBeGreaterThan(first);
+  // Simulated jobs last 8-40 s, so the one picked may finish while we wait: try a newer one.
+  let grew = false;
+  for (let attempt = 0; attempt < 3 && !grew; attempt++) {
+    const job = await runningJob(request, demo.url);
+    await page.goto(`${demo.url}/jobs/${job.id}?tab=logs`);
+    const counter = page.getByRole("status").filter({ hasText: / lines$/ });
+    await expect(counter).toBeVisible();
+    const count = async () => Number(((await counter.textContent()) ?? "").match(/([\d,]+) lines/)?.[1]?.replace(/,/g, "") ?? 0);
+    const first = await count();
+    grew = await expect
+      .poll(count, { timeout: 10_000 })
+      .toBeGreaterThan(first)
+      .then(() => true)
+      .catch(() => false);
+  }
+  expect(grew).toBe(true);
 });
 
 test("the UI reconnects and resumes after the control plane restarts", async ({ page, demo }) => {
