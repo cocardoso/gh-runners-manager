@@ -27,3 +27,22 @@ test("a credential and a scale set are created, tested and removed from the UI",
   await expect(page.getByRole("heading", { name: "e2e-set" })).toBeHidden();
   expect(errors).toEqual([]);
 });
+
+test("history settings are saved and a cleanup previews what it deletes", async ({ page, demo }) => {
+  const errors = trackErrors(page);
+  await page.goto(`${demo.url}/settings`);
+  const card = page.locator("section").filter({ has: page.getByRole("heading", { name: "History" }) });
+  await card.getByRole("radio", { name: "Manual" }).click();
+  await card.getByLabel("Keep history (days)").fill("14");
+  await card.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("History settings saved")).toBeVisible();
+  await page.reload();
+  await expect(card.getByRole("radio", { name: "Manual" })).toBeChecked();
+  await expect(card.getByLabel("Keep history (days)")).toHaveValue("14");
+
+  await card.getByRole("button", { name: /Clean up now/ }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText(/Nothing to delete|environment/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  expect(errors).toEqual([]);
+});
