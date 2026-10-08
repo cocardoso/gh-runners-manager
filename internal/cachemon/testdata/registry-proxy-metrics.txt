@@ -1,0 +1,20 @@
+# HELP registry_proxy_hits_total The number of total proxy request hits
+# TYPE registry_proxy_hits_total counter
+registry_proxy_hits_total{type="blob"} 1
+registry_proxy_hits_total{type="manifest"} 2
+# HELP registry_proxy_misses_total The number of total proxy request misses
+# TYPE registry_proxy_misses_total counter
+registry_proxy_misses_total{type="blob"} 1
+registry_proxy_misses_total{type="manifest"} 2
+# HELP registry_proxy_pulled_bytes_total The size of total bytes pulled from the upstream
+# TYPE registry_proxy_pulled_bytes_total counter
+registry_proxy_pulled_bytes_total{type="blob"} 2.226163e+06
+registry_proxy_pulled_bytes_total{type="manifest"} 10145
+# HELP registry_proxy_pushed_bytes_total The size of total bytes pushed to the client
+# TYPE registry_proxy_pushed_bytes_total counter
+registry_proxy_pushed_bytes_total{type="blob"} 4.452326e+06
+registry_proxy_pushed_bytes_total{type="manifest"} 20290
+# HELP registry_proxy_requests_total The number of total incoming proxy request received
+# TYPE registry_proxy_requests_total counter
+registry_proxy_requests_total{type="blob"} 2
+registry_proxy_requests_total{type="manifest"} 4

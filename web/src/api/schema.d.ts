@@ -89,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The registry cache on the job network */
+        get: operations["get-cache"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/credentials": {
         parameters: {
             query?: never;
@@ -760,6 +777,19 @@ export interface components {
             password: string;
             username: string;
         };
+        OriginStatus: {
+            /** Format: double */
+            blob_hits: number;
+            /** Format: double */
+            blob_misses: number;
+            error?: string;
+            origin: string;
+            /** Format: double */
+            pulled_bytes: number;
+            /** Format: double */
+            served_bytes: number;
+            up: boolean;
+        };
         Overview: {
             /**
              * Format: uri
@@ -888,6 +918,24 @@ export interface components {
             /** @description The one-time token printed by the installer (data_dir/setup-token) */
             setup_token: string;
             username: string;
+        };
+        Status: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/Status.json
+             */
+            readonly $schema?: string;
+            address?: string;
+            /** Format: date-time */
+            checked_at: string;
+            /** Format: int64 */
+            disk_budget_bytes: number;
+            /** Format: int64 */
+            disk_used_bytes: number;
+            enabled: boolean;
+            origins: components["schemas"]["OriginStatus"][] | null;
+            up: boolean;
         };
         Step: {
             /** Format: date-time */
@@ -1097,6 +1145,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionState"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Status"];
                 };
             };
             /** @description Error */

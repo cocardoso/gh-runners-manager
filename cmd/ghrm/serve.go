@@ -18,6 +18,7 @@ import (
 
 	"github.com/cocardoso/gh-runners-manager/internal/api"
 	"github.com/cocardoso/gh-runners-manager/internal/backup"
+	"github.com/cocardoso/gh-runners-manager/internal/cachemon"
 	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
@@ -142,6 +143,8 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	ctl.SetTemplates(tpl, tpl)
 	mtr := metrics.New(db, ctl, version.Version)
 	ctl.SetStages(mtr)
+	cacheMon := &cachemon.Monitor{Cache: cfg.Cache, Recorder: rec}
+	mtr.SetCache(cacheMon)
 
 	_, _ = rec.Info(ctx, "control_plane.started", "ghrm "+version.Version+" started", events.Refs{},
 		map[string]any{"ingest_fingerprint": fingerprint, "scale_sets": len(reg.ScaleSets())})
@@ -183,6 +186,11 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		defer wg.Done()
 		ctl.Run(ctx)
 	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		cacheMon.Run(ctx)
+	}()
 	bk := &backup.Backup{Store: db, Dir: cfg.Backup.Dir, Keep: cfg.Backup.Keep, Hour: cfg.Backup.AtHour(),
 		Done: func(path string, err error) {
 			if err != nil {
@@ -220,7 +228,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		Addr:        cfg.Listen,
 		Handler: api.New(api.Deps{Store: db, Recorder: rec, Logs: logStore, Controller: ctl, AdminToken: cfg.AdminToken,
 			Config: cfg, Capacity: rt.Capacity, GitHubJobs: gh, UI: uiHandler(), Templates: tpl, Auth: signIn,
-			Settings: reg, TestCredential: (&github.REST{}).User, Metrics: mtr.Handler(),
+			Settings: reg, TestCredential: (&github.REST{}).User, Metrics: mtr.Handler(), Cache: cacheMon,
 			Ready: func(ctx context.Context) error { _, err := rt.Capacity(ctx); return err }}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

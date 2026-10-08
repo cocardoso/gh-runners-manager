@@ -59,6 +59,8 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer d.Close()
 	demoMetrics := metrics.New(d.Store, d.Controller, version.Version)
 	d.Controller.SetStages(demoMetrics) // before the simulation starts
+	cache := demoCache{start: time.Now()}
+	demoMetrics.SetCache(cache)
 	go d.Run(ctx)
 
 	signIn, err := demoAuth(ctx, d.Store)
@@ -102,7 +104,7 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ReadHeaderTimeout: 10 * time.Second,
 		Handler: api.New(api.Deps{Store: d.Store, Recorder: d.Recorder, Logs: d.Logs, Controller: d.Controller,
 			Config: d.Config, Capacity: d.Runtime.Capacity, AdminToken: "demo", UI: uiHandler(), Templates: d.Templates, Auth: signIn,
-			Settings: reg, TestCredential: demoTestCredential, Metrics: demoMetrics.Handler()}),
+			Settings: reg, TestCredential: demoTestCredential, Metrics: demoMetrics.Handler(), Cache: cache}),
 	}
 	fmt.Fprintf(stdout, "ghrm demo: serving a simulated fleet on http://%s (sign in as admin / %s; API token: demo)\n", *listen, demoPassword)
 	errc := make(chan error, 1)

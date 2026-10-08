@@ -155,6 +155,12 @@ func registerOverview(a huma.API, d Deps) {
 func overview(ctx context.Context, d Deps, now time.Time) (Overview, error) {
 	var ov Overview
 	ov.Alerts = []Alert{}
+	if d.Cache != nil {
+		if c := d.Cache.Status(); c.Enabled && !c.CheckedAt.IsZero() && !c.Up {
+			ov.Alerts = append(ov.Alerts, Alert{Level: "warn", Kind: "cache_down",
+				Message: "the registry cache at " + c.Address + " does not answer; jobs pull from the registries directly", Time: c.CheckedAt})
+		}
+	}
 	running, err := d.Store.ListJobs(ctx, store.JobFilter{Status: "running", Limit: 1000})
 	if err != nil {
 		return ov, err

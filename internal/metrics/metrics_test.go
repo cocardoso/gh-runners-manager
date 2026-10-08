@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cocardoso/gh-runners-manager/internal/cachemon"
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
@@ -60,5 +61,31 @@ func TestMetricsExposeTheFleet(t *testing.T) {
 	}
 	if strings.Contains(body, `state="destroyed"`) {
 		t.Error("destroyed environments are history, not fleet")
+	}
+}
+
+type fakeCache struct{ s cachemon.Status }
+
+func (f fakeCache) Status() cachemon.Status { return f.s }
+
+func TestCacheMetrics(t *testing.T) {
+	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "ghrm.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	m := New(db, fakeScaleSets{}, "v1")
+	m.SetCache(fakeCache{cachemon.Status{Enabled: true, Up: false, DiskUsed: 5, DiskBudget: 100, CheckedAt: time.Now(),
+		Origins: []cachemon.OriginStatus{{Origin: "docker.io", Up: true, BlobHits: 7, BlobMisses: 3}, {Origin: "ghcr.io"}}}})
+	srv := httptest.NewServer(m.Handler())
+	defer srv.Close()
+	resp, _ := srv.Client().Get(srv.URL)
+	b, _ := io.ReadAll(resp.Body)
+	for _, want := range []string{`ghrm_cache_up 0`, `ghrm_cache_origin_up{origin="docker.io"} 1`, `ghrm_cache_origin_up{origin="ghcr.io"} 0`,
+		`ghrm_cache_requests_total{origin="docker.io",result="hit"} 7`, `ghrm_cache_requests_total{origin="docker.io",result="miss"} 3`,
+		`ghrm_cache_disk_bytes{kind="used"} 5`, `ghrm_cache_disk_bytes{kind="budget"} 100`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("missing %s", want)
+		}
 	}
 }
