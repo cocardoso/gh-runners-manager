@@ -37,7 +37,7 @@ type KPIs struct {
 	MedianDurationSeconds24h float64 `json:"median_duration_seconds_24h"`
 	// QueuedJobs are jobs assigned to a scale set that no runner took yet.
 	QueuedJobs     int       `json:"queued_jobs"`
-	OldestQueuedAt time.Time `json:"oldest_queued_at,omitempty"`
+	OldestQueuedAt time.Time `json:"oldest_queued_at,omitzero"`
 	// PreparingRunners are job environments on their way to a runner; ReadyRunners wait idle for a job.
 	PreparingRunners int `json:"preparing_runners"`
 	ReadyRunners     int `json:"ready_runners"`

@@ -3,9 +3,11 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 // EnvFirewallProbe tells a job environment's agent where to check that the job network's
@@ -42,20 +44,30 @@ func ProbeAddress(ingestURL string) (string, error) {
 func ListenProbe(addr string) (net.Listener, error) { return net.Listen("tcp", addr) }
 
 // ServeProbe accepts and closes connections until ctx ends: reaching it proves a guest
-// is not filtered yet.
-func ServeProbe(ctx context.Context, ln net.Listener) {
+// is not filtered yet. Accept errors back off (5 ms doubling to 1 s), as net/http does,
+// so running out of file descriptors does not spin.
+func ServeProbe(ctx context.Context, ln net.Listener, logger *slog.Logger) {
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
 	}()
+	var delay time.Duration
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
+			delay = min(max(2*delay, 5*time.Millisecond), time.Second)
+			logger.Warn("firewall probe: accept failed", "error", err, "retry_in", delay)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
 			continue
 		}
+		delay = 0
 		_ = conn.Close()
 	}
 }

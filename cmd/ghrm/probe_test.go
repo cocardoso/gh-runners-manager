@@ -44,6 +44,20 @@ func TestFirewallProbeServesNextToTheIngest(t *testing.T) {
 	}
 	_ = conn.Close()
 
+	// A host name is resolved once here: the agent probes an IP address.
+	for range 20 {
+		port := freePort(t)
+		got := serveFirewallProbe(ctx, config.Ingest{Listen: "127.0.0.1:" + port, AdvertiseURL: "https://localhost:" + port}, log)
+		if got == "" {
+			continue
+		}
+		host, _, _ := net.SplitHostPort(got)
+		if net.ParseIP(host) == nil {
+			t.Fatalf("probe = %q, want an IP address", got)
+		}
+		break
+	}
+
 	if got := serveFirewallProbe(ctx, config.Ingest{Listen: "127.0.0.1:9443", AdvertiseURL: "https://10.50.0.2:8443"}, log); got != "" {
 		t.Fatalf("ingest advertised on another port: probe = %q, want none", got)
 	}

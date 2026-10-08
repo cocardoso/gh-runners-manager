@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -20,7 +21,9 @@ type SelfTestOptions struct {
 	RunnerDir    string
 	BlockedAddrs []string // host:port that must be unreachable (LAN, hypervisor)
 	Mirrors      []string // host:port of the registry cache that must be reachable
-	ProbeURL     string   // HTTPS URL that must be reachable (default https://api.github.com)
+	// FirewallProbe, when set, must be dropped by the job security group (see WaitFirewall).
+	FirewallProbe string
+	ProbeURL      string // HTTPS URL that must be reachable (default https://api.github.com)
 	// ScriptsDir is where the report scripts are mounted in GitHub's tooling (default /scripts).
 	ScriptsDir string
 	Lookup     func(ctx context.Context, host string) error
@@ -140,6 +143,23 @@ func RunSelfTest(ctx context.Context, c *Client, cmd Commander, o SelfTestOption
 				return fmt.Errorf("%s is reachable from a job environment", addr)
 			}
 			return nil
+		})
+	}
+	rep.Features = []string{ingest.FeatureFirewallGate}
+	if o.FirewallProbe != "" {
+		// A warning, not a failure: a group that lets the probe through only costs job
+		// environments the fast start; the control plane keeps the fixed delay for them.
+		checkWith(true, ingest.CheckFirewallProbe, func(ctx context.Context) error {
+			dctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			err := o.Dial(dctx, o.FirewallProbe)
+			if connectTimeout(err) {
+				return nil
+			}
+			if err == nil {
+				err = errors.New("connected")
+			}
+			return fmt.Errorf("the job security group does not drop %s (%v); job environments keep the fixed firewall delay", o.FirewallProbe, err)
 		})
 	}
 	for _, addr := range o.Mirrors {

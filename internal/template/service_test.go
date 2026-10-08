@@ -747,23 +747,46 @@ func TestVerifyEnvironmentGetsTheCache(t *testing.T) {
 	}
 }
 
-func TestOnlyTemplatesWithTheGatedAgentSkipTheFirewallDelay(t *testing.T) {
-	h := newService(t, nil)
-	ctx := context.Background()
-	if _, _, gated := h.s.ActiveFirewallGated(ctx); gated {
-		t.Fatal("the bootstrap template's agent may predate the gate")
-	}
-	for layerVersion, want := range map[string]bool{"5.abcdef012345": false, "6.abcdef012345": true, "12.abcdef012345.cafe": true, "": false, "x": false} {
-		id := "t" + strings.ReplaceAll(layerVersion, ".", "")
-		if err := h.db.CreateTemplate(ctx, store.Template{ID: id, State: store.TemplateReady, VMID: 951, RuntimeRef: "951/" + id, LayerVersion: layerVersion}); err != nil {
+func TestAVerifiedGateSkipsTheFirewallDelay(t *testing.T) {
+	probeOK := ingest.Check{Name: ingest.CheckFirewallProbe, OK: true}
+	probeOpen := ingest.Check{Name: ingest.CheckFirewallProbe, OK: true, Warning: true, Detail: "the job security group does not drop 10.50.0.2:8444"}
+	for name, tc := range map[string]struct {
+		features []string
+		checks   []ingest.Check
+		want     bool
+	}{
+		"agent gates, probe dropped": {[]string{ingest.FeatureFirewallGate}, []ingest.Check{probeOK}, true},
+		"older agent":                {nil, []ingest.Check{probeOK}, false},
+		"probe let through":          {[]string{ingest.FeatureFirewallGate}, []ingest.Check{probeOpen}, false},
+		"probe not checked":          {[]string{ingest.FeatureFirewallGate}, nil, false},
+	} {
+		h := newService(t, nil)
+		h.s.d.FirewallProbe = "10.50.0.2:8444"
+		ctx := context.Background()
+		if _, _, gated := h.s.ActiveFirewallGated(ctx); gated {
+			t.Fatalf("%s: the bootstrap template is never verified", name)
+		}
+		got := h.buildToVerify(t)
+		if v := h.envs.started[len(h.envs.started)-1]; v.Env[ingest.EnvFirewallProbe] != "10.50.0.2:8444" {
+			t.Fatalf("%s: verify env probe = %q", name, v.Env[ingest.EnvFirewallProbe])
+		}
+		rep := okReport(published)
+		rep.Features = tc.features
+		rep.Checks = append(rep.Checks, tc.checks...)
+		if err := h.s.ReceiveSelfTest(ctx, got.VerifyEnvID, rep); err != nil {
 			t.Fatal(err)
 		}
-		if err := h.db.SetActiveTemplate(ctx, id, time.Now()); err != nil {
-			t.Fatal(err)
+		h.s.Wait()
+		if _, _, gated := h.s.ActiveFirewallGated(ctx); gated != tc.want {
+			t.Errorf("%s: gated = %v, want %v", name, gated, tc.want)
 		}
-		ref, vmid, gated := h.s.ActiveFirewallGated(ctx)
-		if gated != want || vmid != 951 || ref == "" {
-			t.Errorf("layer %q: %q %d gated=%v, want gated=%v", layerVersion, ref, vmid, gated, want)
+		warned := false
+		evs, _ := h.db.ListEvents(ctx, store.EventFilter{Limit: 1000})
+		for _, e := range evs {
+			warned = warned || e.Kind == "template.firewall_delay"
+		}
+		if warned == tc.want {
+			t.Errorf("%s: firewall delay warning = %v, want %v", name, warned, !tc.want)
 		}
 	}
 }

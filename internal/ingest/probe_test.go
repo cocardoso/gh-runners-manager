@@ -2,6 +2,9 @@ package ingest
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"testing"
 	"time"
@@ -30,7 +33,7 @@ func TestProbeListenerAcceptsAndCloses(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { ServeProbe(ctx, ln); close(done) }()
+	go func() { ServeProbe(ctx, ln, slog.New(slog.NewTextHandler(io.Discard, nil))); close(done) }()
 	conn, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second)
 	if err != nil {
 		t.Fatalf("dial the probe = %v", err)
@@ -45,5 +48,26 @@ func TestProbeListenerAcceptsAndCloses(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("ServeProbe did not stop with its context")
+	}
+}
+
+type failingListener struct {
+	net.Listener
+	accepts int
+}
+
+func (f *failingListener) Accept() (net.Conn, error) {
+	f.accepts++
+	return nil, errors.New("accept: too many open files")
+}
+func (f *failingListener) Close() error { return nil }
+
+func TestProbeBacksOffWhenAcceptFails(t *testing.T) {
+	ln := &failingListener{}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	ServeProbe(ctx, ln, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if ln.accepts > 10 {
+		t.Fatalf("accepts in 100ms = %d, want a backoff", ln.accepts)
 	}
 }

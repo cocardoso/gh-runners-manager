@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/cocardoso/gh-runners-manager/internal/ingest"
@@ -121,5 +123,35 @@ func TestBootstrapReadsTheMirrors(t *testing.T) {
 	b, ok, err := LoadBootstrap(p)
 	if err != nil || !ok || strings.Join(b.Mirrors, ",") != "10.50.0.3:5000,10.50.0.3:5001" {
 		t.Fatalf("bootstrap = %+v %v %v", b, ok, err)
+	}
+}
+
+func TestSelfTestProvesTheFirewallProbeIsDropped(t *testing.T) {
+	for name, tc := range map[string]struct {
+		dial    error
+		warning bool
+	}{
+		"dropped":  {dial: &net.OpError{Op: "dial", Err: timeoutErr{}}},
+		"answered": {dial: nil, warning: true},
+		"refused":  {dial: &net.OpError{Op: "dial", Err: &osSyscallErr{syscall.ECONNREFUSED}}, warning: true},
+	} {
+		c := newBuildClient(t, &fakeIngest{})
+		opts := SelfTestOptions{Work: t.TempDir(), RunnerDir: "/r", FirewallProbe: "10.50.0.2:8444",
+			Lookup: func(context.Context, string) error { return nil }, HTTPGet: func(context.Context, string) error { return nil },
+			Dial: func(context.Context, string) error { return tc.dial }}
+		rep, _ := RunSelfTest(context.Background(), c, &fakeCommander{}, opts)
+		if len(rep.Features) != 1 || rep.Features[0] != ingest.FeatureFirewallGate {
+			t.Fatalf("%s: features = %v", name, rep.Features)
+		}
+		var ck *ingest.Check
+		for i := range rep.Checks {
+			if rep.Checks[i].Name == ingest.CheckFirewallProbe {
+				ck = &rep.Checks[i]
+			}
+		}
+		// A group that lets the probe through only costs the fast start: a warning, not a failure.
+		if ck == nil || !ck.OK || ck.Warning != tc.warning {
+			t.Errorf("%s: check = %+v, want ok with warning=%v", name, ck, tc.warning)
+		}
 	}
 }

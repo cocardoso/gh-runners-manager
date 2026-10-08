@@ -23,6 +23,7 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/environment"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
+	"github.com/cocardoso/gh-runners-manager/internal/github"
 	"github.com/cocardoso/gh-runners-manager/internal/ids"
 	"github.com/cocardoso/gh-runners-manager/internal/ingest"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
@@ -195,9 +196,7 @@ func (d *Demo) step(ctx context.Context) {
 
 	// GitHub announces a job to its scale set as it is queued.
 	if arrived != nil {
-		if sc, ok := d.scalers[arrived.scaleSet].(interface {
-			HandleJobAvailable(context.Context, *scaleset.JobAvailable) error
-		}); ok {
+		if sc, ok := d.scalers[arrived.scaleSet].(github.AvailableJobHandler); ok {
 			_ = sc.HandleJobAvailable(ctx, &scaleset.JobAvailable{JobMessageBase: arrived.message()})
 		}
 	}

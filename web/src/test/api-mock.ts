@@ -84,3 +84,12 @@ export function mockApi(overrides: Routes = {}) {
   });
   return calls;
 }
+
+/** Answers /api/v1/jobs like the server: filtered by ?status= and cut at ?limit=. */
+export function jobsByStatus(list: Job[]) {
+  return (url: URL) => {
+    const status = url.searchParams.get("status");
+    const limit = Number(url.searchParams.get("limit") ?? 1000);
+    return { jobs: list.filter((j) => !status || j.status === status).slice(0, limit) };
+  };
+}

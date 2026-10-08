@@ -101,3 +101,72 @@ func TestSurplusIdleRunnersStillTimeOut(t *testing.T) {
 		t.Fatalf("idle after the timeout = %d, want the 1 warm runner", len(idle))
 	}
 }
+
+// Queued jobs come before warm runners: a warm runner never takes the last free slot.
+func TestQueuedJobsComeBeforeWarmRunnersOfOtherScaleSets(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) {
+		c.Capacity.MaxEnvironments = 2
+		c.ScaleSets = append(c.ScaleSets, config.ScaleSet{Name: "warm", URL: "https://github.com/o/w", Credential: "c", MaxConcurrent: 2, Cores: 1, MemoryMB: 512, WarmRunners: 1})
+	})
+	if _, err := h.c.Scaler("lab").HandleDesiredRunnerCount(context.Background(), 3); err != nil {
+		t.Fatal(err)
+	}
+	h.c.Wait()
+	per := map[string]int{}
+	for _, e := range h.envs(t, "booting") {
+		per[e.ScaleSet]++
+	}
+	if per["lab"] != 2 || per["warm"] != 0 {
+		t.Fatalf("environments = %v, want both slots for lab's queued jobs", per)
+	}
+}
+
+func TestRemovedScaleSetKeepsNoWarmRunners(t *testing.T) {
+	h := newHarness(t, warm(1))
+	ctx := context.Background()
+	e := h.provision(t, 0)[0]
+	h.online(t, e)
+	h.c.UpdateScaleSets(nil) // lab removed: it drains
+	h.now = h.now.Add(11 * time.Minute)
+	h.c.Reap(ctx)
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "destroyed" {
+		t.Fatalf("idle runner of a removed scale set = %s, want destroyed", got.State)
+	}
+}
+
+// A warm runner due for replacement stays while jobs are queued: one may be on its way to it.
+func TestWarmRunnerIsNotReplacedWhileJobsAreQueued(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ScaleSets[0].WarmRunners = 1; c.ScaleSets[0].MaxConcurrent = 1 })
+	ctx := context.Background()
+	e := h.provision(t, 0)[0]
+	h.online(t, e)
+	if _, err := h.c.Scaler("lab").HandleDesiredRunnerCount(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	h.now = h.now.Add(61 * time.Minute)
+	h.c.Reap(ctx)
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "idle" {
+		t.Fatalf("warm runner with a job queued = %s, want idle", got.State)
+	}
+}
+
+func TestTheOldestSurplusIdleRunnerGoesFirst(t *testing.T) {
+	h := newHarness(t, warm(1))
+	ctx := context.Background()
+	first := h.provision(t, 0)[0]
+	h.now = h.now.Add(time.Minute)
+	if _, err := h.c.Scaler("lab").HandleDesiredRunnerCount(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	h.c.Wait()
+	for _, e := range h.envs(t, "booting") {
+		h.online(t, e)
+	}
+	h.online(t, first)
+	_, _ = h.c.Scaler("lab").HandleDesiredRunnerCount(ctx, 0)
+	h.now = h.now.Add(11 * time.Minute)
+	h.c.Reap(ctx)
+	if got, _ := h.db.GetEnvironment(ctx, first.ID); got.State != "destroyed" {
+		t.Fatalf("oldest idle runner = %s, want destroyed first", got.State)
+	}
+}

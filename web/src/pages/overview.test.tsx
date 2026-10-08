@@ -1,6 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import { renderApp } from "@/test/render-app";
-import { emptyOverview, env, job, mockApi, scaleSet } from "@/test/api-mock";
+import { emptyOverview, env, job, jobsByStatus, mockApi, scaleSet } from "@/test/api-mock";
 import { FakeEventSource } from "@/test/fake-event-source";
 import { parseWorkflowRef } from "./overview";
 
@@ -38,15 +38,13 @@ function busyApi() {
   mockApi({
     "/api/v1/overview": busy,
     "/api/v1/stats/jobs": { buckets: [{ start: "2026-10-07T11:00:00Z", succeeded: 3, failed: 1, canceled: 0, other: 0 }] },
-    "/api/v1/jobs": {
-      jobs: [
+    "/api/v1/jobs": jobsByStatus([
         job({ id: "run-1", display_name: "package", workflow_ref: ref, run_id: 77, runner_name: "ghrm-abc", started_at: ago(41) }),
         job({ id: "wait-1", display_name: "deploy", workflow_ref: ref, status: "assigned", queued_at: ago(18), started_at: "0001-01-01T00:00:00Z" }),
         job({ id: "wait-2", scale_set: "busy", display_name: "lint", status: "assigned", queued_at: ago(5), started_at: "0001-01-01T00:00:00Z" }),
         job({ id: "done-old", display_name: "tests", status: "completed", result: "succeeded", queued_at: ago(600), started_at: ago(577), finished_at: ago(545) }),
         job({ id: "done-new", display_name: "cleanup", status: "completed", result: "failed", queued_at: ago(300), started_at: ago(278), finished_at: ago(264) }),
-      ],
-    },
+      ]),
     "/api/v1/environments": {
       environments: [
         env({ id: "e-run", state: "running", job_id: "run-1" }),
@@ -72,8 +70,8 @@ test("the headline numbers say what runs, what waits and how the day went", asyn
   busyApi();
   renderApp("/");
   expect(await screen.findByText("Running now")).toBeInTheDocument();
-  expect(screen.getByText("1 runner preparing")).toBeInTheDocument();
-  expect(screen.getByText(/Waiting for 1m 3\ds/)).toBeInTheDocument();
+  expect(screen.getByText("1 runner preparing · 1 runner ready")).toBeInTheDocument();
+  expect(screen.getByText(/Oldest waiting 1m 3\ds/)).toBeInTheDocument();
   expect(screen.getByText("95% succeeded")).toBeInTheDocument();
   expect(screen.getByText("41")).toBeInTheDocument();
   expect(screen.getByText("1m 35s")).toBeInTheDocument();
@@ -134,11 +132,30 @@ test("scale sets and the platform show their health", async () => {
 
 test("a long queue shows the first ten and links to the rest", async () => {
   const many = Array.from({ length: 13 }, (_, i) => job({ id: `q${i}`, display_name: `job ${i}`, status: "assigned", queued_at: ago(60 - i), started_at: "0001-01-01T00:00:00Z" }));
-  mockApi({ "/api/v1/jobs": { jobs: many } });
+  mockApi({ "/api/v1/jobs": jobsByStatus(many) });
   renderApp("/");
   const now = await screen.findByRole("region", { name: "Now" });
   expect(await within(now).findAllByRole("listitem")).toHaveLength(10);
   expect(within(now).getByRole("link", { name: "3 more jobs" })).toHaveAttribute("href", "/jobs");
+});
+
+test("queued jobs keep rows even when many jobs run", async () => {
+  const runningJobs = Array.from({ length: 12 }, (_, i) => job({ id: `r${i}`, display_name: `run ${i}`, started_at: ago(100 - i) }));
+  const waiting = Array.from({ length: 3 }, (_, i) => job({ id: `w${i}`, display_name: `wait ${i}`, status: "assigned", queued_at: ago(30 - i), started_at: "0001-01-01T00:00:00Z" }));
+  mockApi({ "/api/v1/jobs": jobsByStatus([...runningJobs, ...waiting]) });
+  renderApp("/");
+  const now = await screen.findByRole("region", { name: "Now" });
+  await within(now).findByText(/wait 0/);
+  expect(within(now).getAllByRole("listitem")).toHaveLength(10);
+  expect(within(now).getByText(/wait 2/)).toBeInTheDocument();
+  expect(within(now).getByRole("link", { name: "5 more jobs" })).toBeInTheDocument();
+});
+
+test("jobs that never started give no median time", async () => {
+  mockApi({ "/api/v1/overview": { ...emptyOverview, kpis: { ...emptyOverview.kpis, jobs_24h: 2, median_duration_seconds_24h: 0 } } });
+  renderApp("/");
+  const card = (await screen.findByText("Median job time (24 h)")).closest("div")!.parentElement!;
+  expect(within(card).getByText("—")).toBeInTheDocument();
 });
 
 test("a quiet fleet says nothing runs or waits", async () => {

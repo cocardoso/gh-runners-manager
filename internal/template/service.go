@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,6 +54,9 @@ type Deps struct {
 	Config       config.Templates
 	// Cache is the registry cache job templates pull through; disabled when empty.
 	Cache config.Cache
+	// FirewallProbe is the address the control plane serves for job agents to check the job
+	// network's firewall ("" when it serves none); verification checks the group drops it.
+	FirewallProbe string
 	// BootstrapVMID is proxmox.template_vmid, the template used until the first build is active.
 	BootstrapVMID int
 	DataDir       string
@@ -114,25 +118,46 @@ func (s *Service) EnsureBootstrap(ctx context.Context) error {
 
 // Active implements controller.TemplateSource.
 func (s *Service) Active(ctx context.Context) (string, int) {
-	t, err := s.d.Store.ActiveTemplate(ctx)
-	if err != nil || t.RuntimeRef == "" {
-		return "", s.d.BootstrapVMID
-	}
-	return s.d.Runtime.TemplateEnvironmentRef(runtime.TemplateRef{ID: t.RuntimeRef}), t.VMID
+	ref, vmid, _ := s.ActiveFirewallGated(ctx)
+	return ref, vmid
 }
 
 // ActiveFirewallGated is Active, plus whether the template's agent waits for the job
-// network's firewall: built templates from layer FirewallGateSince on. The bootstrap
-// template's agent may be older.
+// network's firewall: its verification reported the feature and found the probe dropped.
+// The bootstrap template is never verified.
 func (s *Service) ActiveFirewallGated(ctx context.Context) (string, int, bool) {
 	t, err := s.d.Store.ActiveTemplate(ctx)
 	if err != nil || t.RuntimeRef == "" {
 		return "", s.d.BootstrapVMID, false
 	}
-	major, _, _ := strings.Cut(t.LayerVersion, ".")
-	n, err := strconv.Atoi(major)
-	gated := err == nil && n >= layer.FirewallGateSince
-	return s.d.Runtime.TemplateEnvironmentRef(runtime.TemplateRef{ID: t.RuntimeRef}), t.VMID, gated
+	return s.d.Runtime.TemplateEnvironmentRef(runtime.TemplateRef{ID: t.RuntimeRef}), t.VMID, t.FirewallGate
+}
+
+// firewallGated reports whether a self-test proves the gate: the agent has it, and the
+// job security group drops the probe.
+func firewallGated(rep ingest.SelfTestReport) bool {
+	if !slices.Contains(rep.Features, ingest.FeatureFirewallGate) {
+		return false
+	}
+	for _, c := range rep.Checks {
+		if c.Name == ingest.CheckFirewallProbe {
+			return c.OK && !c.Warning
+		}
+	}
+	return false
+}
+
+// probeDetail says why a verified template does not gate.
+func probeDetail(rep ingest.SelfTestReport) string {
+	if !slices.Contains(rep.Features, ingest.FeatureFirewallGate) {
+		return "its agent cannot wait for the firewall"
+	}
+	for _, c := range rep.Checks {
+		if c.Name == ingest.CheckFirewallProbe && c.Detail != "" {
+			return c.Detail
+		}
+	}
+	return "the firewall probe was not checked"
 }
 
 func inProgress(state string) bool {
@@ -484,7 +509,8 @@ func (s *Service) createAndVerify(ctx context.Context, id string) {
 		Env: map[string]string{ingest.EnvMode: ingest.ModeSelfTest,
 			// The cache's metrics and exporter ports must stay closed to jobs; its mirrors must answer.
 			ingest.EnvSelfTestBlocked: strings.Join(append(append([]string{}, s.d.Config.SelfTestBlocked...), s.d.Cache.PrivateAddrs()...), ","),
-			ingest.EnvSelfTestMirrors: strings.Join(s.d.Cache.MirrorAddrs(), ",")},
+			ingest.EnvSelfTestMirrors: strings.Join(s.d.Cache.MirrorAddrs(), ","),
+			ingest.EnvFirewallProbe:   s.d.FirewallProbe},
 		OnCreated: func(envID string) { s.recordEnv(ctx, id, envID, true) }})
 	_ = envID
 	if err != nil {
@@ -544,6 +570,7 @@ func (s *Service) conclude(ctx context.Context, id string, rep ingest.SelfTestRe
 		return
 	}
 	t.Report = raw
+	t.FirewallGate = firewallGated(rep)
 	if len(failed) > 0 {
 		_ = s.d.Store.UpdateTemplate(ctx, t)
 		s.failLocked(ctx, id, "verify", "self-test checks failed: "+strings.Join(failed, ", "))
@@ -557,6 +584,9 @@ func (s *Service) conclude(ctx context.Context, id string, rep ingest.SelfTestRe
 		return
 	}
 	_ = s.d.Environments.RequestDestroy(ctx, t.VerifyEnvID)
+	if s.d.FirewallProbe != "" && !t.FirewallGate {
+		s.record(ctx, "warn", "template.firewall_delay", "job environments of this template wait the fixed firewall delay: "+probeDetail(rep), t, nil)
+	}
 	s.record(ctx, "info", "template.ready", fmt.Sprintf("template %s passed verification (%d unexpected differences)", id, fid.Unexpected), t,
 		map[string]any{"unexpected": fid.Unexpected})
 

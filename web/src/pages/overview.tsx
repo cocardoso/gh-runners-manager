@@ -91,11 +91,14 @@ function Kpis({ ov }: { ov: Overview }) {
   const k = ov.kpis;
   const c = ov.capacity;
   const runnersHint =
-    k.preparing_runners > 0
-      ? t("overview.kpis.preparing", { count: k.preparing_runners, n: formatNumber(k.preparing_runners) })
-      : k.ready_runners > 0
-        ? t("overview.kpis.ready", { count: k.ready_runners, n: formatNumber(k.ready_runners) })
-        : t("overview.kpis.idle");
+    k.preparing_runners + k.ready_runners === 0
+      ? t("overview.kpis.idle")
+      : [
+          k.preparing_runners > 0 && t("overview.kpis.preparing", { count: k.preparing_runners, n: formatNumber(k.preparing_runners) }),
+          k.ready_runners > 0 && t("overview.kpis.ready", { count: k.ready_runners, n: formatNumber(k.ready_runners) }),
+        ]
+          .filter(Boolean)
+          .join(" · ");
   return (
     // Two per row on a phone, so the headline stays one screen tall.
     <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
@@ -112,11 +115,11 @@ function Kpis({ ov }: { ov: Overview }) {
       />
       <Kpi
         label={t("overview.kpis.medianDuration")}
-        value={k.jobs_24h > 0 ? formatDuration(k.median_duration_seconds_24h * 1000) : "—"}
+        value={k.median_duration_seconds_24h > 0 ? formatDuration(k.median_duration_seconds_24h * 1000) : "—"}
         hint={t("overview.kpis.medianDurationHint")}
       />
       <Kpi
-        className="col-span-2 lg:col-span-1"
+        className="col-span-2 xl:col-span-1"
         label={t("overview.kpis.capacity")}
         value={`${formatNumber(c.environments_live)} / ${formatNumber(c.environments_max)}`}
         hint={t("overview.kpis.capacityHint", { memory: formatMB(c.memory_committed_mb), budget: formatMB(c.memory_budget_mb) })}
@@ -131,12 +134,14 @@ function OldestWait({ since }: { since: string }) {
   return <>{t("overview.kpis.oldestWait", { duration: formatDuration(Math.max(0, now - Date.parse(since))) })}</>;
 }
 
-function NowCard({ jobs, sets, environments }: { jobs: Job[]; sets: ScaleSet[]; environments: Environment[] }) {
+function NowCard({ running, queued, sets, environments }: { running: Job[]; queued: Job[]; sets: ScaleSet[]; environments: Environment[] }) {
   const t = useT();
-  const active = jobs
-    .filter((j) => j.status === "running" || j.status === "assigned")
-    // Running first, then the longest waiting.
-    .sort((a, b) => (a.status === b.status ? Date.parse(a.queued_at) - Date.parse(b.queued_at) : a.status === "running" ? -1 : 1));
+  const byStart = [...running].sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
+  const byWait = [...queued].sort((a, b) => Date.parse(a.queued_at) - Date.parse(b.queued_at));
+  // Running jobs first, but queued ones always get rows: they are what someone watching waits for.
+  const runningRows = Math.min(byStart.length, Math.max(NOW_ROWS / 2, NOW_ROWS - byWait.length));
+  const shown = [...byStart.slice(0, runningRows), ...byWait.slice(0, NOW_ROWS - runningRows)];
+  const hidden = running.length + queued.length - shown.length;
   const runners = environments.filter(isJobEnvironment);
   const preparing = runners.filter((e) => PREPARING.has(e.state));
   const ready = runners.filter((e) => e.state === "idle");
@@ -154,11 +159,11 @@ function NowCard({ jobs, sets, environments }: { jobs: Job[]; sets: ScaleSet[]; 
           <Link href="/jobs">{t("overview.now.allJobs")}</Link>
         </LayerCard.Secondary>
         <LayerCard.Primary className="p-0">
-          {active.length === 0 ? (
+          {shown.length === 0 ? (
             <p className="p-4 text-sm text-kumo-subtle">{t("overview.now.empty")}</p>
           ) : (
             <ul className="divide-y divide-kumo-line">
-              {active.slice(0, NOW_ROWS).map((j) => {
+              {shown.map((j) => {
                 const running = j.status === "running";
                 const url = runURL(j);
                 const { branch } = parseWorkflowRef(j.workflow_ref);
@@ -178,7 +183,8 @@ function NowCard({ jobs, sets, environments }: { jobs: Job[]; sets: ScaleSet[]; 
                       />
                     </div>
                     <div className="flex shrink-0 items-center gap-3 text-sm">
-                      <span className={running ? "text-kumo-success" : "text-kumo-warning"}>{running ? t("overview.now.running") : t("overview.now.queued")}</span>
+                      {/* The dot already says it on a phone; the word needs the room there. */}
+                      <span className="sr-only text-kumo-subtle sm:not-sr-only">{running ? t("overview.now.running") : t("overview.now.queued")}</span>
                       <Elapsed since={running ? j.started_at : j.queued_at} />
                       {url && (
                         <Link href={url} target="_blank" rel="noreferrer" aria-label={t("overview.now.openRun")} className="inline-flex">
@@ -191,9 +197,9 @@ function NowCard({ jobs, sets, environments }: { jobs: Job[]; sets: ScaleSet[]; 
               })}
             </ul>
           )}
-          {active.length > NOW_ROWS && (
+          {hidden > 0 && (
             <p className="border-t border-kumo-line px-4 py-2 text-sm">
-              <Link href="/jobs">{t("overview.now.more", { count: active.length - NOW_ROWS, n: formatNumber(active.length - NOW_ROWS) })}</Link>
+              <Link href="/jobs">{t("overview.now.more", { count: hidden, n: formatNumber(hidden) })}</Link>
             </p>
           )}
           <p className="border-t border-kumo-line px-4 py-2 text-sm text-kumo-subtle">
@@ -205,10 +211,10 @@ function NowCard({ jobs, sets, environments }: { jobs: Job[]; sets: ScaleSet[]; 
   );
 }
 
-function RecentCard({ jobs }: { jobs: Job[] }) {
+function RecentCard({ done: finished }: { done: Job[] }) {
   const t = useT();
-  const done = jobs
-    .filter((j) => j.status === "completed" && isSet(j.finished_at))
+  const done = finished
+    .filter((j) => isSet(j.finished_at))
     .sort((a, b) => Date.parse(b.finished_at) - Date.parse(a.finished_at))
     .slice(0, 8);
   return (
@@ -252,9 +258,8 @@ function RecentCard({ jobs }: { jobs: Job[] }) {
   );
 }
 
-function ScaleSetsCard({ sets, jobs, environments }: { sets: ScaleSet[]; jobs: Job[]; environments: Environment[] }) {
+function ScaleSetsCard({ sets, running, queued, environments }: { sets: ScaleSet[]; running: Job[]; queued: Job[]; environments: Environment[] }) {
   const t = useT();
-  const count = (pred: (x: { scale_set: string }) => boolean, list: { scale_set: string }[]) => list.filter(pred).length;
   return (
     <section aria-label={t("overview.scaleSets.title")}>
       <LayerCard>
@@ -264,10 +269,9 @@ function ScaleSetsCard({ sets, jobs, environments }: { sets: ScaleSet[]; jobs: J
         <LayerCard.Primary className="p-0">
           <ul className="divide-y divide-kumo-line">
             {sets.map((s) => {
-              const mine = (x: { scale_set: string }) => x.scale_set === s.name;
-              const running = count((x) => mine(x) && (x as Job).status === "running", jobs);
-              const queued = count((x) => mine(x) && (x as Job).status === "assigned", jobs);
-              const ready = count((x) => mine(x) && isJobEnvironment(x as Environment) && (x as Environment).state === "idle", environments);
+              const runningHere = running.filter((j) => j.scale_set === s.name).length;
+              const queuedHere = queued.filter((j) => j.scale_set === s.name).length;
+              const ready = environments.filter((e) => e.scale_set === s.name && isJobEnvironment(e) && e.state === "idle").length;
               return (
                 <li key={s.name} className="flex min-w-0 flex-col gap-1 px-4 py-2.5">
                   <div className="flex min-w-0 items-center justify-between gap-2">
@@ -278,8 +282,8 @@ function ScaleSetsCard({ sets, jobs, environments }: { sets: ScaleSet[]; jobs: J
                   </div>
                   <span className="text-sm text-kumo-subtle">
                     {t("overview.scaleSets.summary", {
-                      running: formatNumber(running),
-                      queued: formatNumber(queued),
+                      running: formatNumber(runningHere),
+                      queued: formatNumber(queuedHere),
                       ready: formatNumber(ready),
                       max: s.settings?.max_concurrent ? formatNumber(s.settings.max_concurrent) : "—",
                     })}
@@ -404,7 +408,10 @@ export function OverviewPage() {
   const overview = useOverview();
   const stats = useJobStats(24);
   const envs = useEnvironments({ limit: 200 });
-  const jobs = useJobs({ limit: 200 });
+  // The same sources as the headline numbers: every queued and running job, the latest finished.
+  const running = useJobs({ status: "running", limit: 1000 });
+  const queued = useJobs({ status: "assigned", limit: 1000 });
+  const done = useJobs({ status: "completed", limit: 20 });
   const sets = useScaleSets();
 
   if (overview.isLoading) return <Page title={t("overview.title")}><Loading /></Page>;
@@ -412,7 +419,8 @@ export function OverviewPage() {
 
   const ov = overview.data;
   const alerts = ov.alerts ?? [];
-  const fresh = jobs.isSuccess && (jobs.data?.length ?? 0) === 0 && envs.isSuccess && (envs.data?.length ?? 0) === 0;
+  const fresh =
+    [running, queued, done].every((q) => q.isSuccess && (q.data?.length ?? 0) === 0) && envs.isSuccess && (envs.data?.length ?? 0) === 0;
 
   return (
     <Page title={t("overview.title")} description={t("overview.description")}>
@@ -427,11 +435,11 @@ export function OverviewPage() {
       <Kpis ov={ov} />
       <Grid variant="2-1" gap="base">
         <div className="flex min-w-0 flex-col gap-4">
-          <NowCard jobs={jobs.data ?? []} sets={sets.data ?? []} environments={envs.data ?? []} />
-          <RecentCard jobs={jobs.data ?? []} />
+          <NowCard running={running.data ?? []} queued={queued.data ?? []} sets={sets.data ?? []} environments={envs.data ?? []} />
+          <RecentCard done={done.data ?? []} />
         </div>
         <div className="flex min-w-0 flex-col gap-4">
-          {(sets.data?.length ?? 0) > 0 && <ScaleSetsCard sets={sets.data ?? []} jobs={jobs.data ?? []} environments={envs.data ?? []} />}
+          {(sets.data?.length ?? 0) > 0 && <ScaleSetsCard sets={sets.data ?? []} running={running.data ?? []} queued={queued.data ?? []} environments={envs.data ?? []} />}
           <PlatformCard sets={sets.data ?? []} />
         </div>
       </Grid>

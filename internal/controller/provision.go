@@ -45,7 +45,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 
 	c.mu.Lock()
-	var demands []scheduler.Demand
+	var jobs, demands []scheduler.Demand // assigned jobs only; with the warm runners
 	assigned := map[string]int{}
 	now := c.now()
 	for _, name := range c.order {
@@ -62,8 +62,11 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			s.waitingSince = time.Time{}
 		}
 		assigned[cfg.Name] = s.desired
-		demands = append(demands, scheduler.Demand{ScaleSet: cfg.Name, Desired: withWarm(s.desired, cfg), Live: serving[cfg.Name],
-			MaxConcurrent: cfg.MaxConcurrent, MemoryMB: cfg.MemoryMB, WaitingSince: s.waitingSince})
+		d := scheduler.Demand{ScaleSet: cfg.Name, Desired: s.desired, Live: serving[cfg.Name],
+			MaxConcurrent: cfg.MaxConcurrent, MemoryMB: cfg.MemoryMB, WaitingSince: s.waitingSince}
+		jobs = append(jobs, d)
+		d.Desired = withWarm(s.desired, cfg)
+		demands = append(demands, d)
 	}
 	c.mu.Unlock()
 
@@ -76,12 +79,24 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("runtime capacity: %w", err)
 	}
 	cp := c.d.Config.Capacity
-	plan := scheduler.Decide(demands, scheduler.Capacity{
+	capacity := scheduler.Capacity{
 		MaxEnvironments: cp.MaxEnvironments, LiveEnvironments: len(live),
 		MemoryBudgetMB: cp.MemoryBudgetMB, CommittedMemoryMB: committed,
 		HostAvailableMB: rc.HostMemoryAvailableMB, MemoryMarginMB: cp.MemoryMarginMB,
 		ThinPoolPercent: rc.ThinPoolPercent, MaxThinPoolPercent: cp.MaxDiskPercent,
-	})
+	}
+	// Queued jobs first; warm runners only take the capacity they leave.
+	plan := scheduler.Decide(jobs, capacity)
+	for i, d := range demands {
+		n := plan.Create[d.ScaleSet]
+		demands[i].Live += n
+		capacity.LiveEnvironments += n
+		capacity.CommittedMemoryMB += n * d.MemoryMB
+		capacity.HostAvailableMB -= n * d.MemoryMB
+	}
+	for name, n := range scheduler.Decide(demands, capacity).Create {
+		plan.Create[name] += n
+	}
 	for name := range plan.Waiting {
 		if assigned[name] <= serving[name] {
 			delete(plan.Waiting, name) // only warm runners are missing: no job waits

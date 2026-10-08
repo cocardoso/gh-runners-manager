@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/environment"
@@ -40,6 +41,8 @@ func (c *Controller) Reap(ctx context.Context) {
 		return
 	}
 	now := c.now()
+	// Oldest first, so the oldest of surplus idle runners is released first.
+	sort.SliceStable(live, func(i, j int) bool { return live[i].CreatedAt.Before(live[j].CreatedAt) })
 	idle := map[string]int{} // idle job environments per scale set
 	for _, e := range live {
 		if e.State == string(environment.Idle) && (e.Kind == "" || e.Kind == store.KindJob) {
@@ -75,9 +78,19 @@ func (c *Controller) Reap(ctx context.Context) {
 const warmMaxAge = time.Hour
 
 // keepWarm reports whether an idle environment past its idle timeout stays as one of its
-// scale set's warm runners: while the scale set has no more idle runners than it keeps warm.
+// scale set's warm runners: while the scale set (not removed) has no more idle runners than
+// it keeps warm. After warmMaxAge it is replaced, but not while jobs are queued, as one may
+// be on its way to it.
 func (c *Controller) keepWarm(e store.Environment, idle map[string]int, now time.Time) bool {
-	return idle[e.ScaleSet] <= c.scaleSetConfig(e.ScaleSet).WarmRunners && now.Sub(e.CreatedAt) < warmMaxAge
+	c.mu.Lock()
+	s, ok := c.scaleSets[e.ScaleSet]
+	if !ok || s.removed {
+		c.mu.Unlock()
+		return false
+	}
+	warm, queued := s.cfg.WarmRunners, s.desired > 0
+	c.mu.Unlock()
+	return idle[e.ScaleSet] <= warm && (now.Sub(e.CreatedAt) < warmMaxAge || queued)
 }
 
 // silentPowerOffGrace keeps the reaper from judging a guest that only just changed
