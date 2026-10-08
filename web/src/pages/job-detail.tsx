@@ -136,7 +136,8 @@ export function JobDetailPage() {
     [job.data, environment.data, jobEvents.data, envEvents.data, now],
   );
 
-  const crumbs = [{ label: t("overview.jobs.title"), href: "/jobs" }];
+  // A finished job belongs to the history.
+  const crumbs = [{ label: t("overview.jobs.title"), href: job.data?.status === "completed" ? "/jobs?tab=history" : "/jobs" }];
   if (job.isLoading) return <Page title={t("overview.job.title")} crumbs={crumbs}><Loading /></Page>;
   if (job.error instanceof ApiError && job.error.status === 404)
     return (
@@ -165,35 +166,36 @@ export function JobDetailPage() {
   return (
     <Page title={j.display_name || j.id} description={j.workflow_ref} crumbs={crumbs}>
       <Summary job={j} now={now} />
-      <DetailTabs tabs={tabs} value={tabs.some((x) => x.value === tab) ? tab : "timeline"} />
-      {tab === "steps" ? (
-        <Steps
-          details={github.data}
-          loading={github.isLoading}
-          error={github.error}
-          onOpen={(name) => {
-            setLogSearch(name);
-            void navigate({ to: ".", search: { tab: "logs" }, replace: true });
-          }}
-        />
-      ) : tab === "logs" ? (
-        envId ? (
-          <LiveLog key={logSearch} envId={envId} streams={STREAMS} defaultStream="job" live={live} initialSearch={logSearch} />
+      <DetailTabs tabs={tabs} value={tabs.some((x) => x.value === tab) ? tab : "timeline"}>
+        {tab === "steps" ? (
+          <Steps
+            details={github.data}
+            loading={github.isLoading}
+            error={github.error}
+            onOpen={(name) => {
+              setLogSearch(name);
+              void navigate({ to: ".", search: { tab: "logs" }, replace: true });
+            }}
+          />
+        ) : tab === "logs" ? (
+          envId ? (
+            <LiveLog key={logSearch} envId={envId} streams={STREAMS} defaultStream="job" live={live} initialSearch={logSearch} />
+          ) : (
+            <p className="text-sm text-kumo-subtle">{t("overview.job.noLogs")}</p>
+          )
+        ) : tab === "resources" ? (
+          envId ? <ResourcesPanel envId={envId} live={live} memoryLimitMB={env?.memory_mb} /> : <p className="text-sm text-kumo-subtle">{t("overview.job.noEnvironment")}</p>
+        ) : tab === "environment" ? (
+          env ? <EnvironmentPanel environment={env} jobLink={false} /> : <p className="text-sm text-kumo-subtle">{t("overview.job.noEnvironmentAssigned")}</p>
         ) : (
-          <p className="text-sm text-kumo-subtle">{t("overview.job.noLogs")}</p>
-        )
-      ) : tab === "resources" ? (
-        envId ? <ResourcesPanel envId={envId} live={live} memoryLimitMB={env?.memory_mb} /> : <p className="text-sm text-kumo-subtle">{t("overview.job.noEnvironment")}</p>
-      ) : tab === "environment" ? (
-        env ? <EnvironmentPanel environment={env} jobLink={false} /> : <p className="text-sm text-kumo-subtle">{t("overview.job.noEnvironmentAssigned")}</p>
-      ) : (
-        <LayerCard>
-          <LayerCard.Secondary>{t("overview.job.lifecycle")}</LayerCard.Secondary>
-          <LayerCard.Primary>
-            <Timeline stages={stages} />
-          </LayerCard.Primary>
-        </LayerCard>
-      )}
+          <LayerCard>
+            <LayerCard.Secondary>{t("overview.job.lifecycle")}</LayerCard.Secondary>
+            <LayerCard.Primary>
+              <Timeline stages={stages} />
+            </LayerCard.Primary>
+          </LayerCard>
+        )}
+      </DetailTabs>
     </Page>
   );
 }

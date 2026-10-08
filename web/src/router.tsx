@@ -5,10 +5,11 @@ import { JobsPage } from "@/pages/jobs";
 import { JobDetailPage } from "@/pages/job-detail";
 import { EnvironmentsPage } from "@/pages/environments";
 import { EnvironmentDetailPage } from "@/pages/environment-detail";
+import { RepositoriesPage } from "./pages/repositories";
 import { ScaleSetsPage } from "@/pages/scale-sets";
 import { TemplatesPage } from "@/pages/templates";
 import { TemplateDetailPage } from "@/pages/template-detail";
-import { LiveLogsPage } from "@/pages/live-logs";
+import { EventsPage } from "@/pages/events";
 import { SettingsPage } from "@/pages/settings";
 import { AccountPage } from "@/pages/account";
 import { NotFoundPage } from "@/pages/not-found";
@@ -26,6 +27,8 @@ export interface ListSearch {
   level?: string;
   kind?: string;
   page?: number;
+  /** The list's tab: what exists now (default) or its history. */
+  tab?: string;
 }
 
 const listSearch = (s: Record<string, unknown>): ListSearch => ({
@@ -38,6 +41,7 @@ const listSearch = (s: Record<string, unknown>): ListSearch => ({
   level: str(s.level),
   kind: str(s.kind),
   page: num(s.page),
+  tab: str(s.tab),
 });
 
 export interface DetailSearch {
@@ -54,10 +58,11 @@ const routes = [
   createRoute({ getParentRoute: () => rootRoute, path: "/jobs/$id", component: JobDetailPage, validateSearch: detailSearch }),
   createRoute({ getParentRoute: () => rootRoute, path: "/environments", component: EnvironmentsPage, validateSearch: listSearch }),
   createRoute({ getParentRoute: () => rootRoute, path: "/environments/$id", component: EnvironmentDetailPage, validateSearch: detailSearch }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/repositories", component: RepositoriesPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/scale-sets", component: ScaleSetsPage }),
-  createRoute({ getParentRoute: () => rootRoute, path: "/templates", component: TemplatesPage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/templates", component: TemplatesPage, validateSearch: listSearch }),
   createRoute({ getParentRoute: () => rootRoute, path: "/templates/$id", component: TemplateDetailPage, validateSearch: detailSearch }),
-  createRoute({ getParentRoute: () => rootRoute, path: "/logs", component: LiveLogsPage, validateSearch: listSearch }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/logs", component: EventsPage, validateSearch: listSearch }),
   createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/account", component: AccountPage }),
 ];

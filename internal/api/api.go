@@ -372,6 +372,7 @@ func New(d Deps) http.Handler {
 	registerAuth(a, d)
 	registerSettingsEdit(a, d)
 	registerHistory(a, d)
+	registerRepositories(a, d)
 	huma.Register(a, huma.Operation{OperationID: "get-cache", Method: http.MethodGet, Path: "/api/v1/cache",
 		Summary: "The registry cache on the job network", Tags: []string{"settings"}},
 		func(ctx context.Context, _ *struct{}) (*struct{ Body cachemon.Status }, error) {

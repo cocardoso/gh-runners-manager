@@ -62,7 +62,7 @@ function CleanupDialog({ days, onClose }: { days: number; onClose: () => void })
         description: done.warning ? `${describeCounts(done)}. ${done.warning}` : describeCounts(done),
         variant: done.warning ? "warning" : "success",
       });
-      for (const key of ["templates", "template", "environments", "environment", "jobs", "job", "stats", "overview"]) void qc.invalidateQueries({ queryKey: [key] });
+      for (const key of ["templates", "template", "environments", "environment", "jobs", "job", "stats", "overview", "repositories"]) void qc.invalidateQueries({ queryKey: [key] });
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -56,6 +56,7 @@ export function defaultRoutes(): Routes {
   return {
     "/api/v1/auth/session": { state: "signed_in", username: "admin", csrf: "csrf-1" },
     "/api/v1/overview": emptyOverview,
+    "/api/v1/repositories": { repositories: [] },
     "/api/v1/history/settings": { mode: "automatic", days: 30, audit_days: 365 },
     "/api/v1/cache": { enabled: false, up: false, origins: [], disk_used_bytes: 0, disk_budget_bytes: 0, checked_at: ZERO },
     "/api/v1/stats/jobs": { buckets: [] },
@@ -77,7 +78,7 @@ export function mockApi(overrides: Routes = {}) {
     calls.push({ method: req.method, url, headers: req.headers, request: req.clone() });
     const r = routes[`${req.method} ${url.pathname}`] ?? (req.method === "GET" ? routes[url.pathname] : undefined) ?? routes[url.pathname];
     if (r === undefined) return new Response(JSON.stringify({ title: "Not Found", detail: "not found" }), { status: 404, headers: { "Content-Type": "application/json" } });
-    const body = typeof r === "function" ? (r as (u: URL) => unknown)(url) : r;
+    const body = typeof r === "function" ? await (r as (u: URL) => unknown)(url) : r;
     if (body instanceof Response) return body;
     return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
   });

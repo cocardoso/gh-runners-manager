@@ -12,6 +12,7 @@ export type JobDetails = Schemas["JobDetails"];
 export type LogEntry = Schemas["Entry"];
 export type LogStreamInfo = Schemas["LogStream"];
 export type Overview = Schemas["Overview"];
+export type Repository = Schemas["Repository"];
 export type ScaleSet = Schemas["ScaleSet"];
 export type SessionState = Schemas["SessionState"];
 export type CredentialView = Schemas["CredentialView"];

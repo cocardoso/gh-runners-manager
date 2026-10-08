@@ -7,8 +7,13 @@ const en = {
     environments: "Environments",
     scaleSets: "Scale sets",
     templates: "Templates",
-    liveLogs: "Live logs",
+    repositories: "Repositories",
+    events: "Events",
     settings: "Settings",
+    groups: {
+      inventory: "Inventory",
+      activity: "Activity",
+    },
   },
   header: {
     mainNavigation: "Main navigation",
@@ -140,8 +145,13 @@ export const shell: Record<Locale, typeof en> = {
       environments: "Ambientes",
       scaleSets: "Scale sets",
       templates: "Templates",
-      liveLogs: "Logs ao vivo",
+      repositories: "Repositórios",
+      events: "Eventos",
       settings: "Configurações",
+      groups: {
+        inventory: "Inventário",
+        activity: "Atividade",
+      },
     },
     header: {
       mainNavigation: "Navegação principal",
@@ -270,8 +280,13 @@ export const shell: Record<Locale, typeof en> = {
       environments: "Entornos",
       scaleSets: "Scale sets",
       templates: "Templates",
-      liveLogs: "Logs en vivo",
+      repositories: "Repositorios",
+      events: "Eventos",
       settings: "Configuración",
+      groups: {
+        inventory: "Inventario",
+        activity: "Actividad",
+      },
     },
     header: {
       mainNavigation: "Navegación principal",
@@ -400,8 +415,13 @@ export const shell: Record<Locale, typeof en> = {
       environments: "Environnements",
       scaleSets: "Scale sets",
       templates: "Templates",
-      liveLogs: "Logs en direct",
+      repositories: "Dépôts",
+      events: "Événements",
       settings: "Paramètres",
+      groups: {
+        inventory: "Inventaire",
+        activity: "Activité",
+      },
     },
     header: {
       mainNavigation: "Navigation principale",
@@ -530,8 +550,13 @@ export const shell: Record<Locale, typeof en> = {
       environments: "Ambienti",
       scaleSets: "Scale set",
       templates: "Template",
-      liveLogs: "Log in tempo reale",
+      repositories: "Repository",
+      events: "Eventi",
       settings: "Impostazioni",
+      groups: {
+        inventory: "Inventario",
+        activity: "Attività",
+      },
     },
     header: {
       mainNavigation: "Navigazione principale",

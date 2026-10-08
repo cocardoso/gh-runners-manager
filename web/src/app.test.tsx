@@ -16,7 +16,7 @@ const pages: [string, string][] = [
   ["/environments", "Environments"],
   ["/scale-sets", "Scale sets"],
   ["/templates", "Templates"],
-  ["/logs", "Live logs"],
+  ["/logs", "Events"],
   ["/settings", "Settings"],
 ];
 

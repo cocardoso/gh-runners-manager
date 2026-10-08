@@ -30,6 +30,7 @@ This document holds the architecture diagrams of gh-runners-manager (`ghrm`). It
 | Secrets sealed at rest (AES-256-GCM, separate key file), `ghrm secret` | `internal/secrets` |
 | Editable credentials and scale sets, listener supervisor | `internal/settings`, `cmd/ghrm/supervisor.go` |
 | Prometheus metrics, daily backups | `internal/metrics`, `internal/backup` |
+| Repositories view: scale sets and job activity per GitHub repository or organization (`GET /api/v1/repositories`) | `internal/api/repositories.go`, `internal/store/activity.go` |
 | History retention: daily or manual cleanup of finished environments, jobs, events, logs and failed template records | `internal/retention`, `internal/store/history.go` |
 | Registry cache: proxies, eviction, disk exporter, monitor, mirror settings in templates | `internal/cachemon`, `internal/agent` (`cacheprune.go`, `cacheexporter.go`), `template/layer/mirrors.sh` |
 | Installer, container image, releases | `deploy/proxmox/install.sh`, `Dockerfile`, `deploy/docker`, `.github/workflows/release.yml` |
@@ -116,7 +117,7 @@ The UI is a single-page app embedded in `ghrm` (`web/embed.go`) and served for e
 ```mermaid
 flowchart LR
     subgraph browser["Operator browser"]
-        pages["Pages: overview, jobs, environments,<br/>scale sets, live logs, settings"]
+        pages["Pages: overview<br/>inventory: repositories, scale sets, templates<br/>activity: jobs, environments, events<br/>settings"]
         query["TanStack Query cache"]
         live["Shared EventStream<br/>(backoff, resume after seq, stale detection)"]
         viewer["Log viewer (virtualized, ANSI)<br/>LogBuffer cap 50k lines"]

@@ -62,6 +62,15 @@ export function useScaleSets() {
   return useQuery({ queryKey: ["scale-sets"], queryFn: async () => unwrap(await api.GET("/api/v1/scale-sets")).scale_sets ?? [] });
 }
 
+/** Job and scale set events refresh the list; the timer also keeps the 24 h window moving. */
+export function useRepositories() {
+  return useQuery({
+    queryKey: ["repositories"],
+    queryFn: async () => unwrap(await api.GET("/api/v1/repositories")).repositories ?? [],
+    refetchInterval: 30_000,
+  });
+}
+
 export function useSettings() {
   return useQuery({ queryKey: ["settings"], queryFn: async () => unwrap(await api.GET("/api/v1/settings")), staleTime: 60_000 });
 }

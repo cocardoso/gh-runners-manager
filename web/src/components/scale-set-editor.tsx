@@ -82,6 +82,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
       unwrap(await api.PUT("/api/v1/scale-sets/{name}", { params: { path: { name: name.trim() } }, body }));
       void qc.invalidateQueries({ queryKey: ["scale-sets"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
+      void qc.invalidateQueries({ queryKey: ["repositories"] });
       onClose();
     } catch (err) {
       setError(message(err));

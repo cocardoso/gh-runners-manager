@@ -1,7 +1,7 @@
 import { expect, pages, test, trackErrors } from "./fixtures";
 
 for (const [path, title] of pages) {
-  test(`${title} renders without console errors`, async ({ page, demo }) => {
+  test(`${title} (${path}) renders without console errors`, async ({ page, demo }) => {
     const errors = trackErrors(page);
     await page.goto(demo.url + path);
     await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();

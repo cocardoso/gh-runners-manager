@@ -67,7 +67,20 @@ test("a template build progresses live to active from the Templates page", async
   await expect(build).toBeEnabled();
   await build.click();
   await expect(page.getByText("Build started")).toBeVisible();
-  const row = page.getByRole("row").filter({ hasText: "Manual" }).first();
-  await expect(row.getByText(/building|creating|verifying|ready|active/)).toBeVisible();
-  await expect(row.getByText("active", { exact: true })).toBeVisible({ timeout: 40_000 });
+  // The build shows as in progress, then becomes the template in use, without a reload.
+  await expect(page.getByRole("region", { name: "Build in progress" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Build in progress" })).toBeHidden({ timeout: 40_000 });
+  await expect(page.getByRole("region", { name: "In use" }).getByText("Manual")).toBeVisible();
+});
+
+test("the inventory and activity menus lead to the repositories and to the history tabs", async ({ page, demo }) => {
+  await page.goto(`${demo.url}/`);
+  await page.getByRole("group", { name: "Inventory" }).getByRole("link", { name: "Repositories" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Repositories" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /octo/ }).first()).toBeVisible();
+  await page.getByRole("group", { name: "Activity" }).getByRole("link", { name: "Jobs" }).click();
+  await page.getByRole("tab", { name: "History" }).click();
+  await expect(page).toHaveURL(/\/jobs\?tab=history/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/jobs$/);
 });

@@ -26,15 +26,19 @@ It creates a dedicated Proxmox user and token, an isolated job network, the cont
 
 The UI is embedded in the `ghrm` binary and follows the Cloudflare dashboard patterns, built with [Kumo](https://github.com/cloudflare/kumo). Everything updates live over server-sent events. It speaks English, Portuguese (Brazil), Spanish, French and Italian: it follows the browser's language, and the language menu in the top bar changes it.
 
-| Overview | Jobs |
+The menu separates the **inventory** (repositories, scale sets, templates: what exists and can be used) from the **activity** (jobs, environments, events: what happens); every list opens on what exists now, with its history in a tab of its own.
+
+| Overview | Repositories |
 | --- | --- |
-| ![Overview](docs/images/overview-light.png) | ![Jobs](docs/images/jobs-light.png) |
-| **Job timeline** | **Live job log** |
-| ![Job timeline](docs/images/job-timeline-light.png) | ![Job log](docs/images/job-logs-dark.png) |
-| **Scale sets** | **Live logs** |
-| ![Scale sets](docs/images/scale-sets-light.png) | ![Live logs](docs/images/live-logs-dark.png) |
-| **Templates** | **Template fidelity report** |
-| ![Templates](docs/images/templates-light.png) | ![Template fidelity](docs/images/template-fidelity-light.png) |
+| ![Overview](docs/images/overview-light.png) | ![Repositories](docs/images/repositories-light.png) |
+| **Templates in use and available** | **Template build history** |
+| ![Templates](docs/images/templates-light.png) | ![Template history](docs/images/template-history-light.png) |
+| **Jobs history** | **Job timeline** |
+| ![Jobs](docs/images/jobs-light.png) | ![Job timeline](docs/images/job-timeline-light.png) |
+| **Live job log** | **Events** |
+| ![Job log](docs/images/job-logs-dark.png) | ![Events](docs/images/events-dark.png) |
+| **Scale sets** | **Template fidelity report** |
+| ![Scale sets](docs/images/scale-sets-light.png) | ![Template fidelity](docs/images/template-fidelity-light.png) |
 | **Settings: GitHub credentials** | **Sign-in** |
 | ![Settings](docs/images/settings-light.png) | ![Sign-in](docs/images/sign-in-dark.png) |
 

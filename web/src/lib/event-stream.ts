@@ -132,7 +132,7 @@ export class EventStream {
 }
 
 // The lists a history deletion can shrink.
-const historyLists = [["templates"], ["environments"], ["jobs"], ["stats"], ["job"], ["environment"]];
+const historyLists = [["templates"], ["environments"], ["jobs"], ["stats"], ["job"], ["environment"], ["repositories"]];
 
 /** The query keys an event makes stale. Unknown kinds only refresh the overview. */
 export function invalidationKeys(e: ApiEvent): unknown[][] {
@@ -140,7 +140,7 @@ export function invalidationKeys(e: ApiEvent): unknown[][] {
   const family = e.kind.split(".")[0];
   switch (family) {
     case "job":
-      keys.push(["jobs"], ["stats"]);
+      keys.push(["jobs"], ["stats"], ["repositories"]);
       if (e.job_id) keys.push(["job", e.job_id]);
       if (e.environment_id) keys.push(["environment", e.environment_id]);
       break;
@@ -148,12 +148,15 @@ export function invalidationKeys(e: ApiEvent): unknown[][] {
     case "audit":
     case "reaper":
       keys.push(["environments"], ["scale-sets"]);
+      // Scale sets added or removed change which repositories are served.
+      if (family === "audit") keys.push(["repositories"]);
       if (e.environment_id) keys.push(["environment", e.environment_id]);
       if (e.job_id) keys.push(["job", e.job_id], ["jobs"]);
       break;
     case "scaleset":
     case "controller":
-      keys.push(["scale-sets"]);
+      // Demand changes when jobs are assigned: they belong to the In progress list now.
+      keys.push(["scale-sets"], ["jobs"], ["repositories"]);
       break;
     case "template":
       keys.push(["templates"], ["environments"]);

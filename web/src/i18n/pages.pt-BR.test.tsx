@@ -34,7 +34,7 @@ test("the sign-in page is in pt-BR", async () => {
 test("pagination speaks Portuguese", async () => {
   const jobs = Array.from({ length: 30 }, (_, i) => job({ id: `job-${i}`, status: "completed", result: "succeeded" }));
   mockApi({ "/api/v1/jobs": { jobs } });
-  renderApp("/jobs", { locale: "pt-BR" });
+  renderApp("/jobs?tab=history", { locale: "pt-BR" });
   expect(await screen.findByText(/Mostrando 1.25 de 30/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Próxima página" })).toBeInTheDocument();
 });
