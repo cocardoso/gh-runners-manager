@@ -111,8 +111,14 @@ pct)
     status)
       line=$(grep "^$vmid " "$S/guests") || { echo "Configuration file 'nodes/pve/lxc/$vmid.conf' does not exist" >&2; exit 2; }
       st=${line##* }; [ "$st" = template ] && st=stopped; echo "status: $st" ;;
-    config) line=$(grep "^$vmid " "$S/guests") || exit 2; read -r _ t st <<<"$line"; echo "tags: $t"; [ "$st" = template ] && echo "template: 1"; exit 0 ;;
-    create) shift 3; echo "$vmid $(opt tags "$@") stopped" >>"$S/guests" ;;
+    config)
+      line=$(grep "^$vmid " "$S/guests") || exit 2; read -r _ t st <<<"$line"; echo "tags: $t"; [ "$st" = template ] && echo "template: 1"
+      if [ -f "$S/rootfs_$vmid" ]; then echo "rootfs: $(cat "$S/rootfs_$vmid")"; fi
+      exit 0 ;;
+    create)
+      shift 3; echo "$vmid $(opt tags "$@") stopped" >>"$S/guests"
+      r=$(opt rootfs "$@"); [ -n "$r" ] && echo "${r%%:*}:vm-$vmid-disk-0,size=$(echo "${r#*:}" | cut -d, -f1)G${r#*:[0-9]*}" | sed 's/G,/G,/' >"$S/rootfs_$vmid" ;;
+    resize) r=$(cat "$S/rootfs_$vmid"); echo "$r" | sed -E "s/size=[0-9]+G/size=${4%G}G/" >"$S/rootfs_$vmid" ;;
     start) sed -i.bak "s/^\($vmid [^ ]*\) stopped$/\1 running/" "$S/guests" ;;
     stop | shutdown) sed -i.bak "s/^\($vmid [^ ]*\) running$/\1 stopped/" "$S/guests" ;;
     template) sed -i.bak "s/^\($vmid [^ ]*\) [a-z]*$/\1 template/" "$S/guests" ;;

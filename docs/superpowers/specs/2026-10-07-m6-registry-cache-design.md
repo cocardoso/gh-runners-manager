@@ -126,4 +126,5 @@ New steps, idempotent like the others: the `ghrm-cache` container (`--cache-vmid
 
 - **Fidelity:** a mirror can serve a stale tag until its TTL. Mitigation: the registry revalidates manifests of tags with the origin when it can reach it (proxy mode fetches the manifest by tag on each pull and serves cached blobs by digest), so tags stay current; only an unreachable origin serves the cached tag.
 - **Plain HTTP on the job network:** jobs cannot reach anything else internal, and the content is addressed by digest, which Docker verifies.
+- **Docker Hub credential scope:** the cache pulls any repository a job asks for with the configured account, so a job could pull that account's private images. The installer and the docs ask for a token with the "Public Repo Read-only" scope.
 - **`setup-buildx-action` configuration:** to be confirmed by a real job (§2); if it overrides the default configuration, the fallback is to set `BUILDX_CONFIG` for the runner so that the default file is found.

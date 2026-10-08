@@ -186,7 +186,7 @@ ct_file() { cat "$FAKE_STATE/files/$1$2" 2>/dev/null; } # ct_file VMID PATH: a f
 test_cache_is_created() {
   install || fail "exit $?: $(tail -n 3 "$tmp/out")"
   expect_out "+ container 102 (registry cache"
-  expect_log '^pct create 102 local:vztmpl/debian-13-standard.* --hostname ghrm-cache .*--rootfs local-lvm:100 --net0 name=eth0,bridge=jobnet,ip=10.50.0.3/24,gw=10.50.0.1'
+  expect_log '^pct create 102 local:vztmpl/debian-13-standard.* --hostname ghrm-cache .*--rootfs local-lvm:100,mountoptions=discard --net0 name=eth0,bridge=jobnet,ip=10.50.0.3/24,gw=10.50.0.1'
   expect_no_log '^pct create 102 .*--pool'
   ct_file 102 /etc/ghrm-cache/docker.io.yml | grep -q 'remoteurl: https://registry-1.docker.io' || fail "docker.io proxy configuration"
   ct_file 102 /etc/ghrm-cache/mcr.microsoft.com.yml | grep -q 'addr: ":5002"' || fail "mcr port"
@@ -217,6 +217,54 @@ test_cache_upgrades_its_running_agent() {
   binaries v1.1.0
   install || fail "second run: exit $?: $(tail -n 3 "$tmp/out")"
   ct_file 102 /usr/local/bin/ghrm-agent | grep -q 'v1.1.0' || fail "the cache's ghrm-agent was not replaced while running"
+}
+
+test_cache_rerun_keeps_its_disk_budget() {
+  install --cache-disk-gb 40 || fail "first run: exit $?"
+  ct_file 102 /etc/systemd/system/ghrm-cache-prune.service | grep -q -- '--budget-gb 36 ' || fail "budget for a 40 GB disk"
+  : >"$FAKE_LOG"
+  install || fail "rerun: exit $?: $(tail -n 3 "$tmp/out")"
+  ct_file 102 /etc/systemd/system/ghrm-cache-prune.service | grep -q -- '--budget-gb 36 ' || fail "a rerun without --cache-disk-gb must keep the disk's budget"
+  expect_no_log 'cat > /etc/systemd/system/ghrm-cache-prune.service'
+}
+
+test_cache_disk_grows_but_never_shrinks() {
+  install --cache-disk-gb 40 || fail "first run: exit $?"
+  install --cache-disk-gb 60 || fail "grow: exit $?: $(tail -n 3 "$tmp/out")"
+  expect_log '^pct resize 102 rootfs 60G'
+  ct_file 102 /etc/systemd/system/ghrm-cache-prune.service | grep -q -- '--budget-gb 54 ' || fail "budget after growing"
+  : >"$FAKE_LOG"
+  install --cache-disk-gb 20 || fail "shrink: exit $?"
+  expect_no_log '^pct resize'
+  expect_out "cannot shrink"
+  ct_file 102 /etc/systemd/system/ghrm-cache-prune.service | grep -q -- '--budget-gb 54 ' || fail "budget after a refused shrink"
+}
+
+test_cache_vmid_avoids_ghrm_ranges() {
+  install --template-vmid 949 || fail "exit $?: $(tail -n 3 "$tmp/out")"
+  expect_out "+ container 959 (registry cache"
+}
+
+test_dry_run_on_an_installed_cache_does_not_offer_to_install_it() {
+  install || fail "first run: exit $?"
+  install --dry-run || fail "dry run: exit $?"
+  expect_no_out "would install the registry"
+}
+
+test_kept_dockerhub_credential_follows_configuration_changes() {
+  echo "dckr_pat_secret123" | PATH="$here/fakebin:$PATH" bash "$installer" --binary-dir "$tmp/bin" --dockerhub-user bob >"$tmp/out" 2>&1 || fail "exit $?"
+  sed -i.bak 's/ttl: 168h/ttl: 1h/' "$FAKE_STATE/files/102/etc/ghrm-cache/docker.io.yml" # an older configuration
+  install || fail "rerun: exit $?: $(tail -n 3 "$tmp/out")"
+  f=$(ct_file 102 /etc/ghrm-cache/docker.io.yml)
+  grep -q 'ttl: 168h' <<<"$f" || fail "the docker.io configuration was not updated"
+  grep -q 'username: bob' <<<"$f" && grep -q 'password: dckr_pat_secret123' <<<"$f" || fail "the credential must be kept"
+  install --dockerhub-clear || fail "clear: exit $?"
+  ! ct_file 102 /etc/ghrm-cache/docker.io.yml | grep -q 'username:' || fail "--dockerhub-clear must remove the credential"
+}
+
+test_help_says_which_docker_hub_token_to_use() {
+  PATH="$here/fakebin:$PATH" bash "$installer" --help >"$tmp/out" 2>&1
+  expect_out "Public Repo Read-only"
 }
 
 test_existing_group_gets_the_cache_rule_once() {
