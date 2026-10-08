@@ -78,6 +78,10 @@ type ScaleSet struct {
 	Cores                int      `yaml:"cores"`
 	MemoryMB             int      `yaml:"memory_mb"`
 	KeepOnFailureMinutes int      `yaml:"keep_on_failure_minutes"`
+	// WarmRunners keeps this many runners online and idle before any job arrives, so a
+	// job starts in seconds instead of waiting for a new environment. They count toward
+	// max_concurrent and hold their memory.
+	WarmRunners int `yaml:"warm_runners"`
 }
 
 // ApplyDefaults fills the unset sizes of a scale set.
@@ -113,6 +117,9 @@ func (s ScaleSet) Validate(credentialExists func(string) bool) error {
 	}
 	if s.MaxConcurrent < 1 || s.Cores < 1 || s.MemoryMB < 256 {
 		errs = append(errs, fmt.Errorf("scale set %s: max_concurrent, cores and memory_mb must be positive (memory at least 256)", s.Name))
+	}
+	if s.WarmRunners < 0 || s.WarmRunners > s.MaxConcurrent {
+		errs = append(errs, fmt.Errorf("scale set %s: warm_runners must be between 0 and max_concurrent", s.Name))
 	}
 	return errors.Join(errs...)
 }

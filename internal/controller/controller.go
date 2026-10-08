@@ -37,8 +37,11 @@ type Deps struct {
 	Config            *config.Config
 	IngestURL         string
 	IngestFingerprint string
-	Now               func() time.Time
-	Timeouts          environment.Timeouts
+	// FirewallProbe is the address agents probe to know the job network's firewall applies
+	// to them ("" when the control plane does not serve it: the runtime waits instead).
+	FirewallProbe string
+	Now           func() time.Time
+	Timeouts      environment.Timeouts
 	// Templates chooses the template job environments clone (nil: the configured bootstrap template).
 	Templates TemplateSource
 	// TemplateEvents receives agent events of build and verify environments.
@@ -56,6 +59,12 @@ type StageObserver interface {
 // ("" for the configured one) and its VMID (recorded for retention).
 type TemplateSource interface {
 	Active(ctx context.Context) (ref string, vmid int)
+}
+
+// FirewallGatedSource is a TemplateSource that also tells whether the active template's agent waits for the
+// job network's firewall before it starts the runner.
+type FirewallGatedSource interface {
+	ActiveFirewallGated(ctx context.Context) (ref string, vmid int, gated bool)
 }
 
 // TemplateEvents receives agent events of build and verify environments.

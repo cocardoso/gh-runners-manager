@@ -45,7 +45,8 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 
 	c.mu.Lock()
-	var demands []scheduler.Demand
+	var jobs, demands []scheduler.Demand // assigned jobs only; with the warm runners
+	assigned := map[string]int{}
 	now := c.now()
 	for _, name := range c.order {
 		s := c.scaleSets[name]
@@ -60,8 +61,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		} else {
 			s.waitingSince = time.Time{}
 		}
-		demands = append(demands, scheduler.Demand{ScaleSet: cfg.Name, Desired: s.desired, Live: serving[cfg.Name],
-			MaxConcurrent: cfg.MaxConcurrent, MemoryMB: cfg.MemoryMB, WaitingSince: s.waitingSince})
+		assigned[cfg.Name] = s.desired
+		d := scheduler.Demand{ScaleSet: cfg.Name, Desired: s.desired, Live: serving[cfg.Name],
+			MaxConcurrent: cfg.MaxConcurrent, MemoryMB: cfg.MemoryMB, WaitingSince: s.waitingSince}
+		jobs = append(jobs, d)
+		d.Desired = withWarm(s.desired, cfg)
+		demands = append(demands, d)
 	}
 	c.mu.Unlock()
 
@@ -74,12 +79,29 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("runtime capacity: %w", err)
 	}
 	cp := c.d.Config.Capacity
-	plan := scheduler.Decide(demands, scheduler.Capacity{
+	capacity := scheduler.Capacity{
 		MaxEnvironments: cp.MaxEnvironments, LiveEnvironments: len(live),
 		MemoryBudgetMB: cp.MemoryBudgetMB, CommittedMemoryMB: committed,
 		HostAvailableMB: rc.HostMemoryAvailableMB, MemoryMarginMB: cp.MemoryMarginMB,
 		ThinPoolPercent: rc.ThinPoolPercent, MaxThinPoolPercent: cp.MaxDiskPercent,
-	})
+	}
+	// Queued jobs first; warm runners only take the capacity they leave.
+	plan := scheduler.Decide(jobs, capacity)
+	for i, d := range demands {
+		n := plan.Create[d.ScaleSet]
+		demands[i].Live += n
+		capacity.LiveEnvironments += n
+		capacity.CommittedMemoryMB += n * d.MemoryMB
+		capacity.HostAvailableMB -= n * d.MemoryMB
+	}
+	for name, n := range scheduler.Decide(demands, capacity).Create {
+		plan.Create[name] += n
+	}
+	for name := range plan.Waiting {
+		if assigned[name] <= serving[name] {
+			delete(plan.Waiting, name) // only warm runners are missing: no job waits
+		}
+	}
 	c.updateWaiting(ctx, plan)
 	for name, n := range plan.Create {
 		for range n {
@@ -89,6 +111,15 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// withWarm adds the warm runners to the assigned jobs. The warm runners fit within
+// max_concurrent; only jobs beyond it make the scale set wait for its limit.
+func withWarm(assigned int, cfg config.ScaleSet) int {
+	if assigned > cfg.MaxConcurrent {
+		return assigned
+	}
+	return min(assigned+cfg.WarmRunners, cfg.MaxConcurrent)
 }
 
 func isServing(state string) bool {
@@ -151,7 +182,7 @@ func (c *Controller) startProvisioning(ctx context.Context, scaleSet string) err
 	if err != nil {
 		return err
 	}
-	tplRef, tplVMID := c.activeTemplate(ctx)
+	tplRef, tplVMID, gated := c.activeTemplate(ctx)
 	e := store.Environment{ID: id, ScaleSet: scaleSet, State: string(environment.Pending), Kind: store.KindJob, TemplateVMID: tplVMID,
 		RunnerName: "ghrm-" + id[len(id)-12:], TokenHash: ingest.HashToken(token), MemoryMB: cfg.MemoryMB}
 	if err := c.d.Store.CreateEnvironment(ctx, e); err != nil {
@@ -166,19 +197,26 @@ func (c *Controller) startProvisioning(ctx context.Context, scaleSet string) err
 		defer c.inflight.Done()
 		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), provisionTimeout)
 		defer cancel()
-		c.provision(pctx, e, token, ghID, tplRef)
+		c.provision(pctx, e, token, ghID, tplRef, gated)
 	}()
 	return nil
 }
 
-func (c *Controller) activeTemplate(ctx context.Context) (string, int) {
+// activeTemplate returns the template job environments clone, and whether its agent
+// waits for the firewall itself (only with a probe to check it against).
+func (c *Controller) activeTemplate(ctx context.Context) (string, int, bool) {
 	if c.d.Templates == nil {
-		return "", c.d.Config.Proxmox.TemplateVMID
+		return "", c.d.Config.Proxmox.TemplateVMID, false
 	}
-	return c.d.Templates.Active(ctx)
+	if g, ok := c.d.Templates.(FirewallGatedSource); ok {
+		ref, vmid, gated := g.ActiveFirewallGated(ctx)
+		return ref, vmid, gated && c.d.FirewallProbe != ""
+	}
+	ref, vmid := c.d.Templates.Active(ctx)
+	return ref, vmid, false
 }
 
-func (c *Controller) provision(ctx context.Context, e store.Environment, token string, scaleSetID int, template string) {
+func (c *Controller) provision(ctx context.Context, e store.Environment, token string, scaleSetID int, template string, gated bool) {
 	cfg := c.scaleSetConfig(e.ScaleSet)
 	if _, err := c.transition(ctx, e.ID, []string{"pending"}, environment.Provisioning, nil); err != nil {
 		return
@@ -210,6 +248,11 @@ func (c *Controller) provision(ctx context.Context, e store.Environment, token s
 			ingest.EnvToken:       token,
 			ingest.EnvFingerprint: c.d.IngestFingerprint,
 		}}
+	if gated {
+		spec.FirewallGated = true
+		spec.Env[ingest.EnvFirewallProbe] = c.d.FirewallProbe
+		spec.Env[ingest.EnvFirewallSettle] = c.d.Config.Proxmox.FirewallSettle.Std().String()
+	}
 	c.createAndStart(ctx, e.ID, spec)
 }
 

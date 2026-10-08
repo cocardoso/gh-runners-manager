@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/environment"
@@ -40,6 +41,14 @@ func (c *Controller) Reap(ctx context.Context) {
 		return
 	}
 	now := c.now()
+	// Oldest first, so the oldest of surplus idle runners is released first.
+	sort.SliceStable(live, func(i, j int) bool { return live[i].CreatedAt.Before(live[j].CreatedAt) })
+	idle := map[string]int{} // idle job environments per scale set
+	for _, e := range live {
+		if e.State == string(environment.Idle) && (e.Kind == "" || e.Kind == store.KindJob) {
+			idle[e.ScaleSet]++
+		}
+	}
 	for _, e := range live {
 		st := environment.State(e.State)
 		g, exists := byEnv[e.ID]
@@ -51,7 +60,10 @@ func (c *Controller) Reap(ctx context.Context) {
 			c.advance(ctx, e.ID, environment.Completing, nil)
 		case e.Kind != "" && e.Kind != store.KindJob && (st == environment.Connected || st == environment.Idle || st == environment.Running):
 			// A build or self-test runs while connected: the template service enforces its timeouts.
+		case st == environment.Idle && c.d.Timeouts.Expired(st, e.StateChangedAt, now) && c.keepWarm(e, idle, now):
+			// A warm runner: it waits for the next job.
 		case st == environment.Idle && c.d.Timeouts.Expired(st, e.StateChangedAt, now):
+			idle[e.ScaleSet]--
 			// No job came: a normal scale-down, not a failure.
 			_, _ = c.d.Recorder.Info(ctx, "environment.idle_timeout", "no job arrived; releasing the environment",
 				events.Refs{ScaleSet: e.ScaleSet, EnvironmentID: e.ID}, nil)
@@ -60,6 +72,25 @@ func (c *Controller) Reap(ctx context.Context) {
 			c.Fail(ctx, e.ID, "timeout:"+e.State, fmt.Errorf("stayed %s longer than %s", e.State, c.d.Timeouts[st]))
 		}
 	}
+}
+
+// warmMaxAge replaces a warm runner after an hour, so it picks up a newer template.
+const warmMaxAge = time.Hour
+
+// keepWarm reports whether an idle environment past its idle timeout stays as one of its
+// scale set's warm runners: while the scale set (not removed) has no more idle runners than
+// it keeps warm. After warmMaxAge it is replaced, but not while jobs are queued, as one may
+// be on its way to it.
+func (c *Controller) keepWarm(e store.Environment, idle map[string]int, now time.Time) bool {
+	c.mu.Lock()
+	s, ok := c.scaleSets[e.ScaleSet]
+	if !ok || s.removed {
+		c.mu.Unlock()
+		return false
+	}
+	warm, queued := s.cfg.WarmRunners, s.desired > 0
+	c.mu.Unlock()
+	return idle[e.ScaleSet] <= warm && (now.Sub(e.CreatedAt) < warmMaxAge || queued)
 }
 
 // silentPowerOffGrace keeps the reaper from judging a guest that only just changed

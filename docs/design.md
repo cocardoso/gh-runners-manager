@@ -38,7 +38,7 @@ An end-to-end spike was run on a single-node Proxmox VE 9.2 host before this des
 
 - Docker Engine runs inside **unprivileged** LXC containers with `nesting=1,keyctl=1` (overlayfs storage driver, cgroup v2). Every Docker-based job type above passed, including buildx with the `docker-container` driver.
 - Lifecycle: `generate-jitconfig` → linked clone of a template LXC → inject the JIT config through the container's runtime environment (`pct set --env`) → start → the runner executes one job → the guest powers off → the control plane destroys it.
-- **Speed.** A linked clone takes about 1 s. The runner is online about 5 s after the guest starts, so it takes about 10 s to go from "job queued" to "runner online" without a warm pool. Template size does not affect per-job cost.
+- **Speed.** A linked clone takes about 1 s. The runner is online about 5 s after the guest starts. In production a job waited about 25 s from "queued" to "started" (12 s of it the fixed firewall delay); with the agent's firewall check, about 15 s, and a few seconds with a warm runner. Template size does not affect per-job cost.
 - A cloned LXC inherits the template's firewall configuration and security group.
 - A Proxmox SDN "Simple" zone with SNAT and dnsmasq DHCP provides an isolated job network. A security group that drops RFC 1918 and link-local destinations keeps jobs off the LAN and off the hypervisor.
 - Peak memory per job was 0.1–2.0 GiB for typical web-application CI.
@@ -170,7 +170,7 @@ pending → provisioning → booting → connected → idle → running → comp
 
 | Entity | Purpose | Key fields |
 |---|---|---|
-| `scale_set` | One GitHub scale set (one repository or organization) | name, GitHub config URL, labels, CPU / memory / disk per environment, max concurrent, warm pool size (default 0), keep-on-failure minutes, paused |
+| `scale_set` | One GitHub scale set (one repository or organization) | name, GitHub config URL, labels, CPU / memory / disk per environment, max concurrent, warm runners (default 0), keep-on-failure minutes, paused |
 | `template` | One built template version | slim image release tag, runner version, layer version, runtime ref (VMID), state (`building → verifying → active → retired`, or `failed`), sizes, fidelity report, build log ref |
 | `environment` | One job environment (an LXC) | scale set, template, runtime ref, IP, runner name/ID, state, timestamp per transition, failure stage/reason, exit code, peak CPU/memory, agent token hash |
 | `job` | One GitHub job | GitHub job/run IDs, repository, workflow, job name, branch, commit SHA, actor, URL, status, conclusion, queued/started/completed times, environment |
@@ -261,7 +261,7 @@ New environments use the `active` template. Environments that are already runnin
 For each scale set:
 
 ```
-desired = min(scale_set.max_concurrent, assigned_jobs + scale_set.warm_pool)
+desired = min(scale_set.max_concurrent, assigned_jobs + scale_set.warm_runners)   # assigned_jobs when it alone exceeds the limit
 ```
 
 Creation is gated by global limits, which are evaluated at creation time:
@@ -274,7 +274,7 @@ Creation is gated by global limits, which are evaluated at creation time:
 | CPU | Not limited; overcommit is allowed |
 
 - When capacity is short, waiting jobs are served first-in, first-out across scale sets. The UI shows why each job waits, for example "waiting for memory" or "scale set limit reached".
-- The warm pool defaults to 0. A warm pool trades idle memory for about 10 s less wait.
+- `warm_runners` defaults to 0. Warm runners trade idle memory for the cold start (about 15 s: clone, boot, firewall check and registration). Queued jobs are served before warm runners: the scheduler hands out capacity to assigned jobs first, and warm runners take what is left. Missing warm runners never count as waiting jobs. An idle runner past the idle timeout stays while its scale set has no more idle runners than `warm_runners`, and is replaced after an hour so it picks up a newer template (not while jobs are queued, as one may be on its way to it; a removed scale set keeps none).
 
 ### 9.1 Reaper
 
@@ -308,7 +308,7 @@ After a control-plane restart, state is rebuilt from the three sources before sc
 
 ### 10.3 Firewall application window
 
-A new guest must not start before `pve-firewall` has applied its rules. The runtime confirms that the rules are applied before `Start`. The exact mechanism is an implementation task (Section 14). Until it exists, a fixed delay longer than one compile cycle (≥ 12 s) is used.
+A new guest must not run job code before `pve-firewall` has applied its rules. The guest's agent confirms it before it starts the runner: it probes a control-plane port the job security group drops, and starts the runner once a probe that answered stops answering. Without that proof (the probe never answered), and for templates whose verification did not prove the check (an older agent, or a group that lets the probe through), a fixed delay longer than one compile cycle (`firewall_settle`, ≥ 12 s) is kept, counted from the agent's start or applied before `Start`. The group must DROP the probe: Proxmox's REJECT answers with a reset, which reads as "not filtered". The guest's system services now run unfiltered for a few seconds before the check passes; a flow they open then (DNS or NTP to a resolver the group forbids) could outlive the rules through connection tracking, so jobs should not rely on the group to cut a destination the template itself talks to at boot.
 
 ### 10.4 GitHub credentials
 
@@ -362,7 +362,7 @@ The UI is built with React, Vite, Tailwind CSS v4 and **Kumo** (`@cloudflare/kum
    - Actions: destroy, keep for debugging, and open the console.
 4. **Scale sets**
    - A list with the listener status (connected, last message, assigned jobs).
-   - Configuration: labels, resources, limits, warm pool, keep-on-failure, and pause/resume.
+   - Configuration: labels, resources, limits, warm runners, keep-on-failure, and pause/resume.
    - A copyable `runs-on` snippet (`clipboard-text`).
 5. **Templates**
    - Versions with the slim release, the runner version, the state and the size.
@@ -457,7 +457,7 @@ gh-runners-manager/
 |---|---|---|
 | 1 | The `actions/scaleset` client is in public preview, and its API may change. | Pin versions and wrap the client behind an internal interface. Confirm repository-level scale sets for personal accounts early. |
 | 2 | ~~The LXC `env` option may need privileges beyond the scoped role.~~ | **Resolved:** `ghrm smoke` with the scoped `GhrmRuntime` role on Proxmox VE 9.2 sets `env` successfully. Minimum version: Proxmox VE 9.1. |
-| 3 | No API confirms when `pve-firewall` has applied rules for a new guest. | Investigate a reliable signal. Until then, use a fixed delay longer than one compile cycle. |
+| 3 | No API confirms when `pve-firewall` has applied rules for a new guest. | The agent probes a port the security group drops and starts the runner once the probe stops answering; without proof, the fixed delay. |
 | 4 | Converting the `ubuntu-slim` image into an LXC root filesystem: the image has no init, and Proxmox's `ostype=ubuntu` network setup must work with it. | The ghrm layer installs systemd. Validated: template verification runs the software-report comparison on every build. |
 | 5 | Every job starts with a cold Docker cache, which makes buildx-heavy jobs slower than on hosted runners. | **Resolved:** a pull-through registry cache on the job network (see [architecture](architecture.md)); BuildKit `type=gha` cache exports also work. |
 | 6 | Docker Engine inside an unprivileged LXC with `nesting=1` is a supported but less common setup. | Covered by the canary suite and by template verification on every build. |

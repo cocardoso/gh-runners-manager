@@ -20,7 +20,7 @@ proxmox:
     end: 948
   thin_pool: data                               # LV name; read when the token has Sys.Audit on "/"
   storage: local-lvm                            # storage ID; used for disk usage otherwise
-  firewall_settle: 12s
+  firewall_settle: 12s                          # fallback when the agent cannot prove the firewall applies
 
 # --- ghrm serve ---
 data_dir: /var/lib/ghrm
@@ -60,6 +60,7 @@ scale_sets:
     cores: 2
     memory_mb: 4096
     keep_on_failure_minutes: 0
+    warm_runners: 0                  # runners kept online before a job arrives (faster start, holds memory)
 
 # Template builds (spec §8). ghrm builds templates from GitHub's ubuntu-slim recipe plus the
 # ghrm layer, verifies them and keeps the previous one for roll-back. Disabled until vmid_range is set;

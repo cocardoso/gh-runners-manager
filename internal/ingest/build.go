@@ -74,7 +74,15 @@ type Check struct {
 type SelfTestReport struct {
 	Checks   []Check         `json:"checks"`
 	Software json.RawMessage `json:"software,omitempty"`
+	// Features are what the template's agent can do, such as FeatureFirewallGate.
+	Features []string `json:"features,omitempty"`
 }
+
+// FeatureFirewallGate: the agent holds the runner until the job network's firewall applies.
+const FeatureFirewallGate = "firewall-gate"
+
+// CheckFirewallProbe is the self-test check that the job security group drops the probe.
+const CheckFirewallProbe = "firewall probe dropped"
 
 // BuildService serves template builds; internal/template implements it.
 type BuildService interface {

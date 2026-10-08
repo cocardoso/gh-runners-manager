@@ -21,14 +21,14 @@ import (
 )
 
 func TestParseEnviron(t *testing.T) {
-	raw := []byte("PATH=/bin\x00GHRM_JITCONFIG=abc==\x00GHRM_ENVIRONMENT_ID=env1\x00GHRM_INGEST_URL=https://x:8443\x00GHRM_INGEST_TOKEN=t\x00GHRM_INGEST_FINGERPRINT=AA\x00")
+	raw := []byte("PATH=/bin\x00GHRM_JITCONFIG=abc==\x00GHRM_ENVIRONMENT_ID=env1\x00GHRM_INGEST_URL=https://x:8443\x00GHRM_INGEST_TOKEN=t\x00GHRM_INGEST_FINGERPRINT=AA\x00GHRM_FIREWALL_PROBE=10.50.0.2:8444\x00GHRM_FIREWALL_SETTLE=20s\x00")
 	path := filepath.Join(t.TempDir(), "environ")
 	_ = os.WriteFile(path, raw, 0o600)
 	b, ok, err := LoadBootstrap(path)
 	if err != nil || !ok {
 		t.Fatalf("LoadBootstrap = %v %v", ok, err)
 	}
-	if b.JITConfig != "abc==" || b.EnvironmentID != "env1" || b.URL != "https://x:8443" || b.Token != "t" || b.Fingerprint != "AA" {
+	if b.JITConfig != "abc==" || b.EnvironmentID != "env1" || b.URL != "https://x:8443" || b.Token != "t" || b.Fingerprint != "AA" || b.FirewallProbe != "10.50.0.2:8444" || b.FirewallSettle != 20*time.Second {
 		t.Fatalf("bootstrap = %+v", b)
 	}
 	_ = os.WriteFile(path, []byte("PATH=/bin\x00"), 0o600)

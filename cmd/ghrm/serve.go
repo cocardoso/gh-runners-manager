@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -43,6 +45,8 @@ var (
 	_ api.Controller        = (*controller.Controller)(nil)
 	_ ingest.BuildService   = (*template.Service)(nil)
 	_ template.Environments = (*controller.Controller)(nil)
+
+	_ controller.FirewallGatedSource = (*template.Service)(nil)
 )
 
 // runtimeTemplates maps the templates configuration to the proxmox-lxc runtime.
@@ -133,10 +137,11 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		return err
 	}
 	gh := github.New(reg, logger)
+	probe := serveFirewallProbe(ctx, cfg.Ingest, logger)
 	ctl := controller.New(controller.Deps{Store: db, Recorder: rec, Runtime: rt, GitHub: gh, Logs: logStore, Config: cfg,
-		IngestURL: cfg.Ingest.AdvertiseURL, IngestFingerprint: fingerprint})
+		IngestURL: cfg.Ingest.AdvertiseURL, IngestFingerprint: fingerprint, FirewallProbe: probe})
 	tpl := template.NewService(template.Deps{Store: db, Recorder: rec, Logs: logStore, Runtime: rt, Environments: ctl,
-		Releases: template.NewGitHubReleases("", "", nil), Config: cfg.Templates, Cache: cfg.Cache, BootstrapVMID: p.TemplateVMID, DataDir: cfg.DataDir})
+		Releases: template.NewGitHubReleases("", "", nil), Config: cfg.Templates, Cache: cfg.Cache, FirewallProbe: probe, BootstrapVMID: p.TemplateVMID, DataDir: cfg.DataDir})
 	if err := tpl.EnsureBootstrap(ctx); err != nil {
 		return err
 	}
@@ -308,4 +313,40 @@ func waitOrTimeout(wait func(), d time.Duration) bool {
 	case <-time.After(d):
 		return false
 	}
+}
+
+// serveFirewallProbe opens the firewall probe next to the ingest port and returns the
+// address agents probe (an IP address, so the agent never waits on a resolver), or ""
+// when it cannot be served: then guests wait the fixed firewall delay. The probe needs
+// the ingest to be advertised on the port it listens on.
+func serveFirewallProbe(ctx context.Context, in config.Ingest, logger *slog.Logger) string {
+	disabled := func(reason string, args ...any) string {
+		logger.Warn("firewall probe disabled: "+reason, args...)
+		return ""
+	}
+	probe, err := ingest.ProbeAddress(in.AdvertiseURL)
+	if err != nil {
+		return disabled(err.Error())
+	}
+	probeHost, probePort, _ := net.SplitHostPort(probe)
+	listenHost, listenPort, err := net.SplitHostPort(in.Listen)
+	if err != nil {
+		return disabled("ingest.listen: " + err.Error())
+	}
+	if p, _ := strconv.Atoi(listenPort); strconv.Itoa(p+1) != probePort {
+		return disabled("the ingest listens on another port than it advertises", "listen", in.Listen, "advertise_url", in.AdvertiseURL)
+	}
+	if _, err := netip.ParseAddr(probeHost); err != nil {
+		ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", probeHost)
+		if err != nil || len(ips) == 0 {
+			return disabled("cannot resolve the ingest host", "host", probeHost, "error", err)
+		}
+		probe = net.JoinHostPort(ips[0].Unmap().String(), probePort)
+	}
+	ln, err := ingest.ListenProbe(net.JoinHostPort(listenHost, probePort))
+	if err != nil {
+		return disabled(err.Error())
+	}
+	go ingest.ServeProbe(ctx, ln, logger)
+	return probe
 }

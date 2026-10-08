@@ -33,6 +33,14 @@ type KPIs struct {
 	Jobs24h               int     `json:"jobs_24h"`
 	SuccessRate24h        float64 `json:"success_rate_24h"`
 	MedianQueueSeconds24h float64 `json:"median_queue_seconds_24h"`
+	// MedianDurationSeconds24h is the median run time (start to finish) of the jobs finished in 24 hours.
+	MedianDurationSeconds24h float64 `json:"median_duration_seconds_24h"`
+	// QueuedJobs are jobs assigned to a scale set that no runner took yet.
+	QueuedJobs     int       `json:"queued_jobs"`
+	OldestQueuedAt time.Time `json:"oldest_queued_at,omitzero"`
+	// PreparingRunners are job environments on their way to a runner; ReadyRunners wait idle for a job.
+	PreparingRunners int `json:"preparing_runners"`
+	ReadyRunners     int `json:"ready_runners"`
 }
 
 // Capacity summarises resource usage.
@@ -171,7 +179,7 @@ func overview(ctx context.Context, d Deps, now time.Time) (Overview, error) {
 		return ov, err
 	}
 	since := now.Add(-24 * time.Hour)
-	var waits []float64
+	var waits, durations []float64
 	succeeded := 0
 	for _, j := range completed {
 		if j.FinishedAt.Before(since) {
@@ -184,18 +192,25 @@ func overview(ctx context.Context, d Deps, now time.Time) (Overview, error) {
 		if !j.QueuedAt.IsZero() && j.StartedAt.After(j.QueuedAt) {
 			waits = append(waits, j.StartedAt.Sub(j.QueuedAt).Seconds())
 		}
+		if !j.StartedAt.IsZero() && j.FinishedAt.After(j.StartedAt) {
+			durations = append(durations, j.FinishedAt.Sub(j.StartedAt).Seconds())
+		}
+	}
+	ov.KPIs.MedianDurationSeconds24h = median(durations)
+	queued, err := d.Store.ListJobs(ctx, store.JobFilter{Status: "assigned", Limit: 1000})
+	if err != nil {
+		return ov, err
+	}
+	ov.KPIs.QueuedJobs = len(queued)
+	for _, j := range queued {
+		if !j.QueuedAt.IsZero() && (ov.KPIs.OldestQueuedAt.IsZero() || j.QueuedAt.Before(ov.KPIs.OldestQueuedAt)) {
+			ov.KPIs.OldestQueuedAt = j.QueuedAt
+		}
 	}
 	if ov.KPIs.Jobs24h > 0 {
 		ov.KPIs.SuccessRate24h = float64(succeeded) / float64(ov.KPIs.Jobs24h)
 	}
-	if len(waits) > 0 {
-		sort.Float64s(waits)
-		m := len(waits) / 2
-		ov.KPIs.MedianQueueSeconds24h = waits[m]
-		if len(waits)%2 == 0 {
-			ov.KPIs.MedianQueueSeconds24h = (waits[m-1] + waits[m]) / 2
-		}
-	}
+	ov.KPIs.MedianQueueSeconds24h = median(waits)
 	if d.Controller != nil {
 		for _, s := range d.Controller.ScaleSets(ctx) {
 			if s.Desired > s.Live {
@@ -216,6 +231,15 @@ func overview(ctx context.Context, d Deps, now time.Time) (Overview, error) {
 	ov.Capacity.EnvironmentsLive = len(live)
 	for _, e := range live {
 		ov.Capacity.MemoryCommittedMB += e.MemoryMB
+		if e.Kind != "" && e.Kind != store.KindJob {
+			continue // a template build or self-test is no runner
+		}
+		switch e.State {
+		case "pending", "provisioning", "booting", "connected":
+			ov.KPIs.PreparingRunners++
+		case "idle":
+			ov.KPIs.ReadyRunners++
+		}
 	}
 	if d.Config != nil {
 		ov.Capacity.EnvironmentsMax = d.Config.Capacity.MaxEnvironments
@@ -267,7 +291,21 @@ func settingsView(d Deps) Settings {
 		"memory_margin_mb": c.Capacity.MemoryMarginMB, "max_disk_percent": c.Capacity.MaxDiskPercent}
 	for _, ss := range c.ScaleSets {
 		s.ScaleSets = append(s.ScaleSets, map[string]any{"name": ss.Name, "url": ss.URL, "credential": ss.Credential, "runner_group": ss.RunnerGroup,
-			"labels": ss.Labels, "max_concurrent": ss.MaxConcurrent, "cores": ss.Cores, "memory_mb": ss.MemoryMB, "keep_on_failure_minutes": ss.KeepOnFailureMinutes})
+			"labels": ss.Labels, "max_concurrent": ss.MaxConcurrent, "cores": ss.Cores, "memory_mb": ss.MemoryMB, "keep_on_failure_minutes": ss.KeepOnFailureMinutes,
+			"warm_runners": ss.WarmRunners})
 	}
 	return s
+}
+
+// median returns the median of xs (0 for none); it sorts xs.
+func median(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	sort.Float64s(xs)
+	m := len(xs) / 2
+	if len(xs)%2 == 0 {
+		return (xs[m-1] + xs[m]) / 2
+	}
+	return xs[m]
 }

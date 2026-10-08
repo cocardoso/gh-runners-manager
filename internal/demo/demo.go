@@ -23,6 +23,7 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/environment"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
+	"github.com/cocardoso/gh-runners-manager/internal/github"
 	"github.com/cocardoso/gh-runners-manager/internal/ids"
 	"github.com/cocardoso/gh-runners-manager/internal/ingest"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
@@ -172,14 +173,17 @@ const maxQueuedPerScaleSet = 4
 func (d *Demo) step(ctx context.Context) {
 	now := time.Now()
 	d.mu.Lock()
+	var arrived *simJob
 	if ss := d.Config.ScaleSets[d.rng.Intn(len(d.Config.ScaleSets))].Name; !d.stopNew && d.rng.Float64() < 0.25 && len(d.queued[ss]) < maxQueuedPerScaleSet {
 		d.runCount++
 		min, max := d.opts.JobSeconds[0], d.opts.JobSeconds[1]
-		d.queued[ss] = append(d.queued[ss], simJob{
+		j := simJob{
 			id: fmt.Sprintf("demo-%d-%s", d.runCount, ids.NewEnvironmentID()[20:]), scaleSet: ss,
 			repo: repos[d.rng.Intn(len(repos))], name: jobNames[d.rng.Intn(len(jobNames))], runID: 9000 + d.runCount,
 			queuedAt: now, duration: time.Duration((min + d.rng.Float64()*(max-min)) * float64(time.Second)),
-		})
+		}
+		d.queued[ss] = append(d.queued[ss], j)
+		arrived = &j
 	}
 	desired := map[string]int{}
 	for _, ss := range d.Config.ScaleSets {
@@ -190,6 +194,12 @@ func (d *Demo) step(ctx context.Context) {
 	}
 	d.mu.Unlock()
 
+	// GitHub announces a job to its scale set as it is queued.
+	if arrived != nil {
+		if sc, ok := d.scalers[arrived.scaleSet].(github.AvailableJobHandler); ok {
+			_ = sc.HandleJobAvailable(ctx, &scaleset.JobAvailable{JobMessageBase: arrived.message()})
+		}
+	}
 	for name, n := range desired {
 		_, _ = d.scalers[name].HandleDesiredRunnerCount(ctx, n)
 	}
@@ -241,10 +251,9 @@ func (d *Demo) advance(ctx context.Context, e store.Environment, now time.Time) 
 		j.startedAt, j.runner, j.envID, j.seq = now, e.RunnerName, e.ID, map[string]int64{}
 		d.running[e.ID] = &j
 		d.mu.Unlock()
-		owner, repo := splitRepo(j.repo)
-		_ = d.scalers[e.ScaleSet].HandleJobStarted(ctx, &scaleset.JobStarted{RunnerName: e.RunnerName, JobMessageBase: scaleset.JobMessageBase{
-			JobID: j.id, RepositoryName: repo, OwnerName: owner, JobDisplayName: j.name, WorkflowRunID: j.runID,
-			JobWorkflowRef: j.repo + "/.github/workflows/ci.yml@refs/heads/main", EventName: "push", QueueTime: j.queuedAt, RunnerAssignTime: now}})
+		started := j.message()
+		started.RunnerAssignTime = now
+		_ = d.scalers[e.ScaleSet].HandleJobStarted(ctx, &scaleset.JobStarted{RunnerName: e.RunnerName, JobMessageBase: started})
 		d.runnerLine(ctx, e.ID, "Running job: "+j.name)
 		d.Controller.AgentEvent(ctx, e.ID, ingest.EventJobStarted, now, map[string]any{"job": j.name})
 	case "running":
@@ -458,4 +467,11 @@ func (d *Demo) advanceSpecial(ctx context.Context, e store.Environment, now time
 		d.Controller.AgentEvent(ctx, e.ID, ingest.EventSelfTestFinished, now, nil)
 		_ = d.Runtime.Stop(ctx, runtime.Ref{ID: e.RuntimeRef})
 	}
+}
+
+// message is how GitHub describes the job.
+func (j simJob) message() scaleset.JobMessageBase {
+	owner, repo := splitRepo(j.repo)
+	return scaleset.JobMessageBase{JobID: j.id, RepositoryName: repo, OwnerName: owner, JobDisplayName: j.name, WorkflowRunID: j.runID,
+		JobWorkflowRef: j.repo + "/.github/workflows/ci.yml@refs/heads/main", EventName: "push", QueueTime: j.queuedAt}
 }

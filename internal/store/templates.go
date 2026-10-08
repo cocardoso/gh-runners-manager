@@ -47,29 +47,32 @@ type Template struct {
 	FailureStage  string
 	FailureReason string
 	Report        []byte
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	ActivatedAt   time.Time
+	// FirewallGate: the template's agent holds the runner until the job network's firewall
+	// applies, and its verification found the probe dropped (the runtime skips its delay).
+	FirewallGate bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	ActivatedAt  time.Time
 }
 
 const tplColumns = `id, slim_release, runner_version, runner_sha256, layer_version, state, vmid, runtime_ref, volume, archive_sha256, size_bytes, pinned,
-	trigger, build_env_id, verify_env_id, failure_stage, failure_reason, report, created_at, updated_at, activated_at`
+	trigger, build_env_id, verify_env_id, failure_stage, failure_reason, report, created_at, updated_at, activated_at, firewall_gate`
 
 func scanTemplate(row scanner) (Template, error) {
 	var t Template
-	var pinned int
+	var pinned, gate int
 	var report string
 	var created, updated, activated int64
 	err := row.Scan(&t.ID, &t.SlimRelease, &t.RunnerVersion, &t.RunnerSHA256, &t.LayerVersion, &t.State, &t.VMID, &t.RuntimeRef, &t.Volume, &t.ArchiveSHA256,
 		&t.SizeBytes, &pinned, &t.Trigger, &t.BuildEnvID, &t.VerifyEnvID, &t.FailureStage, &t.FailureReason, &report,
-		&created, &updated, &activated)
+		&created, &updated, &activated, &gate)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Template{}, ErrNotFound
 	}
 	if err != nil {
 		return Template{}, err
 	}
-	t.Pinned = pinned != 0
+	t.Pinned, t.FirewallGate = pinned != 0, gate != 0
 	if report != "" {
 		t.Report = []byte(report)
 	}
@@ -101,9 +104,9 @@ func (s *Store) CreateTemplate(ctx context.Context, t Template) error {
 		t.CreatedAt = now
 	}
 	t.UpdatedAt = t.CreatedAt
-	_, err := s.db.ExecContext(ctx, `INSERT INTO templates (`+tplColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO templates (`+tplColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		t.ID, t.SlimRelease, t.RunnerVersion, t.RunnerSHA256, t.LayerVersion, t.State, t.VMID, t.RuntimeRef, t.Volume, t.ArchiveSHA256, t.SizeBytes, boolInt(t.Pinned),
-		t.Trigger, t.BuildEnvID, t.VerifyEnvID, t.FailureStage, t.FailureReason, string(t.Report), ms(t.CreatedAt), ms(t.UpdatedAt), activatedArg(t))
+		t.Trigger, t.BuildEnvID, t.VerifyEnvID, t.FailureStage, t.FailureReason, string(t.Report), ms(t.CreatedAt), ms(t.UpdatedAt), activatedArg(t), boolInt(t.FirewallGate))
 	if err != nil {
 		return fmt.Errorf("store: create template %s: %w", t.ID, err)
 	}
@@ -143,9 +146,9 @@ func (s *Store) UpdateTemplate(ctx context.Context, t Template) error {
 	t.UpdatedAt = time.Now()
 	res, err := s.db.ExecContext(ctx, `UPDATE templates SET slim_release=?, runner_version=?, runner_sha256=?, layer_version=?, state=?, vmid=?, runtime_ref=?, volume=?,
 		archive_sha256=?, size_bytes=?, pinned=?, trigger=?, build_env_id=?, verify_env_id=?, failure_stage=?, failure_reason=?, report=?,
-		updated_at=?, activated_at=? WHERE id=?`,
+		updated_at=?, activated_at=?, firewall_gate=? WHERE id=?`,
 		t.SlimRelease, t.RunnerVersion, t.RunnerSHA256, t.LayerVersion, t.State, t.VMID, t.RuntimeRef, t.Volume, t.ArchiveSHA256, t.SizeBytes, boolInt(t.Pinned),
-		t.Trigger, t.BuildEnvID, t.VerifyEnvID, t.FailureStage, t.FailureReason, string(t.Report), ms(t.UpdatedAt), activatedArg(t), t.ID)
+		t.Trigger, t.BuildEnvID, t.VerifyEnvID, t.FailureStage, t.FailureReason, string(t.Report), ms(t.UpdatedAt), activatedArg(t), boolInt(t.FirewallGate), t.ID)
 	if err != nil {
 		return fmt.Errorf("store: update template %s: %w", t.ID, err)
 	}

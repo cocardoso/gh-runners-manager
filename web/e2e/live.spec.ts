@@ -84,3 +84,14 @@ test("the inventory and activity menus lead to the repositories and to the histo
   await page.goBack();
   await expect(page).toHaveURL(/\/jobs$/);
 });
+
+test("the overview shows jobs running and finishing live", async ({ page, demo }) => {
+  await page.goto(`${demo.url}/`);
+  const now = page.getByRole("region", { name: "Now" });
+  await expect(now.getByText("Running").first()).toBeVisible({ timeout: 30_000 });
+  // The timer of a running job counts up without a reload.
+  const timer = now.getByRole("listitem").first().getByText(/^\d+(m \d+)?s$/);
+  const first = await timer.textContent();
+  await expect(timer).not.toHaveText(first ?? "", { timeout: 5_000 });
+  await expect(page.getByRole("region", { name: "Recently finished" }).getByRole("listitem").first()).toBeVisible({ timeout: 40_000 });
+});

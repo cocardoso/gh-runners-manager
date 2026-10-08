@@ -193,6 +193,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
   const [cores, setCores] = useState(String(initial?.cores ?? 2));
   const [memory, setMemory] = useState(String(initial?.memory_mb ?? 4096));
   const [keep, setKeep] = useState(String(initial?.keep_on_failure_minutes ?? 0));
+  const [warm, setWarm] = useState(String(initial?.warm_runners ?? 0));
   const [addingCredential, setAddingCredential] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -201,9 +202,11 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
   const nameBad = name.trim() !== "" && !NAME.test(name.trim());
   const nameTaken = taken.has(name.trim());
   const urlBad = url.trim() !== "" && !URL_RE.test(url.trim());
+  const warmMax = numberOr(maxConcurrent, 2);
+  const warmBad = numberOr(warm, 0) > warmMax || numberOr(warm, 0) < 0;
   const missing = [!name.trim() && "name", !url.trim() && "url", !chosen && "credential"].filter(Boolean) as ("name" | "url" | "credential")[];
-  const wrong = [(nameBad || nameTaken) && "name", urlBad && "url"].filter(Boolean) as ("name" | "url")[];
-  const list = (fields: ("name" | "url" | "credential")[]) =>
+  const wrong = [(nameBad || nameTaken) && "name", urlBad && "url", warmBad && "warm"].filter(Boolean) as ("name" | "url" | "warm")[];
+  const list = (fields: ("name" | "url" | "credential" | "warm")[]) =>
     new Intl.ListFormat(currentFormatLocale(), { type: "conjunction" }).format(fields.map((f) => t(`templates.scaleSetForm.field.${f}`)));
   const blocked = wrong.length > 0 ? t("templates.scaleSetForm.fix", { fields: list(wrong) }) : missing.length > 0 ? t("templates.scaleSetForm.fill", { fields: list(missing) }) : "";
 
@@ -228,6 +231,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
         cores: numberOr(cores, 2),
         memory_mb: numberOr(memory, 4096),
         keep_on_failure_minutes: numberOr(keep, 0),
+        warm_runners: numberOr(warm, 0),
       };
       // A create (If-None-Match: *) never replaces a scale set saved meanwhile.
       const header = fixedName ? {} : { "If-None-Match": "*" };
@@ -317,7 +321,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
                 </div>
               </Section>
               <Section title={t("templates.scaleSetForm.resources")}>
-                <div className="grid gap-4 sm:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div className="min-w-0">
                     <Input
                       {...helpField(`${id}-max`, t("templates.scaleSetForm.maxConcurrent"), t("templates.scaleSetHelp.maxTip"))}
@@ -326,6 +330,18 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
                       value={maxConcurrent}
                       onChange={(e) => setMaxConcurrent(e.target.value)}
                       description={t("templates.scaleSetForm.maxConcurrentHelp")}
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Input
+                      {...helpField(`${id}-warm`, t("templates.scaleSetForm.warm"), t("templates.scaleSetHelp.warmTip"))}
+                      type="number"
+                      min={0}
+                      max={warmMax}
+                      value={warm}
+                      onChange={(e) => setWarm(e.target.value)}
+                      error={warmBad ? t("templates.scaleSetForm.warmTooMany", { max: warmMax }) : undefined}
+                      description={warmBad ? undefined : t("templates.scaleSetForm.warmHelp")}
                     />
                   </div>
                   <div className="min-w-0">

@@ -85,6 +85,7 @@ type Environment struct {
 	JobID          string            `json:"job_id,omitempty"`
 	ExitCode       *int              `json:"exit_code,omitempty"`
 	MemoryMB       int               `json:"memory_mb"`
+	Kind           string            `json:"kind,omitempty" enum:"job,build,verify," doc:"job (empty in older records), or a template build or self-test"`
 	CreatedAt      time.Time         `json:"created_at"`
 	UpdatedAt      time.Time         `json:"updated_at"`
 	StateChangedAt time.Time         `json:"state_changed_at"`
@@ -129,7 +130,7 @@ type ScaleSet struct {
 func toEnvironment(e store.Environment) Environment {
 	return Environment{ID: e.ID, ScaleSet: e.ScaleSet, State: e.State, RuntimeRef: e.RuntimeRef, RunnerName: e.RunnerName,
 		RunnerID: e.RunnerID, IP: e.IP, FailureStage: e.FailureStage, FailureReason: e.FailureReason, JobID: e.JobID,
-		ExitCode: e.ExitCode, MemoryMB: e.MemoryMB, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt, StateChangedAt: e.StateChangedAt}
+		ExitCode: e.ExitCode, MemoryMB: e.MemoryMB, Kind: e.Kind, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt, StateChangedAt: e.StateChangedAt}
 }
 
 func toJob(j store.Job) Job {

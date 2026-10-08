@@ -18,7 +18,7 @@ const settings = {
 
 test("scale sets show listener status, counts and a runs-on snippet", async () => {
   mockApi({
-    "/api/v1/scale-sets": { scale_sets: [scaleSet({ name: "homelab", desired: 3, live: 1, waiting: "memory_budget", source: "file", settings: { url: "https://github.com/octo/app", credential: "personal", labels: ["homelab", "linux"], cores: 2, memory_mb: 4096, max_concurrent: 2 } }), scaleSet({ name: "broken", listening: false, listen_error: "401 Bad credentials" })] },
+    "/api/v1/scale-sets": { scale_sets: [scaleSet({ name: "homelab", desired: 3, live: 1, waiting: "memory_budget", source: "file", settings: { url: "https://github.com/octo/app", credential: "personal", labels: ["homelab", "linux"], cores: 2, memory_mb: 4096, max_concurrent: 2, warm_runners: 1 } }), scaleSet({ name: "broken", listening: false, listen_error: "401 Bad credentials" })] },
     "/api/v1/settings": settings,
   });
   renderApp("/scale-sets");
@@ -27,6 +27,7 @@ test("scale sets show listener status, counts and a runs-on snippet", async () =
   expect(within(card).getByText(/memory_budget/)).toBeInTheDocument();
   expect(within(card).getByText("runs-on: homelab")).toBeInTheDocument();
   expect(within(card).getByText("homelab, linux")).toBeInTheDocument();
+  expect(within(card).getByText("Warm runners").nextSibling).toHaveTextContent("1");
   const broken = screen.getByRole("heading", { name: "broken" }).closest("section")!;
   expect(within(broken).getByText(/401 Bad credentials/)).toBeInTheDocument();
 });

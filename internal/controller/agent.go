@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/environment"
@@ -60,6 +61,10 @@ func (c *Controller) AgentEvent(ctx context.Context, envID, name string, at time
 		c.Kick()
 	case ingest.EventFramesDropped:
 		level = "warn"
+	case ingest.EventFirewallOpen:
+		level = "error"
+		reason, _ := data["error"].(string)
+		defer c.Fail(ctx, envID, "firewall", errors.New("the job network firewall did not apply to the guest: "+reason))
 	}
 	_, _ = c.d.Recorder.Record(ctx, store.Event{Kind: "agent." + name, Level: level, Time: at,
 		Message: "agent: " + name, ScaleSet: e.ScaleSet, EnvironmentID: envID, JobID: e.JobID, Data: data})

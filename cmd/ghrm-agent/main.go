@@ -49,6 +49,7 @@ func main() {
 }
 
 func run(ctx context.Context, environ, runnerDir, runnerUser, cgroup, poweroff string) int {
+	started := time.Now()
 	boot, ok, err := agent.LoadBootstrap(environ)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -139,6 +140,17 @@ func run(ctx context.Context, environ, runnerDir, runnerUser, cgroup, poweroff s
 	} else {
 		client.Log("agent", "runner user "+runnerUser+" not found; running as the current user")
 	}
+	// The runner only starts once the job network's firewall applies to this guest.
+	if boot.FirewallProbe != "" {
+		wait := func(ctx context.Context) error {
+			return agent.WaitFirewall(ctx, boot.FirewallProbe, agent.FirewallWait{Since: started, Settle: boot.FirewallSettle})
+		}
+		if !gateRunner(ctx, wait, client.Log, client.Event) {
+			stopMetrics()
+			stopTail()
+			return shutdown(client, stopSend, poweroff)
+		}
+	}
 	client.Event(ingest.EventRunnerStarted, nil)
 	code, err := r.Run(ctx)
 	if err != nil {
@@ -149,6 +161,26 @@ func run(ctx context.Context, environ, runnerDir, runnerUser, cgroup, poweroff s
 	stopMetrics()
 	tailer.Poll() // final read
 	stopTail()
+	return shutdown(client, stopSend, poweroff)
+}
+
+// gateRunner waits until the job network's firewall applies; false means the runner must
+// not start. A guest stopped while it waited is no firewall failure, so it reports none.
+func gateRunner(ctx context.Context, wait func(context.Context) error, logf func(stream, text string), event func(name string, data map[string]any)) bool {
+	start := time.Now()
+	if err := wait(ctx); err != nil {
+		logf("agent", "not starting the runner: "+err.Error())
+		if ctx.Err() == nil {
+			event(ingest.EventFirewallOpen, map[string]any{"error": err.Error()})
+		}
+		return false
+	}
+	logf("agent", "job network firewall applies after "+time.Since(start).Round(100*time.Millisecond).String())
+	return true
+}
+
+// shutdown flushes what is left to the control plane, says goodbye and powers off.
+func shutdown(client *agent.Client, stopSend func(), poweroff string) int {
 	fctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	_ = client.Flush(fctx)
 	cancel()
@@ -208,7 +240,7 @@ func runTemplateMode(ctx context.Context, client *agent.Client, boot agent.Boots
 		_ = os.MkdirAll(work, 0o755)
 		// Checks run in the image's environment, as jobs and GitHub's report tooling see it.
 		env := agent.MergeEnvironmentFile(append(os.Environ(), "HOME=/root", "USER=root", "LANG=C.UTF-8"), "/etc/environment")
-		rep, err := agent.RunSelfTest(ctx, client, agent.OSCommander{Env: env}, agent.SelfTestOptions{Work: work, RunnerDir: runnerDir, BlockedAddrs: boot.Blocked, Mirrors: boot.Mirrors})
+		rep, err := agent.RunSelfTest(ctx, client, agent.OSCommander{Env: env}, agent.SelfTestOptions{Work: work, RunnerDir: runnerDir, BlockedAddrs: boot.Blocked, Mirrors: boot.Mirrors, FirewallProbe: boot.FirewallProbe})
 		if err != nil {
 			client.Log("agent", "self-test could not report: "+err.Error())
 			code = 1

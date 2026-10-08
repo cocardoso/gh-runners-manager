@@ -11,7 +11,7 @@ func TestTemplateRoundTripAndActivation(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()
 	a := Template{ID: "tpla", SlimRelease: "20261005.17", RunnerVersion: "2.338.0", LayerVersion: "1", State: TemplateActive,
-		VMID: 950, Trigger: "bootstrap", Report: []byte(`{"unexpected":0}`), Pinned: true}
+		VMID: 950, Trigger: "bootstrap", Report: []byte(`{"unexpected":0}`), Pinned: true, FirewallGate: true}
 	b := Template{ID: "tplb", SlimRelease: "20261012.3", RunnerVersion: "2.339.0", LayerVersion: "1", State: TemplateReady, VMID: 951, RuntimeRef: "951/tplb", SizeBytes: 123}
 	for _, tpl := range []Template{a, b} {
 		if err := s.CreateTemplate(ctx, tpl); err != nil {
@@ -19,7 +19,7 @@ func TestTemplateRoundTripAndActivation(t *testing.T) {
 		}
 	}
 	got, err := s.GetTemplate(ctx, "tpla")
-	if err != nil || string(got.Report) != `{"unexpected":0}` || !got.Pinned || got.VMID != 950 || got.CreatedAt.IsZero() {
+	if err != nil || string(got.Report) != `{"unexpected":0}` || !got.Pinned || !got.FirewallGate || got.VMID != 950 || got.CreatedAt.IsZero() {
 		t.Fatalf("get = %+v, %v", got, err)
 	}
 	if _, err := s.GetTemplate(ctx, "nope"); !errors.Is(err, ErrNotFound) {

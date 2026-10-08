@@ -60,17 +60,18 @@ func TestCredentialEndpointsNeverReturnTheToken(t *testing.T) {
 func TestScaleSetEndpoints(t *testing.T) {
 	h := newHarness(t, "")
 	tok := map[string]string{"Authorization": "Bearer " + harnessToken}
-	body := map[string]any{"url": "https://github.com/o/new", "credential": "c", "labels": []string{"big"}, "memory_mb": 2048}
+	body := map[string]any{"url": "https://github.com/o/new", "credential": "c", "labels": []string{"big"}, "memory_mb": 2048, "warm_runners": 1}
 	if resp, b := h.call(t, "PUT", "/api/v1/scale-sets/new-set", body, tok); resp.StatusCode != 204 {
 		t.Fatalf("put = %d %s", resp.StatusCode, b)
 	}
 	ss, ok := h.reg.ScaleSet("new-set")
-	if !ok || ss.MemoryMB != 2048 || ss.Cores != 2 || ss.Labels[0] != "big" {
+	if !ok || ss.MemoryMB != 2048 || ss.Cores != 2 || ss.Labels[0] != "big" || ss.WarmRunners != 1 {
 		t.Fatalf("stored = %+v %v", ss, ok)
 	}
 	for name, bad := range map[string]map[string]any{
-		"bad url":            {"url": "https://example.com/o", "credential": "c"},
-		"unknown credential": {"url": "https://github.com/o", "credential": "nope"},
+		"bad url":             {"url": "https://example.com/o", "credential": "c"},
+		"unknown credential":  {"url": "https://github.com/o", "credential": "nope"},
+		"warm over the limit": {"url": "https://github.com/o", "credential": "c", "max_concurrent": 1, "warm_runners": 2},
 	} {
 		if resp, _ := h.call(t, "PUT", "/api/v1/scale-sets/x", bad, tok); resp.StatusCode != 422 {
 			t.Errorf("%s = %d, want 422", name, resp.StatusCode)
