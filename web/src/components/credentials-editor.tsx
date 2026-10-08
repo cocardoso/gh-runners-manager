@@ -9,7 +9,7 @@ import { ErrorState, Loading } from "./common";
 
 const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^settings: /, "") : String(e));
 
-function CredentialDialog({ open, name: fixedName, onClose }: { open: boolean; name?: string; onClose: () => void }) {
+export function CredentialDialog({ open, name: fixedName, onClose }: { open: boolean; name?: string; onClose: () => void }) {
   const t = useT();
   const qc = useQueryClient();
   const [name, setName] = useState(fixedName ?? "");

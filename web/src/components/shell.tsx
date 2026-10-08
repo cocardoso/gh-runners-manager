@@ -73,7 +73,7 @@ function AppShell({ username }: { username?: string }) {
   return (
     <LinkProvider component={AppLink}>
       <Sidebar.Provider defaultOpen collapsible="icon" className="min-h-dvh">
-        <Sidebar aria-label={t("shell.header.mainNavigation")} className="sticky top-0 h-dvh">
+        <Sidebar aria-label={t("shell.header.mainNavigation")} className="md:sticky md:top-0 md:h-dvh">
           <Sidebar.Header>
             <Logo />
           </Sidebar.Header>
