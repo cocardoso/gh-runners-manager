@@ -16,6 +16,7 @@ const report = {
   checks: [
     { name: "docker hello-world", ok: true, seconds: 1.2 },
     { name: "blocked 192.168.1.10:8006", ok: true, seconds: 3 },
+    { name: "registry cache 10.50.0.3:5000", ok: true, warning: true, detail: "connection refused; jobs will pull from the registries directly", seconds: 0.1 },
   ],
   differences: [
     { kind: "version", name: "Installed Software / Language and Runtime / Node.js", expected: "24.13.0", actual: "24.14.0", explained: false },
@@ -106,6 +107,8 @@ test("the detail page shows checks and fidelity differences", async () => {
   expect(screen.getByText(/newer release: built after GitHub's image/)).toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Verification" }));
   expect(await screen.findByText("docker hello-world")).toBeInTheDocument();
+  const cacheRow = screen.getByText("registry cache 10.50.0.3:5000").closest("tr")!;
+  expect(within(cacheRow).getByText(/passed with a warning: connection refused/)).toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Build" }));
   expect(await screen.findByText("build finished")).toBeInTheDocument();
 });

@@ -9,6 +9,11 @@ set -euo pipefail
 root=${1%/}
 list=${2:-}
 [ -n "$list" ] || exit 0
+# This script owns daemon.json; settings from elsewhere would be lost without a word.
+if [ -e "$root/etc/docker/daemon.json" ]; then
+  echo "mirrors.sh: $root/etc/docker/daemon.json already exists; merge the cache settings into it by hand" >&2
+  exit 1
+fi
 
 hub="" insecure="" buildkit=""
 IFS=',' read -r -a entries <<<"$list"
@@ -41,7 +46,9 @@ mkdir -p "$root/etc/docker"
   echo "}"
 } >"$root/etc/docker/daemon.json"
 
-dir="$root/home/runner/.docker/buildx"
-mkdir -p "$dir"
-printf '%s' "$buildkit" >"$dir/buildkitd.default.toml"
+# For the runner user and for root (sudo docker buildx create).
+for home in home/runner root; do
+  mkdir -p "$root/$home/.docker/buildx"
+  printf '%s' "$buildkit" >"$root/$home/.docker/buildx/buildkitd.default.toml"
+done
 if id runner >/dev/null 2>&1; then chown -R runner:runner "$root/home/runner/.docker"; fi

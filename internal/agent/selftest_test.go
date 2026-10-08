@@ -105,8 +105,10 @@ func TestSelfTestChecksTheCache(t *testing.T) {
 	if ck := got["registry cache 10.50.0.3:5000"]; !ck.OK {
 		t.Errorf("reachable mirror = %+v", ck)
 	}
-	if ck := got["registry cache 10.50.0.3:5002"]; ck.OK || !strings.Contains(ck.Detail, "connection refused") {
-		t.Errorf("unreachable mirror = %+v", ck)
+	// Jobs still work without the cache (they pull from the registries), so a cache that
+	// is down must not block a template, only show a warning.
+	if ck := got["registry cache 10.50.0.3:5002"]; !ck.OK || !ck.Warning || !strings.Contains(ck.Detail, "connection refused") {
+		t.Errorf("unreachable mirror = %+v; want a passed check with a warning", ck)
 	}
 	if !strings.Contains(strings.Join(asked, " "), "http://10.50.0.3:5000/v2/") {
 		t.Errorf("asked %v", asked)

@@ -175,6 +175,34 @@ func TestMirrorsScriptWritesDaemonContainerdAndBuildkitConfig(t *testing.T) {
 	}
 }
 
+func TestMirrorsScriptConfiguresBuildkitForRootToo(t *testing.T) {
+	root := runMirrors(t, "docker.io=10.50.0.3:5000")
+	runner := read(t, filepath.Join(root, "home/runner/.docker/buildx/buildkitd.default.toml"))
+	if got := read(t, filepath.Join(root, "root/.docker/buildx/buildkitd.default.toml")); got != runner {
+		t.Fatalf("root's buildkitd.default.toml = %q, want the runner's (sudo docker buildx create)", got)
+	}
+}
+
+func TestMirrorsScriptRefusesToReplaceAnExistingDaemonConfig(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not found")
+	}
+	script, _ := fs.ReadFile(Files(), "mirrors.sh")
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	_ = os.MkdirAll(filepath.Join(root, "etc/docker"), 0o755)
+	_ = os.WriteFile(filepath.Join(root, "etc/docker/daemon.json"), []byte(`{"log-driver": "local"}`), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "mirrors.sh"), script, 0o755)
+	out, err := exec.Command(bash, filepath.Join(dir, "mirrors.sh"), root, "docker.io=10.50.0.3:5000").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "daemon.json already exists") {
+		t.Fatalf("err = %v, out = %s; an existing daemon.json must not be silently replaced", err, out)
+	}
+	if got := read(t, filepath.Join(root, "etc/docker/daemon.json")); got != `{"log-driver": "local"}` {
+		t.Fatalf("daemon.json = %s", got)
+	}
+}
+
 func TestMirrorsScriptWithoutCacheWritesNothing(t *testing.T) {
 	root := runMirrors(t, "")
 	entries, _ := os.ReadDir(root)

@@ -66,6 +66,7 @@ type Check struct {
 	Name    string  `json:"name"`
 	OK      bool    `json:"ok"`
 	Detail  string  `json:"detail,omitempty"`
+	Warning bool    `json:"warning,omitempty"` // passed, but Detail says what is degraded
 	Seconds float64 `json:"seconds"`
 }
 
