@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/cocardoso/gh-runners-manager/internal/github"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -51,4 +52,16 @@ func demoTestCredential(_ context.Context, token string) (string, error) {
 		return "demo-user", nil
 	}
 	return "", errors.New("Bad credentials (the demo accepts tokens starting with github_pat_)")
+}
+
+// demoTargets answers like GitHub for a demo token: one organization and its repositories.
+func demoTargets(ctx context.Context, token string) ([]github.Target, error) {
+	if _, err := demoTestCredential(ctx, token); err != nil {
+		return nil, err
+	}
+	t := []github.Target{{Kind: "organization", Owner: "octo", FullName: "octo", URL: "https://github.com/octo"}}
+	for _, name := range []string{"api-service", "infra", "mobile", "web-app"} {
+		t = append(t, github.Target{Kind: "repository", Owner: "octo", Name: name, FullName: "octo/" + name, URL: "https://github.com/octo/" + name, Private: name != "web-app"})
+	}
+	return t, nil
 }

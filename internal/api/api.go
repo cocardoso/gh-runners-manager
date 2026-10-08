@@ -16,6 +16,7 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/events"
+	"github.com/cocardoso/gh-runners-manager/internal/github"
 	"github.com/cocardoso/gh-runners-manager/internal/logs"
 	"github.com/cocardoso/gh-runners-manager/internal/retention"
 	"github.com/cocardoso/gh-runners-manager/internal/runtime"
@@ -61,6 +62,8 @@ type Deps struct {
 	Metrics http.Handler
 	// TestCredential checks a GitHub token and returns its login.
 	TestCredential func(ctx context.Context, token string) (string, error)
+	// CredentialTargets lists the repositories and organizations a GitHub token can reach.
+	CredentialTargets func(ctx context.Context, token string) ([]github.Target, error)
 }
 
 // CacheStatus reports the registry cache on the job network (cachemon.Monitor).
@@ -372,6 +375,7 @@ func New(d Deps) http.Handler {
 	registerAuth(a, d)
 	registerSettingsEdit(a, d)
 	registerHistory(a, d)
+	registerCredentialTargets(a, d)
 	registerRepositories(a, d)
 	huma.Register(a, huma.Operation{OperationID: "get-cache", Method: http.MethodGet, Path: "/api/v1/cache",
 		Summary: "The registry cache on the job network", Tags: []string{"settings"}},

@@ -235,7 +235,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		Addr:        cfg.Listen,
 		Handler: api.New(api.Deps{Store: db, Recorder: rec, Logs: logStore, Controller: ctl, AdminToken: cfg.AdminToken, History: hist,
 			Config: cfg, Capacity: rt.Capacity, GitHubJobs: gh, UI: uiHandler(), Templates: tpl, Auth: signIn,
-			Settings: reg, TestCredential: (&github.REST{}).User, Metrics: mtr.Handler(), Cache: cacheMon,
+			Settings: reg, TestCredential: (&github.REST{}).User, CredentialTargets: (&github.REST{}).Targets, Metrics: mtr.Handler(), Cache: cacheMon,
 			Ready: func(ctx context.Context) error { _, err := rt.Capacity(ctx); return err }}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

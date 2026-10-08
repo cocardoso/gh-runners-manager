@@ -106,7 +106,7 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Handler: api.New(api.Deps{Store: d.Store, Recorder: d.Recorder, Logs: d.Logs, Controller: d.Controller,
 			History: &retention.Retention{Store: d.Store, Logs: d.Logs, Recorder: d.Recorder},
 			Config:  d.Config, Capacity: d.Runtime.Capacity, AdminToken: "demo", UI: uiHandler(), Templates: d.Templates, Auth: signIn,
-			Settings: reg, TestCredential: demoTestCredential, Metrics: demoMetrics.Handler(), Cache: cache}),
+			Settings: reg, TestCredential: demoTestCredential, CredentialTargets: demoTargets, Metrics: demoMetrics.Handler(), Cache: cache}),
 	}
 	fmt.Fprintf(stdout, "ghrm demo: serving a simulated fleet on http://%s (sign in as admin / %s; API token: demo)\n", *listen, demoPassword)
 	errc := make(chan error, 1)
