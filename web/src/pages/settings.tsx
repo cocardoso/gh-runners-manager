@@ -3,6 +3,7 @@ import { useSettings } from "@/api/queries";
 import { ErrorState, Loading, Page } from "@/components/common";
 import { DefinitionList } from "@/components/definition-list";
 import { CredentialsEditor } from "@/components/credentials-editor";
+import { CacheCard } from "@/components/cache-card";
 import { formatMB } from "@/lib/format";
 
 type Map = Record<string, unknown>;
@@ -31,6 +32,7 @@ export function SettingsPage() {
       <Section title="GitHub credentials">
         <CredentialsEditor />
       </Section>
+      <CacheCard />
       <Section title="Control plane">
         <DefinitionList
           items={[
