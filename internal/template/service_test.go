@@ -165,7 +165,7 @@ func (h *tharness) state(t *testing.T, id string) store.Template {
 func (h *tharness) buildToVerify(t *testing.T) store.Template {
 	t.Helper()
 	ctx := context.Background()
-	tpl, err := h.s.Build(ctx, "manual")
+	tpl, err := h.s.Build(ctx, "manual", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,10 +192,10 @@ func okReport(software string) ingest.SelfTestReport {
 func TestBuildVerifyActivate(t *testing.T) {
 	h := newService(t, nil)
 	ctx := context.Background()
-	if ref, vmid := h.s.Active(ctx); ref != "" || vmid != 949 {
+	if ref, vmid := h.s.Active(ctx, "default"); ref != "" || vmid != 949 {
 		t.Fatalf("bootstrap active = %q %d", ref, vmid)
 	}
-	tpl, err := h.s.Build(ctx, "manual")
+	tpl, err := h.s.Build(ctx, "manual", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,16 +251,16 @@ func TestBuildVerifyActivate(t *testing.T) {
 	if err := json.Unmarshal(done.Report, &rep); err != nil || rep.Unexpected != 0 || len(rep.Checks) != 1 {
 		t.Fatalf("report = %s, %v", done.Report, err)
 	}
-	if ref, _ := h.s.Active(ctx); ref != h.rt.TemplateEnvironmentRef(runtime.TemplateRef{ID: done.RuntimeRef}) {
+	if ref, _ := h.s.Active(ctx, "default"); ref != h.rt.TemplateEnvironmentRef(runtime.TemplateRef{ID: done.RuntimeRef}) {
 		t.Fatalf("active ref = %q", ref)
 	}
 	if !h.envs.wasDestroyed(got.VerifyEnvID) {
 		t.Fatal("the verify environment must be destroyed")
 	}
-	if _, err := h.s.Build(ctx, "manual"); err != nil {
+	if _, err := h.s.Build(ctx, "manual", ""); err != nil {
 		t.Fatalf("a new build after the first: %v", err)
 	}
-	if _, err := h.s.Build(ctx, "manual"); !errors.Is(err, ErrBuildRunning) {
+	if _, err := h.s.Build(ctx, "manual", ""); !errors.Is(err, ErrBuildRunning) {
 		t.Fatalf("second concurrent build: %v", err)
 	}
 }
@@ -331,7 +331,7 @@ func TestFailuresNeverChangeTheActiveTemplate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newService(t, nil)
 			ctx := context.Background()
-			tpl, err := h.s.Build(ctx, "manual")
+			tpl, err := h.s.Build(ctx, "manual", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -341,7 +341,7 @@ func TestFailuresNeverChangeTheActiveTemplate(t *testing.T) {
 			if got.State != store.TemplateFailed || got.FailureStage != stage || got.FailureReason == "" {
 				t.Fatalf("version = %+v, want failed at %s", got, stage)
 			}
-			if ref, vmid := h.s.Active(ctx); ref != "" || vmid != 949 {
+			if ref, vmid := h.s.Active(ctx, "default"); ref != "" || vmid != 949 {
 				t.Fatalf("active changed to %q %d", ref, vmid)
 			}
 			if !h.envs.wasDestroyed(tpl.BuildEnvID) {
@@ -363,7 +363,7 @@ func TestFailuresNeverChangeTheActiveTemplate(t *testing.T) {
 func TestUnexpectedDifferencesHoldActivation(t *testing.T) {
 	h := newService(t, nil)
 	ctx := context.Background()
-	tpl, _ := h.s.Build(ctx, "manual")
+	tpl, _ := h.s.Build(ctx, "manual", "")
 	got := h.buildToVerifyFrom(t, tpl)
 	_ = h.s.ReceiveSelfTest(ctx, got.VerifyEnvID, okReport(actual))
 	h.s.Wait()
@@ -384,11 +384,11 @@ func TestUnexpectedDifferencesHoldActivation(t *testing.T) {
 func TestPinningHoldsAutoActivation(t *testing.T) {
 	h := newService(t, nil)
 	ctx := context.Background()
-	boot, _ := h.db.ActiveTemplate(ctx)
+	boot, _ := h.db.ActiveTemplate(ctx, "default")
 	if err := h.s.Pin(ctx, boot.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	tpl, _ := h.s.Build(ctx, "manual")
+	tpl, _ := h.s.Build(ctx, "manual", "")
 	got := h.buildToVerifyFrom(t, tpl)
 	_ = h.s.ReceiveSelfTest(ctx, got.VerifyEnvID, okReport(published))
 	h.s.Wait()
@@ -408,7 +408,7 @@ func TestRetentionKeepsActiveAndPreviousAndSkipsInUse(t *testing.T) {
 			inUse, _ = h.rt.Create(ctx, runtime.EnvironmentSpec{ID: "job1", Hostname: "h", Cores: 1, MemoryMB: 512,
 				Template: h.rt.TemplateEnvironmentRef(runtime.TemplateRef{ID: built[0].RuntimeRef})})
 		}
-		tpl, err := h.s.Build(ctx, "manual")
+		tpl, err := h.s.Build(ctx, "manual", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -445,7 +445,7 @@ func TestRetentionKeepsActiveAndPreviousAndSkipsInUse(t *testing.T) {
 func TestRecoverFailsInterruptedBuilds(t *testing.T) {
 	h := newService(t, nil)
 	ctx := context.Background()
-	tpl, _ := h.s.Build(ctx, "manual")
+	tpl, _ := h.s.Build(ctx, "manual", "")
 	h.s.Recover(ctx)
 	got := h.state(t, tpl.ID)
 	if got.State != store.TemplateFailed || got.FailureStage != "interrupted" || !h.envs.wasDestroyed(tpl.BuildEnvID) {
@@ -485,10 +485,10 @@ func TestSlowEnvironmentStartDoesNotBlockOtherActions(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = h.s.Build(ctx, "manual")
+		_, _ = h.s.Build(ctx, "manual", "")
 	}()
 	time.Sleep(50 * time.Millisecond) // the build is now waiting for its environment
-	boot, _ := h.db.ActiveTemplate(ctx)
+	boot, _ := h.db.ActiveTemplate(ctx, "default")
 	pinned := make(chan error, 1)
 	go func() { pinned <- h.s.Pin(ctx, boot.ID, true) }()
 	select {
@@ -499,7 +499,7 @@ func TestSlowEnvironmentStartDoesNotBlockOtherActions(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Pin waited for the builder to start")
 	}
-	if _, err := h.s.Build(ctx, "manual"); !errors.Is(err, ErrBuildRunning) {
+	if _, err := h.s.Build(ctx, "manual", ""); !errors.Is(err, ErrBuildRunning) {
 		t.Fatalf("a second build while the first starts: %v", err)
 	}
 	close(h.envs.gate)
@@ -510,7 +510,7 @@ func TestSlowEnvironmentStartDoesNotBlockOtherActions(t *testing.T) {
 func (h *tharness) buildActive(t *testing.T) store.Template {
 	t.Helper()
 	ctx := context.Background()
-	tpl, err := h.s.Build(ctx, "manual")
+	tpl, err := h.s.Build(ctx, "manual", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +524,7 @@ func (h *tharness) buildActive(t *testing.T) store.Template {
 func (h *tharness) buildHeld(t *testing.T) store.Template {
 	t.Helper()
 	ctx := context.Background()
-	tpl, _ := h.s.Build(ctx, "manual")
+	tpl, _ := h.s.Build(ctx, "manual", "")
 	got := h.buildToVerifyFrom(t, tpl)
 	_ = h.s.ReceiveSelfTest(ctx, got.VerifyEnvID, okReport(actual))
 	h.s.Wait()
@@ -585,7 +585,7 @@ func TestRetentionKeepsThePreviousActiveOverHeldCandidatesAndPinned(t *testing.T
 func TestPinOnlyReadyOrActiveAndStalePinsDoNotBlock(t *testing.T) {
 	h := newService(t, nil)
 	ctx := context.Background()
-	tpl, _ := h.s.Build(ctx, "manual")
+	tpl, _ := h.s.Build(ctx, "manual", "")
 	if err := h.s.Pin(ctx, tpl.ID, true); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("pinning a building version = %v, want ErrNotReady", err)
 	}
@@ -602,7 +602,7 @@ func TestPinOnlyReadyOrActiveAndStalePinsDoNotBlock(t *testing.T) {
 func TestRecoverWhileCreatingRemovesTheHalfMadeTemplate(t *testing.T) {
 	h := newService(t, nil)
 	ctx := context.Background()
-	tpl, _ := h.s.Build(ctx, "manual")
+	tpl, _ := h.s.Build(ctx, "manual", "")
 	// The runtime created the template but the control plane died before recording it.
 	_, _ = h.rt.CreateTemplate(ctx, runtime.TemplateSpec{ID: tpl.ID, Archive: strings.NewReader("x"), Size: 1, SHA256: strings.Repeat("a", 64)})
 	cur := h.state(t, tpl.ID)
@@ -618,7 +618,7 @@ func TestBuilderIDIsRecordedBeforeItStarts(t *testing.T) {
 	h := newService(t, nil)
 	ctx := context.Background()
 	h.envs.gate = make(chan struct{})
-	go func() { _, _ = h.s.Build(ctx, "manual") }()
+	go func() { _, _ = h.s.Build(ctx, "manual", "") }()
 	deadline := time.Now().Add(2 * time.Second)
 	var tpl store.Template
 	for time.Now().Before(deadline) {
@@ -638,9 +638,9 @@ func TestBuilderIDIsRecordedBeforeItStarts(t *testing.T) {
 
 func TestAgentChangesChangeTheLayerVersion(t *testing.T) {
 	h := newService(t, nil)
-	v1 := h.s.layerVersion()
+	v1 := h.s.layerVersion(DefaultProfile())
 	_ = os.WriteFile(h.s.agentPath(), []byte("\x7fELF a newer agent"), 0o755)
-	if v2 := h.s.layerVersion(); v2 == v1 || !strings.HasPrefix(v2, layerVersionPrefix()) {
+	if v2 := h.s.layerVersion(DefaultProfile()); v2 == v1 || !strings.HasPrefix(v2, layerVersionPrefix()) {
 		t.Fatalf("layer version %q -> %q, want a change when the agent changes", v1, v2)
 	}
 }
@@ -648,7 +648,7 @@ func TestAgentChangesChangeTheLayerVersion(t *testing.T) {
 func TestPoweredOffBuilderFailsWithoutWaitingForTheTimeout(t *testing.T) {
 	h := newService(t, nil)
 	ctx := context.Background()
-	tpl, _ := h.s.Build(ctx, "manual")
+	tpl, _ := h.s.Build(ctx, "manual", "")
 	_, _ = h.db.TransitionEnvironment(ctx, tpl.BuildEnvID, nil, "connected", nil)
 	_, _ = h.db.TransitionEnvironment(ctx, tpl.BuildEnvID, nil, "idle", nil)
 	_, _ = h.db.TransitionEnvironment(ctx, tpl.BuildEnvID, nil, "completing", nil)
@@ -662,9 +662,9 @@ func TestPoweredOffBuilderFailsWithoutWaitingForTheTimeout(t *testing.T) {
 func TestBuildWhileBuildingNeedsNoGitHub(t *testing.T) {
 	h := newService(t, nil)
 	ctx := context.Background()
-	_, _ = h.s.Build(ctx, "manual")
+	_, _ = h.s.Build(ctx, "manual", "")
 	h.rel.err = errors.New("github is down")
-	if _, err := h.s.Build(ctx, "manual"); !errors.Is(err, ErrBuildRunning) {
+	if _, err := h.s.Build(ctx, "manual", ""); !errors.Is(err, ErrBuildRunning) {
 		t.Fatalf("err = %v, want ErrBuildRunning without asking GitHub", err)
 	}
 }
@@ -672,7 +672,7 @@ func TestBuildWhileBuildingNeedsNoGitHub(t *testing.T) {
 func TestConcurrentUploadsAreRefused(t *testing.T) {
 	h := newService(t, nil)
 	ctx := context.Background()
-	tpl, _ := h.s.Build(ctx, "manual")
+	tpl, _ := h.s.Build(ctx, "manual", "")
 	pr, pw := io.Pipe()
 	first := make(chan error, 1)
 	go func() { first <- h.s.ReceiveRootFS(ctx, tpl.BuildEnvID, pr, strings.Repeat("0", 64)) }()
@@ -706,21 +706,21 @@ func testCache() config.Cache {
 // Turning the cache on, off or moving it must rebuild the templates (their mirror files change).
 func TestCacheChangesTheLayerVersion(t *testing.T) {
 	h := newService(t, nil)
-	without := h.s.layerVersion()
+	without := h.s.layerVersion(DefaultProfile())
 	h.s.d.Cache = testCache()
-	with := h.s.layerVersion()
+	with := h.s.layerVersion(DefaultProfile())
 	moved := testCache()
 	moved.Address = "10.50.0.4"
 	h.s.d.Cache = moved
-	if without == with || with == h.s.layerVersion() || !strings.HasPrefix(with, layerVersionPrefix()) {
-		t.Fatalf("versions %q / %q / %q; want three different ones", without, with, h.s.layerVersion())
+	if without == with || with == h.s.layerVersion(DefaultProfile()) || !strings.HasPrefix(with, layerVersionPrefix()) {
+		t.Fatalf("versions %q / %q / %q; want three different ones", without, with, h.s.layerVersion(DefaultProfile()))
 	}
 }
 
 func TestBuildSpecCarriesTheCacheMirrors(t *testing.T) {
 	h := newService(t, nil)
 	h.s.d.Cache = testCache()
-	tpl, err := h.s.Build(context.Background(), "manual")
+	tpl, err := h.s.Build(context.Background(), "manual", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -733,7 +733,7 @@ func TestBuildSpecCarriesTheCacheMirrors(t *testing.T) {
 func TestVerifyEnvironmentGetsTheCache(t *testing.T) {
 	h := newService(t, nil)
 	h.s.d.Cache = testCache()
-	tpl, err := h.s.Build(context.Background(), "manual")
+	tpl, err := h.s.Build(context.Background(), "manual", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -763,7 +763,7 @@ func TestAVerifiedGateSkipsTheFirewallDelay(t *testing.T) {
 		h := newService(t, nil)
 		h.s.d.FirewallProbe = "10.50.0.2:8444"
 		ctx := context.Background()
-		if _, _, gated := h.s.ActiveFirewallGated(ctx); gated {
+		if _, _, gated := h.s.ActiveFirewallGated(ctx, "default"); gated {
 			t.Fatalf("%s: the bootstrap template is never verified", name)
 		}
 		got := h.buildToVerify(t)
@@ -777,7 +777,7 @@ func TestAVerifiedGateSkipsTheFirewallDelay(t *testing.T) {
 			t.Fatal(err)
 		}
 		h.s.Wait()
-		if _, _, gated := h.s.ActiveFirewallGated(ctx); gated != tc.want {
+		if _, _, gated := h.s.ActiveFirewallGated(ctx, "default"); gated != tc.want {
 			t.Errorf("%s: gated = %v, want %v", name, gated, tc.want)
 		}
 		warned := false

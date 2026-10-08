@@ -102,6 +102,12 @@ Finished environments (with their jobs, events and log files), events and failed
 - A failed or deleted template record, or a destroyed environment, can also be deleted on its own page. Deleting a failed template lets the next check build the same inputs again.
 - API: `GET`/`PUT /api/v1/history/settings`, `POST /api/v1/history/cleanup` (`before`, optional `audit_before`, `dry_run`), `DELETE /api/v1/templates/{id}`, `DELETE /api/v1/environments/{id}`. Manual deletions are audited.
 
+## Template profiles
+
+- Profiles are edited on the Templates page (Profiles tab): what of GitHub's recipe to leave out, tool cache versions (Node.js, Python, Go), extra apt packages and a build script. A scale set picks one in its form (`template_profile`, default `default`).
+- `templates.vmid_range` must hold 3 VMIDs per profile plus one.
+- API: `GET /api/v1/template-profiles`, `PUT`/`DELETE /api/v1/template-profiles/{name}` (`If-None-Match: *` creates only), `POST /api/v1/templates/build` with `{"profile": "<name>"}`.
+
 ## Registry cache
 
 With `cache.address` set (the installer sets it up and creates the container), job environments pull Docker Hub, GHCR, MCR and Quay images through a pull-through cache on the job network (`<subnet>.3`), with unchanged workflows. The cache is an unprivileged Debian container (`ghrm-cache`, not in the ghrm pool) running one CNCF Distribution proxy per registry on ports 5000–5003, their metrics on 5100–5103 and `ghrm-agent cache-exporter` on 5199; jobs can reach only 5000–5003.

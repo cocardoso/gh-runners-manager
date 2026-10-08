@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { withNode } from "@/i18n/nodes";
 import { Badge, Banner, Button, ClipboardText, Empty, Grid, LayerCard, Link, Meter, useKumoToastManager } from "@cloudflare/kumo";
-import { PencilSimpleIcon, PlusIcon, StackIcon, TrashIcon, WarningIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { InfoIcon, PencilSimpleIcon, PlusIcon, StackIcon, TrashIcon, WarningIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type ScaleSet } from "@/api/client";
-import { useScaleSets } from "@/api/queries";
+import { useProfileFallback, useScaleSets } from "@/api/queries";
 import { DeleteResource } from "@/blocks/delete-resource/delete-resource";
 import { ScaleSetDialog } from "@/components/scale-set-editor";
 import { ErrorState, Loading, Page, RelativeTime } from "@/components/common";
@@ -20,6 +20,7 @@ function ScaleSetCard({ s, onEdit, onRemove }: { s: ScaleSet; onEdit: () => void
   const config = s.settings ?? undefined;
   const max = config?.max_concurrent || undefined;
   const ui = s.source === "ui";
+  const fallback = useProfileFallback();
   const t = useT();
   return (
     <section id={s.name} aria-labelledby={`ss-${s.name}`} className="scroll-mt-20">
@@ -51,6 +52,9 @@ function ScaleSetCard({ s, onEdit, onRemove }: { s: ScaleSet; onEdit: () => void
           </span>
         </LayerCard.Secondary>
         <LayerCard.Primary className="flex flex-col gap-4">
+          {fallback(config?.template_profile) && (
+            <Banner variant="secondary" icon={<InfoIcon weight="fill" />} title={t("templates.profiles.fallback", { name: config?.template_profile ?? "" })} />
+          )}
           {s.listen_error && <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={t("templates.scaleSets.listenerStopped")} description={s.listen_error} />}
           {s.waiting && (
             <Banner
@@ -86,6 +90,7 @@ function ScaleSetCard({ s, onEdit, onRemove }: { s: ScaleSet; onEdit: () => void
                   t("templates.scaleSets.fields.resources"),
                   t("templates.scaleSets.fields.resourcesValue", { cores: config.cores ?? "?", memory: config.memory_mb ? formatMB(config.memory_mb) : "?" }),
                 ],
+                [t("templates.scaleSets.fields.profile"), config.template_profile || "default"],
                 [t("templates.scaleSets.fields.warm"), config.warm_runners ? String(config.warm_runners) : t("templates.scaleSets.fields.no")],
                 [t("templates.scaleSets.fields.runnerGroup"), config.runner_group || "default"],
                 [t("templates.scaleSets.fields.credential"), config.credential || "—"],
@@ -121,6 +126,7 @@ export function ScaleSetsPage() {
       toast.add({ title: t("templates.scaleSets.removed", { name: removing }), description: t("templates.scaleSets.removedHelp"), variant: "success" });
       setRemoving(undefined);
       void qc.invalidateQueries({ queryKey: ["scale-sets"] });
+      void qc.invalidateQueries({ queryKey: ["templates", "profiles"] });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

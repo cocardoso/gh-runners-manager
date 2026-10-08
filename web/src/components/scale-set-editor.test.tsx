@@ -83,6 +83,27 @@ test("warm runners are saved and never exceed the jobs at a time", async () => {
   expect(await calls.find((c) => c.method === "PUT")!.request.json()).toMatchObject({ warm_runners: 1 });
 });
 
+test("a scale set picks its template profile", async () => {
+  const { calls, user, dialog } = await openNew({
+    "PUT /api/v1/scale-sets/lean": noContent,
+    "/api/v1/template-profiles": {
+      profiles: [
+        { name: "default", remove: [], toolcache: {}, apt: [], used_by: [] },
+        { name: "lean", remove: ["azure-cli"], toolcache: {}, apt: [], used_by: [] },
+      ],
+      components: [],
+      toolcache_tools: [],
+    },
+  });
+  await user.type(within(dialog).getByLabelText("Name"), "lean");
+  await user.type(within(dialog).getByLabelText("Repository or organization URL"), "https://github.com/octo/app");
+  await user.click(within(dialog).getByRole("combobox", { name: "Template profile" }));
+  await user.click(await screen.findByRole("option", { name: "lean" }));
+  await user.click(within(dialog).getByRole("button", { name: "Save scale set" }));
+  await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+  expect(await calls.find((c) => c.method === "PUT")!.request.json()).toMatchObject({ template_profile: "lean" });
+});
+
 test("a memory size outside the list, set earlier, stays selected", async () => {
   mockApi({
     "/api/v1/scale-sets": { scale_sets: [{ name: "odd", github_id: 1, desired: 0, live: 0, listening: true, waiting_since: "0001-01-01T00:00:00Z", source: "ui", settings: { url: "https://github.com/o/r", credential: "personal", memory_mb: 6144, cores: 2, max_concurrent: 1, keep_on_failure_minutes: 30 } }] },

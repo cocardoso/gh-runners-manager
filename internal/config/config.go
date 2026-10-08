@@ -82,6 +82,8 @@ type ScaleSet struct {
 	// job starts in seconds instead of waiting for a new environment. They count toward
 	// max_concurrent and hold their memory.
 	WarmRunners int `yaml:"warm_runners"`
+	// TemplateProfile names the template profile its environments clone (default "default").
+	TemplateProfile string `yaml:"template_profile"`
 }
 
 // ApplyDefaults fills the unset sizes of a scale set.
@@ -97,6 +99,9 @@ func (s *ScaleSet) ApplyDefaults() {
 	}
 	if s.MemoryMB == 0 {
 		s.MemoryMB = 4096
+	}
+	if s.TemplateProfile == "" {
+		s.TemplateProfile = "default"
 	}
 }
 
@@ -117,6 +122,9 @@ func (s ScaleSet) Validate(credentialExists func(string) bool) error {
 	}
 	if s.MaxConcurrent < 1 || s.Cores < 1 || s.MemoryMB < 256 {
 		errs = append(errs, fmt.Errorf("scale set %s: max_concurrent, cores and memory_mb must be positive (memory at least 256)", s.Name))
+	}
+	if s.TemplateProfile != "" && !ValidName(s.TemplateProfile) {
+		errs = append(errs, fmt.Errorf("scale set %s: template_profile %q is not a valid profile name", s.Name, s.TemplateProfile))
 	}
 	if s.WarmRunners < 0 || s.WarmRunners > s.MaxConcurrent {
 		errs = append(errs, fmt.Errorf("scale set %s: warm_runners must be between 0 and max_concurrent", s.Name))

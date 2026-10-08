@@ -13,7 +13,7 @@ import (
 
 type fakeSource struct{}
 
-func (fakeSource) Active(context.Context) (string, int) { return "tpl/abc", 951 }
+func (fakeSource) Active(context.Context, string) (string, int) { return "tpl/abc", 951 }
 
 type fakeTemplateEvents struct {
 	mu  sync.Mutex

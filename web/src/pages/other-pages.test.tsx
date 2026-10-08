@@ -32,6 +32,16 @@ test("scale sets show listener status, counts and a runs-on snippet", async () =
   expect(within(broken).getByText(/401 Bad credentials/)).toBeInTheDocument();
 });
 
+test("a scale set whose profile has no template yet says it clones the default one", async () => {
+  mockApi({
+    "/api/v1/scale-sets": { scale_sets: [scaleSet({ name: "fast", source: "ui", settings: { url: "https://github.com/o/r", credential: "c", template_profile: "lean" } })] },
+    "/api/v1/template-profiles": { profiles: [{ name: "default", remove: [], toolcache: {}, apt: [], used_by: [] }, { name: "lean", remove: [], toolcache: {}, apt: [], used_by: ["fast"] }], components: [], toolcache_tools: [] },
+    "/api/v1/settings": settings,
+  });
+  renderApp("/scale-sets");
+  expect(await screen.findByText("lean clones the default profile's template until its own is built")).toBeInTheDocument();
+});
+
 test("settings show the configuration without secrets", async () => {
   mockApi({ "/api/v1/settings": settings });
   renderApp("/settings");

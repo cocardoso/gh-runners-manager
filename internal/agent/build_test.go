@@ -342,3 +342,24 @@ func TestUpdateAndRestartReportsAFailedRestart(t *testing.T) {
 		t.Fatalf("up to date: restarted %d, err %v", restarted, err)
 	}
 }
+
+const recipeDockerfile = `RUN --mount=type=secret,id=api_pat \
+    apt-get update && \
+    /tmp/scripts/build/install-azure-cli.sh && \
+    /tmp/scripts/build/install-azure-devops-cli.sh && \
+    /tmp/scripts/build/install-git.sh && \
+    /tmp/scripts/helpers/cleanup.sh
+`
+
+func TestRemoveComponentsDropsTheirInstallScripts(t *testing.T) {
+	got, err := RemoveComponents(recipeDockerfile, []string{"azure-cli", "azure-devops-cli"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "azure") || !strings.Contains(got, "install-git.sh && \\") || !strings.Contains(got, "cleanup.sh") {
+		t.Fatalf("Dockerfile = %s", got)
+	}
+	if _, err := RemoveComponents(recipeDockerfile, []string{"bicep"}); err == nil || !strings.Contains(err.Error(), "install-bicep.sh") {
+		t.Fatalf("a component the recipe lacks = %v, want an error naming it", err)
+	}
+}

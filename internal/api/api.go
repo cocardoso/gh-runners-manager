@@ -376,6 +376,7 @@ func New(d Deps) http.Handler {
 
 	registerOverview(a, d)
 	registerTemplates(a, d)
+	registerProfiles(a, d)
 	registerAuth(a, d)
 	registerSettingsEdit(a, d)
 	registerHistory(a, d)

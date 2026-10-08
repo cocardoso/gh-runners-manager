@@ -3,7 +3,7 @@ import { Badge, Banner, Button, ClipboardText, Combobox, Dialog, DialogRoot, Dia
 import { BookBookmarkIcon, BuildingsIcon, LockSimpleIcon, PlusIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type ScaleSetSettings, type Target } from "@/api/client";
-import { useCredentials, useCredentialTargets, useRefreshCredentialTargets, useScaleSets } from "@/api/queries";
+import { useCredentials, useCredentialTargets, useRefreshCredentialTargets, useScaleSets, useTemplateProfiles } from "@/api/queries";
 import { HelpLabel, helpField } from "@/components/help-tip";
 import { CredentialDialog } from "@/components/credentials-editor";
 import { currentFormatLocale, useT } from "@/i18n";
@@ -194,6 +194,10 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
   const [memory, setMemory] = useState(String(initial?.memory_mb ?? 4096));
   const [keep, setKeep] = useState(String(initial?.keep_on_failure_minutes ?? 0));
   const [warm, setWarm] = useState(String(initial?.warm_runners ?? 0));
+  const [profile, setProfile] = useState(initial?.template_profile || "default");
+  const profiles = useTemplateProfiles();
+  // A profile set earlier stays selectable even when it is gone.
+  const profileItems = Object.fromEntries([...new Set([...(profiles.data?.profiles ?? []).map((p) => p.name), profile])].map((n) => [n, n]));
   const [addingCredential, setAddingCredential] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -232,6 +236,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
         memory_mb: numberOr(memory, 4096),
         keep_on_failure_minutes: numberOr(keep, 0),
         warm_runners: numberOr(warm, 0),
+        template_profile: profile,
       };
       // A create (If-None-Match: *) never replaces a scale set saved meanwhile.
       const header = fixedName ? {} : { "If-None-Match": "*" };
@@ -239,6 +244,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
       void qc.invalidateQueries({ queryKey: ["scale-sets"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
       void qc.invalidateQueries({ queryKey: ["repositories"] });
+      void qc.invalidateQueries({ queryKey: ["templates", "profiles"] }); // who uses each profile
       onClose();
     } catch (err) {
       setError(message(err));
@@ -366,7 +372,18 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
                     />
                   </div>
                 </div>
-                <div className="grid gap-4 sm:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="min-w-0">
+                    <Select
+                      aria-label={t("templates.scaleSetForm.profile")}
+                      label={<HelpLabel label={t("templates.scaleSetForm.profile")} help={t("templates.scaleSetHelp.profileTip")} />}
+                      value={profile}
+                      onValueChange={(v) => setProfile(String(v ?? profile))}
+                      items={profileItems}
+                      className="w-full"
+                      description={t("templates.scaleSetForm.profileHelp")}
+                    />
+                  </div>
                   <div className="min-w-0">
                     <Select
                       aria-label={t("templates.scaleSetForm.keep")}

@@ -16,7 +16,7 @@ import (
 func TestTarHoldsTheLayerAndTheAgent(t *testing.T) {
 	var buf bytes.Buffer
 	agent := []byte("\x7fELF agent")
-	if err := Tar(&buf, bytes.NewReader(agent), int64(len(agent))); err != nil {
+	if err := Tar(&buf, bytes.NewReader(agent), int64(len(agent)), map[string]string{"profile.sh": "#!/bin/bash\necho profile\n"}); err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]*tar.Header{}
@@ -37,7 +37,7 @@ func TestTarHoldsTheLayerAndTheAgent(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "persist-env.sh", "mirrors.sh", "ghrm-agent"} {
+	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "persist-env.sh", "mirrors.sh", "toolcache.sh", "profile.sh", "script.sh", "ghrm-agent"} {
 		if got[name] == nil {
 			t.Fatalf("missing %s in %v", name, got)
 		}
@@ -208,5 +208,32 @@ func TestMirrorsScriptWithoutCacheWritesNothing(t *testing.T) {
 	entries, _ := os.ReadDir(root)
 	if len(entries) != 0 {
 		t.Fatalf("wrote %v; without a cache templates stay as they were", entries)
+	}
+}
+
+// toolcache.sh picks the newest stable release of each version prefix for linux x64 and
+// the image's Ubuntu (fixtures: excerpts of the actions/*-versions manifests).
+func TestToolcachePicksTheNewestMatchingRelease(t *testing.T) {
+	for _, bin := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skip(bin + " is not installed")
+		}
+	}
+	for _, c := range []struct{ tool, version, want string }{
+		{"node", "22", "/node-22."},
+		{"python", "3.12", "-linux-24.04-x64.tar.gz"},
+		{"go", "1.24", "/go-1.24."},
+	} {
+		cmd := exec.Command("bash", "toolcache.sh", c.tool, c.version)
+		cmd.Env = append(os.Environ(), "TOOLCACHE_PRINT=1", "TOOLCACHE_OS=24.04", "TOOLCACHE_MANIFEST=testdata/"+c.tool+"-manifest.json")
+		out, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(out), c.want) || strings.Contains(string(out), "rc") {
+			t.Errorf("%s %s: %s %v, want a URL with %q", c.tool, c.version, out, err, c.want)
+		}
+	}
+	cmd := exec.Command("bash", "toolcache.sh", "node", "7")
+	cmd.Env = append(os.Environ(), "TOOLCACHE_PRINT=1", "TOOLCACHE_OS=24.04", "TOOLCACHE_MANIFEST=testdata/node-manifest.json")
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Errorf("a version the manifest lacks = %s, want an error", out)
 	}
 }

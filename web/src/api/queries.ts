@@ -89,6 +89,18 @@ export function useTemplates() {
   return useQuery({ queryKey: ["templates"], queryFn: async () => unwrap(await api.GET("/api/v1/templates")) });
 }
 
+export function useTemplateProfiles() {
+  return useQuery({ queryKey: ["templates", "profiles"], queryFn: async () => unwrap(await api.GET("/api/v1/template-profiles")) });
+}
+
+/** Whether a scale set of the profile clones the default profile's template meanwhile:
+ * a profile other than the default one with no active version yet. */
+export function useProfileFallback(): (profile: string | undefined) => boolean {
+  const q = useTemplateProfiles();
+  const unbuilt = new Set((q.data?.profiles ?? []).filter((p) => p.name !== "default" && !p.active_template_id).map((p) => p.name));
+  return (profile) => !!profile && unbuilt.has(profile);
+}
+
 export function useTemplate(id: string) {
   return useQuery({ queryKey: ["templates", id], queryFn: async () => unwrap(await api.GET("/api/v1/templates/{id}", { params: { path: { id } } })) });
 }

@@ -26,7 +26,7 @@ The target audience is homelabs and small teams that want hosted-runner behaviou
 - Kubernetes support.
 - Windows or macOS runners.
 - Cloud runtimes (AWS, GCP, Azure). The runtime interface allows them later; none is built now.
-- A "full" image equivalent to `ubuntu-24.04`, and per-project custom images. Only the `ubuntu-slim`-based profile is in scope.
+- A "full" image equivalent to `ubuntu-24.04`. Templates stay `ubuntu-slim`-based; template profiles only leave out its optional tools and add packages, tool cache versions and a script.
 - Multi-node Proxmox clusters. Single node first; the design does not preclude clusters.
 - GitHub App authentication. Fine-grained PATs first, behind an interface that admits an App later.
 
@@ -207,7 +207,7 @@ After a job completes, the official job log is downloaded from the GitHub API an
 
 GitHub publishes the recipes for its hosted images in [`actions/runner-images`](https://github.com/actions/runner-images). It publishes no prebuilt images for use outside its own infrastructure. One of the recipes, **`ubuntu-slim`**, is a plain Dockerfile that GitHub uses to run jobs in **unprivileged containers**. It reuses the same build scripts and toolset files as the full Ubuntu images and is rebuilt about weekly.
 
-ghrm builds its templates **from that Dockerfile, unmodified**, at a pinned release tag such as `ubuntu-slim/20261005.17`. This gives ghrm GitHub's tool list, versions, environment variables and locale without this project maintaining them.
+ghrm builds its templates **from that Dockerfile**, at a pinned release tag such as `ubuntu-slim/20261005.17`, unmodified except for the install scripts a template profile leaves out. This gives ghrm GitHub's tool list, versions, environment variables and locale without this project maintaining them.
 
 ### 8.2 ghrm layer
 
@@ -254,7 +254,7 @@ A daily check triggers a rebuild in any of these cases:
 2. a new `actions/runner` release. Outdated runners self-update at startup, which delays jobs, and very old versions are rejected by GitHub;
 3. a new ghrm layer version, shipped with a new ghrm release.
 
-New environments use the `active` template. Environments that are already running keep theirs. The previous version is retained for **one-click rollback** (keep N=2). Older versions are deleted once no environment references them. Operators can **pin** a version, which disables automatic rollout, **rebuild** or **roll back** from the UI. A failed build never changes the active template.
+Each template profile has its own versions. New environments use the `active` template of their scale set's profile. Environments that are already running keep theirs. The previous version of each profile is retained for **one-click rollback** (keep N=2). Older versions are deleted once no environment references them. Operators can **pin** a version, which disables automatic rollout of its profile, **rebuild** or **roll back** from the UI. A failed build never changes the active template. A profile holds up to three template VMIDs (active, previous, a candidate awaiting review) plus a build in flight, so `templates.vmid_range` must hold 3 × profiles + 1; saving a profile that would not fit is refused. One build runs at a time: when it ends, the next profile that is behind is built, starting after the profile built last.
 
 ## 9. Scheduling and capacity
 

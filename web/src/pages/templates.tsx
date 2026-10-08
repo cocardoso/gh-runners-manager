@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from "react";
-import { Badge, Banner, Button, DropdownMenu, Empty, LayerCard, Link, Table, Tooltip } from "@cloudflare/kumo";
+import { Badge, Banner, Button, DropdownMenu, Empty, LayerCard, Link, Select, Table, Tooltip } from "@cloudflare/kumo";
 import {
   ArrowCounterClockwiseIcon,
   CheckCircleIcon,
@@ -13,15 +13,16 @@ import {
   QuestionIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
-import { useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type TemplateVersion } from "@/api/client";
-import { useSettings, useTemplates } from "@/api/queries";
+import { useSettings, useTemplateProfiles, useTemplates } from "@/api/queries";
 import { useAdminAction } from "@/components/admin-action";
 import { ErrorState, Loading, Page, RelativeTime, useNow } from "@/components/common";
 import { DeleteRecord } from "@/components/delete-record";
 import { DetailTabs } from "@/components/detail-tabs";
 import { TemplateStateBadge } from "@/components/status-badge";
+import { ProfilesTab } from "@/components/template-profiles";
 import { currentFormatLocale, tr, useT, type Key } from "@/i18n";
 import { formatRelative } from "@/lib/format";
 import type { ListSearch } from "@/router";
@@ -42,6 +43,7 @@ const triggerKey: Record<string, Key> = {
   "runner-release": "templates.trigger.runnerRelease",
   layer: "templates.trigger.layer",
   "bootstrap-replacement": "templates.trigger.bootstrapReplacement",
+  "new-profile": "templates.trigger.newProfile",
   bootstrap: "templates.trigger.bootstrap",
 };
 
@@ -380,7 +382,8 @@ const newestFirst = (a: TemplateView, b: TemplateView) => (b.updated_at ?? "").l
 
 export function TemplatesPage() {
   const tl = useT();
-  const { tab } = useSearch({ strict: false }) as ListSearch;
+  const { tab, profile: chosen } = useSearch({ strict: false }) as ListSearch;
+  const navigate = useNavigate();
   const list = useTemplates();
   const settings = useSettings();
   const qc = useQueryClient();
@@ -388,12 +391,21 @@ export function TemplatesPage() {
   const enabled = list.data?.enabled ?? false;
   const building = list.data?.building ?? false;
   const canAct = settings.data?.admin_actions === true;
-  const templates: TemplateView[] = list.data?.templates ?? [];
+  const profilesQuery = useTemplateProfiles();
+  const profileNames = (profilesQuery.data?.profiles ?? []).map((p) => p.name);
+  // The profile shown stays in the URL; a profile that is gone falls back to the default one.
+  const profile = chosen && (profilesQuery.isLoading || profileNames.includes(chosen)) ? chosen : "default";
+  const setProfile = (p: string) =>
+    void navigate({ to: ".", search: (prev: ListSearch) => ({ ...prev, profile: p === "default" ? undefined : p }), replace: true });
+  const all: TemplateView[] = list.data?.templates ?? [];
+  // Versions of the chosen profile (records from before profiles belong to the default one).
+  const templates = all.filter((t) => (t.profile || "default") === profile);
   const history = tab === "history";
+  const profilesTab = tab === "profiles";
 
   const buildNow = () =>
     admin.run(tl("templates.build.started"), async () => {
-      unwrap(await api.POST("/api/v1/templates/build"));
+      unwrap(await api.POST("/api/v1/templates/build", { body: { profile } }));
       await qc.invalidateQueries({ queryKey: ["templates"] });
     });
   const reason = !enabled
@@ -405,7 +417,7 @@ export function TemplatesPage() {
         : "";
   const button = (
     <Button variant="primary" icon={HammerIcon} disabled={!!reason || admin.busy} loading={admin.busy} onClick={buildNow}>
-      {tl("templates.build.now")}
+      {profileNames.length > 1 ? tl("templates.profiles.build", { name: profile }) : tl("templates.build.now")}
     </Button>
   );
 
@@ -418,11 +430,24 @@ export function TemplatesPage() {
   const tabs = [
     { value: "available", label: tl("templates.tabs.available") },
     { value: "history", label: tl("templates.tabs.history") },
+    { value: "profiles", label: tl("templates.profiles.tab") },
   ];
+  const picker =
+    profileNames.length > 1 && !profilesTab ? (
+      <Select
+        aria-label={tl("templates.profiles.filter")}
+        label={tl("templates.profiles.filter")}
+        value={profile}
+        onValueChange={(v) => setProfile(String(v ?? "default"))}
+        items={Object.fromEntries(profileNames.map((n) => [n, n]))}
+        className="w-full sm:w-64"
+      />
+    ) : null;
 
   let body;
   if (list.isLoading) body = <Loading />;
   else if (list.error) body = <ErrorState error={list.error} />;
+  else if (profilesTab) body = <ProfilesTab canAct={canAct} />;
   else if (history) body = <BuildHistory templates={past} canDelete={canAct} />;
   else
     body = (
@@ -430,7 +455,7 @@ export function TemplatesPage() {
         {inProgress.map((t) => (
           <BuildCard key={t.id} t={t} />
         ))}
-        {building && inProgress.length === 0 && <StartingCard />}
+        {building && all.filter((t) => IN_PROGRESS.includes(t.state)).length === 0 && <StartingCard />}
         <InUseCard t={active} actions={active && actionsFor(active)} />
         <AvailableCard templates={available} actions={actionsFor} />
       </>
@@ -440,7 +465,7 @@ export function TemplatesPage() {
     <Page
       title={tl("templates.title")}
       description={tl("templates.description")}
-      actions={reason ? <Tooltip content={reason} render={<span>{button}</span>} /> : button}
+      actions={profilesTab ? undefined : reason ? <Tooltip content={reason} render={<span>{button}</span>} /> : button}
     >
       {list.data && !enabled && (
         <Banner
@@ -450,7 +475,8 @@ export function TemplatesPage() {
           description={tl("templates.build.notConfiguredHelp")}
         />
       )}
-      <DetailTabs push tabs={tabs} value={history ? "history" : "available"}>
+      <DetailTabs push tabs={tabs} value={profilesTab ? "profiles" : history ? "history" : "available"}>
+        {picker}
         {body}
       </DetailTabs>
     </Page>

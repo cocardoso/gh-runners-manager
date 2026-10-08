@@ -25,7 +25,7 @@ func TestTemplateRoundTripAndActivation(t *testing.T) {
 	if _, err := s.GetTemplate(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing = %v, want ErrNotFound", err)
 	}
-	active, err := s.ActiveTemplate(ctx)
+	active, err := s.ActiveTemplate(ctx, DefaultProfile)
 	if err != nil || active.ID != "tpla" {
 		t.Fatalf("active = %+v, %v", active, err)
 	}
@@ -33,7 +33,7 @@ func TestTemplateRoundTripAndActivation(t *testing.T) {
 	if err := s.SetActiveTemplate(ctx, "tplb", at); err != nil {
 		t.Fatal(err)
 	}
-	if active, _ := s.ActiveTemplate(ctx); active.ID != "tplb" || active.ActivatedAt.IsZero() {
+	if active, _ := s.ActiveTemplate(ctx, DefaultProfile); active.ID != "tplb" || active.ActivatedAt.IsZero() {
 		t.Fatalf("after switch active = %+v", active)
 	}
 	if prev, _ := s.GetTemplate(ctx, "tpla"); prev.State != TemplateReady {
@@ -66,7 +66,7 @@ func TestTemplateRoundTripAndActivation(t *testing.T) {
 }
 
 func TestActiveTemplateNone(t *testing.T) {
-	if _, err := openTemp(t).ActiveTemplate(context.Background()); !errors.Is(err, ErrNotFound) {
+	if _, err := openTemp(t).ActiveTemplate(context.Background(), DefaultProfile); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -87,5 +87,57 @@ func TestEnvironmentKindsAndTemplate(t *testing.T) {
 	all, _ := s.ListEnvironments(ctx, EnvironmentFilter{})
 	if len(all) != 2 {
 		t.Fatalf("all = %d", len(all))
+	}
+}
+
+func TestOneActiveTemplatePerProfile(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	for _, tpl := range []Template{
+		{ID: "d1", State: TemplateReady, VMID: 950},
+		{ID: "n1", State: TemplateReady, VMID: 951, Profile: "node", ProfileSpec: []byte(`{"apt":["zip"]}`)},
+		{ID: "n2", State: TemplateReady, VMID: 952, Profile: "node"},
+	} {
+		if err := s.CreateTemplate(ctx, tpl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"d1", "n1", "n2"} {
+		if err := s.SetActiveTemplate(ctx, id, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if a, err := s.ActiveTemplate(ctx, DefaultProfile); err != nil || a.ID != "d1" || a.Profile != DefaultProfile {
+		t.Fatalf("default active = %+v, %v", a, err)
+	}
+	if a, err := s.ActiveTemplate(ctx, "node"); err != nil || a.ID != "n2" {
+		t.Fatalf("node active = %+v, %v", a, err)
+	}
+	if n1, _ := s.GetTemplate(ctx, "n1"); n1.State != TemplateReady || string(n1.ProfileSpec) != `{"apt":["zip"]}` {
+		t.Fatalf("n1 = %s, want ready after n2 took over its profile", n1.State)
+	}
+}
+
+func TestTemplateProfilesRoundTrip(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	if err := s.PutTemplateProfile(ctx, "node", []byte(`{"remove":["azure-cli"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutTemplateProfile(ctx, "node", []byte(`{"remove":["aws-tools"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.GetTemplateProfile(ctx, "node")
+	if err != nil || string(p.Spec) != `{"remove":["aws-tools"]}` || p.CreatedAt.IsZero() {
+		t.Fatalf("profile = %+v, %v", p, err)
+	}
+	if list, _ := s.ListTemplateProfiles(ctx); len(list) != 1 {
+		t.Fatalf("list = %+v", list)
+	}
+	if err := s.DeleteTemplateProfile(ctx, "node"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteTemplateProfile(ctx, "node"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete = %v, want ErrNotFound", err)
 	}
 }

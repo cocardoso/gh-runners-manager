@@ -269,3 +269,101 @@ test("a template in use opens on its details; a failed build opens on its build 
   renderApp("/templates/tplbad");
   expect(await screen.findByRole("tab", { name: "Build", selected: true })).toBeInTheDocument();
 });
+
+const noContent = () => new Response(null, { status: 204 });
+
+test("profiles say what each template preinstalls, leaves out and who uses it", async () => {
+  mockApi({
+    "/api/v1/settings": settings,
+    "/api/v1/template-profiles": {
+      profiles: [
+        { name: "default", remove: [], toolcache: { node: ["22", "24"] }, apt: [], used_by: ["farma-bot"], active_template_id: "tpl1" },
+        { name: "lean", remove: ["azure-cli"], toolcache: {}, apt: ["zip"], script: "echo hi", used_by: [] },
+      ],
+      components: [{ id: "azure-cli", report: ["Azure CLI"] }],
+      toolcache_tools: ["go", "node", "python"],
+    },
+  });
+  renderApp("/templates?tab=profiles");
+  const def = await screen.findByRole("region", { name: "default" });
+  expect(within(def).getByText("farma-bot")).toBeInTheDocument();
+  expect(within(def).getByText("Node.js 22, 24")).toBeInTheDocument();
+  expect(within(def).getByRole("link", { name: "tpl1" })).toHaveAttribute("href", "/templates/tpl1");
+  expect(within(def).getByRole("button", { name: "Delete default" })).toBeDisabled();
+  const lean = screen.getByRole("region", { name: "lean" });
+  expect(within(lean).getByText("Azure CLI")).toBeInTheDocument();
+  expect(within(lean).getByText("zip")).toBeInTheDocument();
+  expect(within(lean).getByText(/Not built yet/)).toBeInTheDocument();
+  expect(within(lean).getByRole("button", { name: "Delete lean" })).toBeEnabled();
+});
+
+test("a new profile is saved with what it leaves out and preinstalls", async () => {
+  const calls = mockApi({ "/api/v1/settings": settings, "PUT /api/v1/template-profiles/lean": noContent });
+  const user = userEvent.setup();
+  renderApp("/templates?tab=profiles");
+  await user.click(await screen.findByRole("button", { name: "New profile" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(within(dialog).getByLabelText("Name"), "lean");
+  // Leaving out the Azure CLI leaves out the Azure DevOps CLI, which needs it.
+  await user.click(within(dialog).getByRole("checkbox", { name: "Azure CLI" }));
+  expect(within(dialog).getByRole("checkbox", { name: "Azure CLI (azure-devops)" })).toBeChecked();
+  await user.type(within(dialog).getByLabelText("Python"), "3.12");
+  await user.type(within(dialog).getByLabelText("Extra Ubuntu packages"), "zip, libpq-dev");
+  await user.click(within(dialog).getByRole("button", { name: "Save profile" }));
+  await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+  expect(await calls.find((c) => c.method === "PUT")!.request.json()).toEqual({
+    remove: ["azure-cli", "azure-devops-cli"],
+    toolcache: { go: [], node: [], python: ["3.12"] },
+    apt: ["zip", "libpq-dev"],
+    script: "",
+  });
+});
+
+test("versions are shown and built per profile", async () => {
+  const calls = mockApi({
+    "/api/v1/settings": settings,
+    "/api/v1/templates": { templates: [{ ...templates[0], id: "lean1", profile: "lean" }, { ...templates[1], profile: "default" }], building: false, enabled: true },
+    "/api/v1/template-profiles": {
+      profiles: [
+        { name: "default", remove: [], toolcache: {}, apt: [], used_by: [] },
+        { name: "lean", remove: [], toolcache: {}, apt: [], used_by: [] },
+      ],
+      components: [],
+      toolcache_tools: [],
+    },
+    "POST /api/v1/templates/build": { ...templates[0], id: "new", state: "building", profile: "lean" },
+  });
+  const user = userEvent.setup();
+  renderApp("/templates");
+  await user.click(await screen.findByRole("combobox", { name: "Profile" }));
+  await user.click(await screen.findByRole("option", { name: "lean" }));
+  await user.click(screen.getByRole("button", { name: "Build lean" }));
+  await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+  expect(await calls.find((c) => c.method === "POST")!.request.json()).toEqual({ profile: "lean" });
+});
+
+test("the profile shown stays in the URL, and a new profile never replaces one", async () => {
+  const calls = mockApi({
+    "/api/v1/settings": settings,
+    "/api/v1/templates": { templates: [{ ...templates[0], id: "lean1", profile: "lean" }], building: false, enabled: true },
+    "/api/v1/template-profiles": {
+      profiles: [
+        { name: "default", remove: [], toolcache: {}, apt: [], used_by: [] },
+        { name: "lean", remove: [], toolcache: {}, apt: [], used_by: [] },
+      ],
+      components: [],
+      toolcache_tools: [],
+    },
+    "PUT /api/v1/template-profiles/fresh": noContent,
+  });
+  const user = userEvent.setup();
+  renderApp("/templates?profile=lean");
+  expect(await screen.findByRole("button", { name: "Build lean" })).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Profiles" }));
+  await user.click(await screen.findByRole("button", { name: "New profile" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(within(dialog).getByLabelText("Name"), "fresh");
+  await user.click(within(dialog).getByRole("button", { name: "Save profile" }));
+  await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+  expect(calls.find((c) => c.method === "PUT")!.headers.get("If-None-Match")).toBe("*");
+});

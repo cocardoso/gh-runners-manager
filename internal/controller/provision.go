@@ -182,7 +182,7 @@ func (c *Controller) startProvisioning(ctx context.Context, scaleSet string) err
 	if err != nil {
 		return err
 	}
-	tplRef, tplVMID, gated := c.activeTemplate(ctx)
+	tplRef, tplVMID, gated := c.activeTemplate(ctx, cfg.TemplateProfile)
 	e := store.Environment{ID: id, ScaleSet: scaleSet, State: string(environment.Pending), Kind: store.KindJob, TemplateVMID: tplVMID,
 		RunnerName: "ghrm-" + id[len(id)-12:], TokenHash: ingest.HashToken(token), MemoryMB: cfg.MemoryMB}
 	if err := c.d.Store.CreateEnvironment(ctx, e); err != nil {
@@ -204,15 +204,15 @@ func (c *Controller) startProvisioning(ctx context.Context, scaleSet string) err
 
 // activeTemplate returns the template job environments clone, and whether its agent
 // waits for the firewall itself (only with a probe to check it against).
-func (c *Controller) activeTemplate(ctx context.Context) (string, int, bool) {
+func (c *Controller) activeTemplate(ctx context.Context, profile string) (string, int, bool) {
 	if c.d.Templates == nil {
 		return "", c.d.Config.Proxmox.TemplateVMID, false
 	}
 	if g, ok := c.d.Templates.(FirewallGatedSource); ok {
-		ref, vmid, gated := g.ActiveFirewallGated(ctx)
+		ref, vmid, gated := g.ActiveFirewallGated(ctx, profile)
 		return ref, vmid, gated && c.d.FirewallProbe != ""
 	}
-	ref, vmid := c.d.Templates.Active(ctx)
+	ref, vmid := c.d.Templates.Active(ctx, profile)
 	return ref, vmid, false
 }
 

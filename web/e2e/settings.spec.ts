@@ -76,3 +76,30 @@ test("the history fields line up, with or without a hint below", async ({ page, 
   const top = async (name: string) => (await page.getByRole("spinbutton", { name, exact: true }).boundingBox())!.y;
   expect(await top("Keep history (days)")).toBe(await top("Keep audit events (days)"));
 });
+
+test("a template profile is created, offered to scale sets and deleted", async ({ page, demo }) => {
+  const errors = trackErrors(page);
+  await page.goto(`${demo.url}/templates?tab=profiles`);
+  await page.getByRole("button", { name: "New profile" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Name").fill("e2e-lean");
+  await dialog.getByRole("checkbox", { name: "Azure CLI", exact: true }).click();
+  await dialog.getByLabel("Go", { exact: true }).fill("1.24");
+  await dialog.getByRole("button", { name: "Save profile" }).click();
+  const card = page.getByRole("region", { name: "e2e-lean" });
+  await expect(card.getByText("Go 1.24")).toBeVisible();
+  await expect(card.getByText(/Azure CLI · Azure CLI \(azure-devops\)/)).toBeVisible();
+
+  await page.goto(`${demo.url}/scale-sets`);
+  await page.getByRole("button", { name: "New scale set" }).click();
+  await page.getByRole("dialog").getByRole("combobox", { name: "Template profile" }).click();
+  await expect(page.getByRole("option", { name: "e2e-lean" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+
+  await page.goto(`${demo.url}/templates?tab=profiles`);
+  await page.getByRole("button", { name: "Delete e2e-lean" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("region", { name: "e2e-lean" })).toBeHidden();
+  expect(errors).toEqual([]);
+});

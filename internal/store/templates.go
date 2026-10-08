@@ -50,22 +50,26 @@ type Template struct {
 	// FirewallGate: the template's agent holds the runner until the job network's firewall
 	// applies, and its verification found the probe dropped (the runtime skips its delay).
 	FirewallGate bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	ActivatedAt  time.Time
+	// Profile names the template profile this version was built from; ProfileSpec is that
+	// profile's JSON as it was then.
+	Profile     string
+	ProfileSpec []byte
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	ActivatedAt time.Time
 }
 
 const tplColumns = `id, slim_release, runner_version, runner_sha256, layer_version, state, vmid, runtime_ref, volume, archive_sha256, size_bytes, pinned,
-	trigger, build_env_id, verify_env_id, failure_stage, failure_reason, report, created_at, updated_at, activated_at, firewall_gate`
+	trigger, build_env_id, verify_env_id, failure_stage, failure_reason, report, created_at, updated_at, activated_at, firewall_gate, profile, profile_spec`
 
 func scanTemplate(row scanner) (Template, error) {
 	var t Template
 	var pinned, gate int
-	var report string
+	var report, spec string
 	var created, updated, activated int64
 	err := row.Scan(&t.ID, &t.SlimRelease, &t.RunnerVersion, &t.RunnerSHA256, &t.LayerVersion, &t.State, &t.VMID, &t.RuntimeRef, &t.Volume, &t.ArchiveSHA256,
 		&t.SizeBytes, &pinned, &t.Trigger, &t.BuildEnvID, &t.VerifyEnvID, &t.FailureStage, &t.FailureReason, &report,
-		&created, &updated, &activated, &gate)
+		&created, &updated, &activated, &gate, &t.Profile, &spec)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Template{}, ErrNotFound
 	}
@@ -75,6 +79,9 @@ func scanTemplate(row scanner) (Template, error) {
 	t.Pinned, t.FirewallGate = pinned != 0, gate != 0
 	if report != "" {
 		t.Report = []byte(report)
+	}
+	if spec != "" {
+		t.ProfileSpec = []byte(spec)
 	}
 	t.CreatedAt, t.UpdatedAt = fromMs(created), fromMs(updated)
 	if activated > 0 {
@@ -97,16 +104,26 @@ func activatedArg(t Template) int64 {
 	return ms(t.ActivatedAt)
 }
 
-// CreateTemplate inserts a template version.
+// DefaultProfile is the template profile every install has.
+const DefaultProfile = "default"
+
+func profileOf(t Template) string {
+	if t.Profile == "" {
+		return DefaultProfile
+	}
+	return t.Profile
+}
+
+// CreateTemplate inserts a template version (in the default profile when it names none).
 func (s *Store) CreateTemplate(ctx context.Context, t Template) error {
 	now := time.Now()
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = now
 	}
 	t.UpdatedAt = t.CreatedAt
-	_, err := s.db.ExecContext(ctx, `INSERT INTO templates (`+tplColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO templates (`+tplColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		t.ID, t.SlimRelease, t.RunnerVersion, t.RunnerSHA256, t.LayerVersion, t.State, t.VMID, t.RuntimeRef, t.Volume, t.ArchiveSHA256, t.SizeBytes, boolInt(t.Pinned),
-		t.Trigger, t.BuildEnvID, t.VerifyEnvID, t.FailureStage, t.FailureReason, string(t.Report), ms(t.CreatedAt), ms(t.UpdatedAt), activatedArg(t), boolInt(t.FirewallGate))
+		t.Trigger, t.BuildEnvID, t.VerifyEnvID, t.FailureStage, t.FailureReason, string(t.Report), ms(t.CreatedAt), ms(t.UpdatedAt), activatedArg(t), boolInt(t.FirewallGate), profileOf(t), string(t.ProfileSpec))
 	if err != nil {
 		return fmt.Errorf("store: create template %s: %w", t.ID, err)
 	}
@@ -118,9 +135,9 @@ func (s *Store) GetTemplate(ctx context.Context, id string) (Template, error) {
 	return scanTemplate(s.db.QueryRowContext(ctx, `SELECT `+tplColumns+` FROM templates WHERE id = ?`, id))
 }
 
-// ActiveTemplate returns the active version or ErrNotFound.
-func (s *Store) ActiveTemplate(ctx context.Context) (Template, error) {
-	return scanTemplate(s.db.QueryRowContext(ctx, `SELECT `+tplColumns+` FROM templates WHERE state = 'active'`))
+// ActiveTemplate returns a profile's active version or ErrNotFound.
+func (s *Store) ActiveTemplate(ctx context.Context, profile string) (Template, error) {
+	return scanTemplate(s.db.QueryRowContext(ctx, `SELECT `+tplColumns+` FROM templates WHERE state = 'active' AND profile = ?`, profile))
 }
 
 // ListTemplates returns every version, newest first.
@@ -158,18 +175,20 @@ func (s *Store) UpdateTemplate(ctx context.Context, t Template) error {
 	return nil
 }
 
-// SetActiveTemplate makes id the active version and the previous active one "ready".
+// SetActiveTemplate makes id the active version of its profile and the profile's previous
+// active one "ready".
 func (s *Store) SetActiveTemplate(ctx context.Context, id string, at time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := scanTemplate(tx.QueryRowContext(ctx, `SELECT `+tplColumns+` FROM templates WHERE id = ?`, id)); err != nil {
+	t, err := scanTemplate(tx.QueryRowContext(ctx, `SELECT `+tplColumns+` FROM templates WHERE id = ?`, id))
+	if err != nil {
 		return err
 	}
 	now := ms(time.Now())
-	if _, err := tx.ExecContext(ctx, `UPDATE templates SET state='ready', updated_at=? WHERE state='active' AND id<>?`, now, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE templates SET state='ready', updated_at=? WHERE state='active' AND profile=? AND id<>?`, now, t.Profile, id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE templates SET state='active', activated_at=?, updated_at=? WHERE id=?`, ms(at), now, id); err != nil {

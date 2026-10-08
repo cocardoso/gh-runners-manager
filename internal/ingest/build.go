@@ -59,6 +59,11 @@ type BuildSpec struct {
 	// CacheMirrors points the template at the registry cache ("origin=host:port,...";
 	// empty: no cache).
 	CacheMirrors string `json:"cache_mirrors,omitempty"`
+	// Remove lists components of GitHub's recipe the template's profile leaves out.
+	Remove []string `json:"remove,omitempty"`
+	// RemoveReport lists the software report's tool names those components install: the
+	// self-test leaves them out of GitHub's report script, which fails on a missing tool.
+	RemoveReport []string `json:"remove_report,omitempty"`
 }
 
 // Check is one self-test result.
