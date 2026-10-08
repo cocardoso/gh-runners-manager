@@ -117,7 +117,7 @@ The UI is a single-page app embedded in `ghrm` (`web/embed.go`) and served for e
 ```mermaid
 flowchart LR
     subgraph browser["Operator browser"]
-        pages["Pages: overview, jobs, environments,<br/>scale sets, live logs, settings"]
+        pages["Pages: overview<br/>inventory: repositories, scale sets, templates<br/>activity: jobs, environments, events<br/>settings"]
         query["TanStack Query cache"]
         live["Shared EventStream<br/>(backoff, resume after seq, stale detection)"]
         viewer["Log viewer (virtualized, ANSI)<br/>LogBuffer cap 50k lines"]

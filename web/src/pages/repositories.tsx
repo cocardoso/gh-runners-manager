@@ -7,6 +7,17 @@ import { JobStatusBadge } from "@/components/status-badge";
 import { useT } from "@/i18n";
 import { formatNumber, formatPercent, isSet } from "@/lib/format";
 
+/** The jobs of a repository (by name) or of an organization (by its scale set, when it has one). */
+function jobsHref(r: Repository, history: boolean): string | undefined {
+  const q = new URLSearchParams();
+  if (history) q.set("tab", "history");
+  if (r.kind === "repository") q.set("repo", `${r.owner}/${r.repo}`);
+  else if (r.scale_sets?.length === 1) q.set("scale_set", r.scale_sets[0]!);
+  else return undefined;
+  if (history) q.set("range", "24h");
+  return `/jobs?${q}`;
+}
+
 /** How many seen repositories an organization lists before "+N more". */
 const SEEN_SHOWN = 5;
 
@@ -14,7 +25,8 @@ function Name({ r }: { r: Repository }) {
   const t = useT();
   const org = r.kind === "organization";
   const seen = r.repositories_seen ?? [];
-  const hidden = seen.length - SEEN_SHOWN;
+  // The server caps the list; its total says how many there are.
+  const hidden = (r.repositories_seen_total ?? seen.length) - SEEN_SHOWN;
   const list = seen.slice(0, SEEN_SHOWN).join(", ") + (hidden > 0 ? ` ${t("repositories.more", { count: hidden, n: formatNumber(hidden) })}` : "");
   return (
     <div className="flex min-w-0 flex-col gap-1">
@@ -34,7 +46,13 @@ function Jobs24h({ r }: { r: Repository }) {
   if (r.jobs_24h === 0) return <span className="text-kumo-subtle">{t("repositories.noJobs")}</span>;
   return (
     <div className="flex flex-col">
-      <span className="tabular-nums">{t("repositories.jobs", { count: r.jobs_24h, n: formatNumber(r.jobs_24h) })}</span>
+      {jobsHref(r, true) ? (
+        <Link href={jobsHref(r, true)} className="tabular-nums">
+          {t("repositories.jobs", { count: r.jobs_24h, n: formatNumber(r.jobs_24h) })}
+        </Link>
+      ) : (
+        <span className="tabular-nums">{t("repositories.jobs", { count: r.jobs_24h, n: formatNumber(r.jobs_24h) })}</span>
+      )}
       <span className="text-xs text-kumo-subtle">{t("repositories.successRate", { percent: formatPercent(r.succeeded_24h / r.jobs_24h) })}</span>
     </div>
   );
@@ -108,7 +126,7 @@ export function RepositoriesPage() {
                 </Table.Cell>
                 <Table.Cell className="align-top">{(r.credentials ?? []).join(", ") || "—"}</Table.Cell>
                 <Table.Cell className={r.jobs_running > 0 ? "align-top tabular-nums" : "align-top tabular-nums text-kumo-subtle"}>
-                  {formatNumber(r.jobs_running)}
+                  {r.jobs_running > 0 && jobsHref(r, false) ? <Link href={jobsHref(r, false)}>{formatNumber(r.jobs_running)}</Link> : formatNumber(r.jobs_running)}
                 </Table.Cell>
                 <Table.Cell className="align-top">
                   <Jobs24h r={r} />

@@ -42,22 +42,42 @@ test("the Running tab lists every environment that exists now, asking the server
   expect(asked).toContainEqual([...LIVE_STATES].sort());
 });
 
-test("a failed environment kept for debugging is badged with when it will be destroyed", async () => {
-  const failedAt = new Date(2026, 9, 8, 14, 0, 0);
+function keptFixture(minutesAgo: number, keepMinutes: number | null) {
+  const failedAt = new Date(Date.now() - minutesAgo * 60_000);
   mockApi({
-    "/api/v1/environments": byState([env({ id: "env-bad", state: "failed", state_changed_at: failedAt.toISOString(), failure_stage: "booting" })]),
-    "/api/v1/scale-sets": { scale_sets: [scaleSet({ name: "homelab", settings: { url: "https://github.com/octo", credential: "c", keep_on_failure_minutes: 30 } })] },
+    "/api/v1/environments": byState([env({ id: "env-bad", state: "failed", scale_set: "homelab", state_changed_at: failedAt.toISOString(), failure_stage: "booting" })]),
+    "/api/v1/scale-sets": {
+      scale_sets: keepMinutes === null ? [] : [scaleSet({ name: "homelab", settings: { url: "https://github.com/octo", credential: "c", keep_on_failure_minutes: keepMinutes } })],
+    },
   });
+  return new Date(failedAt.getTime() + (keepMinutes ?? 0) * 60_000);
+}
+
+test("a failed environment kept for debugging says until when, in the language's clock", async () => {
+  const until = keptFixture(10, 30);
   renderApp("/environments");
   const table = await screen.findByRole("table");
-  expect(await within(table).findByText(/kept for debugging until 14:30/)).toBeInTheDocument();
+  const time = new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(until);
+  expect(await within(table).findByText(`kept for debugging until ${time}`)).toBeInTheDocument();
 });
 
-test("without a known keep time the failed environment is still badged", async () => {
-  mockApi({ "/api/v1/environments": byState([env({ id: "env-bad", state: "failed" })]), "/api/v1/scale-sets": { scale_sets: [] } });
+test("a keep time on another day says which day", async () => {
+  const until = keptFixture(10, 26 * 60);
   renderApp("/environments");
   const table = await screen.findByRole("table");
-  expect(within(table).getByText("kept for debugging")).toBeInTheDocument();
+  const when = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(until);
+  expect(await within(table).findByText(`kept for debugging until ${when}`)).toBeInTheDocument();
+});
+
+test("an environment past its keep time, or whose scale set is gone, is being removed", async () => {
+  keptFixture(60, 30);
+  const first = renderApp("/environments");
+  expect(await within(await screen.findByRole("table")).findByText("being removed")).toBeInTheDocument();
+  first.unmount();
+  vi.unstubAllGlobals();
+  keptFixture(1, null);
+  renderApp("/environments");
+  expect(await within(await screen.findByRole("table")).findByText("being removed")).toBeInTheDocument();
 });
 
 test("with nothing running the Running tab says so and points to the history", async () => {
@@ -118,7 +138,7 @@ test("in Portuguese the tabs and the badge are translated", async () => {
   const table = await screen.findByRole("table");
   expect(screen.getByRole("tab", { name: "Em execução", selected: true })).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Histórico" })).toBeInTheDocument();
-  expect(within(table).getByText("mantido para depuração")).toBeInTheDocument();
+  expect(within(table).getByText("sendo removido")).toBeInTheDocument();
 });
 
 async function clickDestroy(user: ReturnType<typeof userEvent.setup>) {
@@ -211,4 +231,32 @@ test("after deleting a destroyed environment the history tab is shown, where it 
   await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete" }));
   await waitFor(() => expect(history.location.pathname).toBe("/environments"));
   expect(history.location.search).toContain("tab=history");
+});
+
+test("switching tabs starts the other list on its first page", async () => {
+  const destroyed = Array.from({ length: 60 }, (_, i) => env({ id: `env-d${i}`, state: "destroyed" }));
+  mockApi({ "/api/v1/environments": byState([env({ id: "env-run", state: "running" }), ...destroyed]) });
+  const user = userEvent.setup();
+  const { history } = renderApp("/environments?tab=history&page=3");
+  await screen.findByText("env-d50");
+  await user.click(screen.getByRole("tab", { name: "Running" }));
+  expect(await screen.findByText("env-run")).toBeInTheDocument();
+  expect(history.location.search).not.toContain("page=");
+});
+
+test("while the other tab loads it shows loading, never a false empty list", async () => {
+  let release: (v: unknown) => void = () => {};
+  const late = new Promise((r) => (release = r));
+  mockApi({
+    "/api/v1/environments": (u: URL) =>
+      u.searchParams.get("state") === "destroyed" ? late : { environments: [env({ id: "env-run", state: "running" })] },
+  });
+  const user = userEvent.setup();
+  renderApp("/environments");
+  await screen.findByText("env-run");
+  await user.click(screen.getByRole("tab", { name: "History" }));
+  expect(screen.queryByText(/No environment has ended yet/)).not.toBeInTheDocument();
+  expect(screen.queryByText("env-run")).not.toBeInTheDocument();
+  release({ environments: [env({ id: "env-old", state: "destroyed" })] });
+  expect(await screen.findByText("env-old")).toBeInTheDocument();
 });

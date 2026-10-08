@@ -22,11 +22,12 @@ const STREAMS: LogStreamName[] = ["control-plane", "runtime", "agent", "runner",
 
 export function EnvironmentDetailPage() {
   const t = useT();
-  const crumbs = [{ label: t("environments.list.title"), href: "/environments" }];
   const { id } = useParams({ strict: false }) as { id: string };
   const { tab = "timeline" } = useSearch({ strict: false }) as DetailSearch;
   const now = useNow();
   const environment = useEnvironment(id);
+  // A destroyed environment belongs to the history.
+  const crumbs = [{ label: t("environments.list.title"), href: environment.data?.state === "destroyed" ? "/environments?tab=history" : "/environments" }];
   const settings = useSettings();
   const jobId = environment.data?.job_id || undefined;
   const job = useJob(jobId ?? "");
@@ -70,21 +71,22 @@ export function EnvironmentDetailPage() {
         </>
       }
     >
-      <DetailTabs tabs={tabs} value={tabs.some((x) => x.value === tab) ? tab : "timeline"} />
-      {tab === "logs" ? (
-        <LiveLog envId={e.id} streams={streams} defaultStream={e.job_id ? "job" : "control-plane"} live={live} />
-      ) : tab === "resources" ? (
-        <ResourcesPanel envId={e.id} live={live} memoryLimitMB={e.memory_mb} />
-      ) : tab === "environment" ? (
-        <EnvironmentPanel environment={e} />
-      ) : (
-        <LayerCard>
-          <LayerCard.Secondary>{t("environments.detail.lifecycle")}</LayerCard.Secondary>
-          <LayerCard.Primary>
-            <Timeline stages={stages} />
-          </LayerCard.Primary>
-        </LayerCard>
-      )}
+      <DetailTabs tabs={tabs} value={tabs.some((x) => x.value === tab) ? tab : "timeline"}>
+        {tab === "logs" ? (
+          <LiveLog envId={e.id} streams={streams} defaultStream={e.job_id ? "job" : "control-plane"} live={live} />
+        ) : tab === "resources" ? (
+          <ResourcesPanel envId={e.id} live={live} memoryLimitMB={e.memory_mb} />
+        ) : tab === "environment" ? (
+          <EnvironmentPanel environment={e} />
+        ) : (
+          <LayerCard>
+            <LayerCard.Secondary>{t("environments.detail.lifecycle")}</LayerCard.Secondary>
+            <LayerCard.Primary>
+              <Timeline stages={stages} />
+            </LayerCard.Primary>
+          </LayerCard>
+        )}
+      </DetailTabs>
     </Page>
   );
 }

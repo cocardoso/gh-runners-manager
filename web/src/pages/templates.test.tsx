@@ -104,11 +104,16 @@ test("a failed record is deleted from the history tab", async () => {
     "DELETE /api/v1/templates/tplfail": () => new Response(null, { status: 204 }),
   });
   const user = userEvent.setup();
-  renderApp("/templates?tab=history");
+  const { history } = renderApp("/templates?tab=history");
+  const entries = history.length;
   const row = (await screen.findByRole("link", { name: "tplfail" })).closest("tr")!;
   await user.click(within(row).getByRole("button", { name: "Delete" }));
   await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete" }));
   await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url.pathname === "/api/v1/templates/tplfail")).toBe(true));
+  // Already on the history: Back must not step through the same page again.
+  expect(await screen.findByText("Record deleted")).toBeInTheDocument();
+  expect(history.length).toBe(entries);
+  expect(history.location.search).toContain("tab=history");
 });
 
 test("the history tab has an empty state", async () => {
@@ -250,4 +255,17 @@ test("a build that the list does not show yet still has its card", async () => {
   renderApp("/templates");
   const card = await screen.findByRole("region", { name: "Build in progress" });
   expect(within(card).getByText("Starting…")).toBeInTheDocument();
+});
+
+test("a template in use opens on its details; a failed build opens on its build log", async () => {
+  const active = { ...templates[0], id: "tplact", state: "active", active: true };
+  const failed = { ...templates[0], id: "tplbad", state: "failed", failure_stage: "build", failure_reason: "boom" };
+  mockApi({ "/api/v1/templates/tplact": active, "/api/v1/templates/tplbad": failed, "/api/v1/settings": settings,
+    "/api/v1/environments/bld1/logs/build": { entries: [], next: 0 },
+    "/api/v1/environments/bld1": { id: "bld1", scale_set: "", state: "destroyed", memory_mb: 8192, created_at: T, updated_at: T, state_changed_at: T } });
+  const first = renderApp("/templates/tplact");
+  expect(await screen.findByRole("tab", { name: "Details", selected: true })).toBeInTheDocument();
+  first.unmount();
+  renderApp("/templates/tplbad");
+  expect(await screen.findByRole("tab", { name: "Build", selected: true })).toBeInTheDocument();
 });

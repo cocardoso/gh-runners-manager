@@ -83,3 +83,27 @@ test("in Portuguese the page is titled Repositórios", async () => {
   expect(await screen.findByText("Organização")).toBeInTheDocument();
   expect(screen.getByText("4 jobs")).toBeInTheDocument();
 });
+
+test("the counts lead to the matching jobs, and an organization's hidden repositories are counted in full", async () => {
+  const repo = repository({ jobs_running: 1, jobs_24h: 3, succeeded_24h: 3 });
+  const org = repository({
+    url: "https://github.com/acme",
+    owner: "acme",
+    repo: "",
+    kind: "organization",
+    scale_sets: ["acme-big"],
+    jobs_running: 2,
+    jobs_24h: 4,
+    succeeded_24h: 4,
+    repositories_seen: Array.from({ length: 50 }, (_, i) => `acme/r${i}`),
+    repositories_seen_total: 60,
+  });
+  mockApi({ "/api/v1/repositories": { repositories: [org, repo] } });
+  renderApp("/repositories");
+  const repoRow = (await screen.findByRole("link", { name: "octo/app" })).closest("tr")!;
+  expect(within(repoRow).getByRole("link", { name: "1" }).getAttribute("href")).toBe("/jobs?repo=octo%2Fapp");
+  expect(within(repoRow).getByRole("link", { name: /3 jobs/ }).getAttribute("href")).toBe("/jobs?tab=history&repo=octo%2Fapp&range=24h");
+  const orgRow = screen.getByRole("link", { name: "acme" }).closest("tr")!;
+  expect(within(orgRow).getByRole("link", { name: "2" }).getAttribute("href")).toBe("/jobs?scale_set=acme-big");
+  expect(within(orgRow).getByText(/\+55 more/)).toBeInTheDocument(); // 60 seen, 5 shown
+});

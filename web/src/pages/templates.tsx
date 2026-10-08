@@ -450,8 +450,9 @@ export function TemplatesPage() {
           description={tl("templates.build.notConfiguredHelp")}
         />
       )}
-      <DetailTabs push tabs={tabs} value={history ? "history" : "available"} />
-      {body}
+      <DetailTabs push tabs={tabs} value={history ? "history" : "available"}>
+        {body}
+      </DetailTabs>
     </Page>
   );
 }

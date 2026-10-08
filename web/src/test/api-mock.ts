@@ -78,7 +78,7 @@ export function mockApi(overrides: Routes = {}) {
     calls.push({ method: req.method, url, headers: req.headers, request: req.clone() });
     const r = routes[`${req.method} ${url.pathname}`] ?? (req.method === "GET" ? routes[url.pathname] : undefined) ?? routes[url.pathname];
     if (r === undefined) return new Response(JSON.stringify({ title: "Not Found", detail: "not found" }), { status: 404, headers: { "Content-Type": "application/json" } });
-    const body = typeof r === "function" ? (r as (u: URL) => unknown)(url) : r;
+    const body = typeof r === "function" ? await (r as (u: URL) => unknown)(url) : r;
     if (body instanceof Response) return body;
     return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
   });

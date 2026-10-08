@@ -965,6 +965,8 @@ export interface components {
             /** @description Empty for an organization */
             repo: string;
             repositories_seen?: string[] | null;
+            /** Format: int64 */
+            repositories_seen_total?: number;
             scale_sets: string[] | null;
             /** Format: int64 */
             succeeded_24h: number;

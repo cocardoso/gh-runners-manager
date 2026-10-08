@@ -71,7 +71,7 @@ const en = {
       "7d": "Last 7 days",
     },
     inProgressEmpty: {
-      title: "No job is running",
+      title: "No job in progress",
       description: "Jobs appear here while they wait for an environment or run. Finished jobs move to the history.",
       link: "See the job history",
     },
@@ -224,7 +224,7 @@ export const overview: Record<Locale, typeof en> = {
         "7d": "Últimos 7 dias",
       },
       inProgressEmpty: {
-        title: "Nenhum job em execução",
+        title: "Nenhum job em andamento",
         description: "Os jobs aparecem aqui enquanto aguardam um ambiente ou executam. Jobs concluídos vão para o histórico.",
         link: "Ver o histórico de jobs",
       },
@@ -374,7 +374,7 @@ export const overview: Record<Locale, typeof en> = {
         "7d": "Últimos 7 días",
       },
       inProgressEmpty: {
-        title: "Ningún job en ejecución",
+        title: "Ningún job en curso",
         description: "Los jobs aparecen aquí mientras esperan un entorno o se ejecutan. Los jobs terminados pasan al historial.",
         link: "Ver el historial de jobs",
       },
@@ -674,7 +674,7 @@ export const overview: Record<Locale, typeof en> = {
         "7d": "Ultimi 7 giorni",
       },
       inProgressEmpty: {
-        title: "Nessun job in esecuzione",
+        title: "Nessun job in corso",
         description: "I job compaiono qui mentre attendono un ambiente o sono in esecuzione. I job terminati passano nella cronologia.",
         link: "Vedi la cronologia dei job",
       },

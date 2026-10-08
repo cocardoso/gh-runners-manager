@@ -24,6 +24,7 @@ const en = {
     noMatchDescription: "Change or clear the filters.",
     failedAt: "at {stage}: {reason}",
     kept: "kept for debugging",
+    removing: "being removed",
     keptUntil: "kept for debugging until {time}",
     pending: { one: "{n} new — move the pointer away to show it", other: "{n} new — move the pointer away to show them" },
     count: { one: "{n} environment", other: "{n} environments" },
@@ -43,8 +44,8 @@ const en = {
     filter: {
       scaleSet: "Scale set",
       outcome: "Outcome",
-      failed: "Failed",
-      clean: "Ended normally",
+      failed: "Environment failed",
+      clean: "Environment ended normally",
     },
   },
   detail: {
@@ -179,6 +180,7 @@ export const environments: Record<Locale, typeof en> = {
       noMatchDescription: "Altere ou limpe os filtros.",
       failedAt: "em {stage}: {reason}",
       kept: "mantido para depuração",
+      removing: "sendo removido",
       keptUntil: "mantido para depuração até {time}",
       pending: { one: "{n} novo — afaste o ponteiro para exibi-lo", other: "{n} novos — afaste o ponteiro para exibi-los" },
       count: { one: "{n} ambiente", other: "{n} ambientes" },
@@ -198,8 +200,8 @@ export const environments: Record<Locale, typeof en> = {
       filter: {
         scaleSet: "Scale set",
         outcome: "Resultado",
-        failed: "Com falha",
-        clean: "Terminaram normalmente",
+        failed: "Ambiente falhou",
+        clean: "Ambiente terminou normalmente",
       },
     },
     detail: {
@@ -331,6 +333,7 @@ export const environments: Record<Locale, typeof en> = {
       noMatchDescription: "Cambia o borra los filtros.",
       failedAt: "en {stage}: {reason}",
       kept: "conservado para depuración",
+      removing: "eliminándose",
       keptUntil: "conservado para depuración hasta las {time}",
       pending: { one: "{n} nuevo — aparta el puntero para mostrarlo", other: "{n} nuevos — aparta el puntero para mostrarlos" },
       count: { one: "{n} entorno", other: "{n} entornos" },
@@ -350,8 +353,8 @@ export const environments: Record<Locale, typeof en> = {
       filter: {
         scaleSet: "Scale set",
         outcome: "Resultado",
-        failed: "Fallidos",
-        clean: "Terminaron con normalidad",
+        failed: "El entorno falló",
+        clean: "El entorno terminó con normalidad",
       },
     },
     detail: {
@@ -483,6 +486,7 @@ export const environments: Record<Locale, typeof en> = {
       noMatchDescription: "Modifiez ou effacez les filtres.",
       failedAt: "à l'étape {stage} : {reason}",
       kept: "conservé pour le débogage",
+      removing: "en cours de suppression",
       keptUntil: "conservé pour le débogage jusqu'à {time}",
       pending: { one: "{n} nouveau — éloignez le pointeur pour l'afficher", other: "{n} nouveaux — éloignez le pointeur pour les afficher" },
       count: { one: "{n} environnement", other: "{n} environnements" },
@@ -502,8 +506,8 @@ export const environments: Record<Locale, typeof en> = {
       filter: {
         scaleSet: "Scale set",
         outcome: "Issue",
-        failed: "En échec",
-        clean: "Terminés normalement",
+        failed: "Environnement en échec",
+        clean: "Environnement terminé normalement",
       },
     },
     detail: {
@@ -635,6 +639,7 @@ export const environments: Record<Locale, typeof en> = {
       noMatchDescription: "Modifica o cancella i filtri.",
       failedAt: "in {stage}: {reason}",
       kept: "conservato per il debug",
+      removing: "in rimozione",
       keptUntil: "conservato per il debug fino alle {time}",
       pending: { one: "{n} nuovo — sposta il puntatore per mostrarlo", other: "{n} nuovi — sposta il puntatore per mostrarli" },
       count: { one: "{n} ambiente", other: "{n} ambienti" },
@@ -654,8 +659,8 @@ export const environments: Record<Locale, typeof en> = {
       filter: {
         scaleSet: "Scale set",
         outcome: "Esito",
-        failed: "Non riusciti",
-        clean: "Terminati normalmente",
+        failed: "Ambiente non riuscito",
+        clean: "Ambiente terminato normalmente",
       },
     },
     detail: {

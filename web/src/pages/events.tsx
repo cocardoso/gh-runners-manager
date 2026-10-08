@@ -51,7 +51,7 @@ function Row({ e }: { e: ApiEvent }) {
 }
 
 /** The global event stream, filterable and pausable, like Workers Logs' live view. */
-export function LiveLogsPage() {
+export function EventsPage() {
   const search = useSearch({ strict: false }) as ListSearch;
   const navigate = useNavigate();
   const t = useT();

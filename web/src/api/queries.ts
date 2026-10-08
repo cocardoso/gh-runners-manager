@@ -62,7 +62,7 @@ export function useScaleSets() {
   return useQuery({ queryKey: ["scale-sets"], queryFn: async () => unwrap(await api.GET("/api/v1/scale-sets")).scale_sets ?? [] });
 }
 
-/** Jobs change these counts without an event of their own, so the list refreshes on a timer. */
+/** Job and scale set events refresh the list; the timer also keeps the 24 h window moving. */
 export function useRepositories() {
   return useQuery({
     queryKey: ["repositories"],

@@ -52,8 +52,9 @@ export function JobsPage() {
   ];
   return (
     <Page title={t("overview.jobs.title")} description={t("overview.jobs.description")}>
-      <DetailTabs push tabs={tabs} value={history ? "history" : "now"} />
-      {history ? <JobHistory search={search} /> : <JobsInProgress search={search} />}
+      <DetailTabs push tabs={tabs} value={history ? "history" : "now"}>
+        {history ? <JobHistory search={search} /> : <JobsInProgress search={search} />}
+      </DetailTabs>
     </Page>
   );
 }

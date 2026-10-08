@@ -53,7 +53,7 @@ test("the default tab lists only assigned and running jobs", async () => {
 test("explains when no job is in progress and links to the history", async () => {
   mockApi({ "/api/v1/jobs": jobsRoute(jobs.filter((j) => j.status === "completed")) });
   renderApp("/jobs");
-  expect(await screen.findByText("No job is running")).toBeInTheDocument();
+  expect(await screen.findByText("No job in progress")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "See the job history" })).toHaveAttribute("href", "/jobs?tab=history");
 });
 

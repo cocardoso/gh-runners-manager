@@ -4,7 +4,7 @@ import { ClockCounterClockwiseIcon, CubeIcon, FunnelSimpleIcon } from "@phosphor
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { Environment, Job } from "@/api/client";
 import { useEnvironments, useJobs, useScaleSets } from "@/api/queries";
-import { ErrorState, Loading, Page, RelativeTime, Truncate } from "@/components/common";
+import { ErrorState, Loading, Page, RelativeTime, Truncate, useNow } from "@/components/common";
 import { DetailTabs } from "@/components/detail-tabs";
 import { EnvironmentStateBadge, JobStatusBadge } from "@/components/status-badge";
 import { ListToolbar } from "@/components/list-toolbar";
@@ -21,18 +21,24 @@ const LIVE = ["pending", "provisioning", "booting", "connected", "idle", "runnin
 
 type Tab = "running" | "history";
 
-function formatClock(t: Date) {
-  return new Intl.DateTimeFormat(currentFormatLocale(), { hour: "2-digit", minute: "2-digit", hour12: false }).format(t);
+// The language's own clock (12 or 24 h), with the day when it is not today.
+function formatUntil(t: Date, now: number) {
+  const today = new Date(now).toDateString() === t.toDateString();
+  return new Intl.DateTimeFormat(currentFormatLocale(), today ? { hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(t);
 }
 
-/** A failed environment stays until its scale set's keep_on_failure_minutes have passed since it failed. */
-function KeptBadge({ env, keepMinutes }: { env: Environment; keepMinutes: number | undefined }) {
+/** A failed environment stays until its scale set's keep_on_failure_minutes have passed
+ * since it failed (the reaper's rule); past that, or without its scale set, it is going. */
+function KeptBadge({ env, keepMinutes, known }: { env: Environment; keepMinutes: number | undefined; known: boolean }) {
   const t = useT();
+  const now = useNow();
   const failedAt = Date.parse(env.state_changed_at);
-  const label =
-    keepMinutes && keepMinutes > 0 && Number.isFinite(failedAt)
-      ? t("environments.list.keptUntil", { time: formatClock(new Date(failedAt + keepMinutes * 60_000)) })
-      : t("environments.list.kept");
+  const until = keepMinutes !== undefined && Number.isFinite(failedAt) ? failedAt + keepMinutes * 60_000 : undefined;
+  const label = !known
+    ? t("environments.list.kept")
+    : until === undefined || keepMinutes === 0 || until <= now.getTime()
+      ? t("environments.list.removing")
+      : t("environments.list.keptUntil", { time: formatUntil(new Date(until), now.getTime()) });
   return (
     <Badge variant="warning" appearance="dot" className="whitespace-nowrap">
       {label}
@@ -72,7 +78,7 @@ export function EnvironmentsPage() {
 
   const all = useMemo(() => envs.data ?? [], [envs.data]);
   const jobsById = useMemo(() => new Map((jobs.data ?? []).map((j) => [j.id, j])), [jobs.data]);
-  const keepMinutes = useMemo(() => new Map((sets.data ?? []).map((s) => [s.name, s.settings?.keep_on_failure_minutes])), [sets.data]);
+  const keepMinutes = useMemo(() => new Map((sets.data ?? []).map((s) => [s.name, s.settings?.keep_on_failure_minutes ?? 0])), [sets.data]);
   const filtered = useMemo(() => {
     const q = search.q?.toLowerCase();
     const states = new Set(tab === "history" ? ["destroyed"] : LIVE);
@@ -86,7 +92,8 @@ export function EnvironmentsPage() {
     // History reads newest ending first.
     return tab === "history" ? list.toSorted((a, b) => Date.parse(b.state_changed_at) - Date.parse(a.state_changed_at)) : list;
   }, [all, search, tab]);
-  const page = search.page ?? 1;
+  // Live lists shrink: never past the last page.
+  const page = Math.min(search.page ?? 1, Math.max(1, Math.ceil(filtered.length / PER_PAGE)));
   const { rows, pending } = useFrozenOrder(filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE), (e) => e.id, hovering);
   const scaleSets = Object.fromEntries([...new Set([...(sets.data ?? []).map((s) => s.name), ...all.map((e) => e.scale_set)])].sort().map((s) => [s, s]));
 
@@ -113,7 +120,7 @@ export function EnvironmentsPage() {
             <Table.Cell>
               <div className="flex flex-wrap items-center gap-1.5">
                 <EnvironmentStateBadge state={e.state} />
-                {e.state === "failed" && <KeptBadge env={e} keepMinutes={keepMinutes.get(e.scale_set)} />}
+                {e.state === "failed" && <KeptBadge env={e} keepMinutes={keepMinutes.get(e.scale_set)} known={sets.data !== undefined} />}
               </div>
             </Table.Cell>
             <Table.Cell>{e.scale_set}</Table.Cell>
@@ -179,7 +186,9 @@ export function EnvironmentsPage() {
   );
 
   let body;
-  if (envs.isLoading) body = <Loading />;
+  // While the other tab's list loads, its placeholder is this tab's data: show loading,
+  // not a list (or an empty state) that is not true.
+  if (envs.isLoading || envs.isPlaceholderData) body = <Loading />;
   else if (envs.error) body = <ErrorState error={envs.error} />;
   else if (all.filter((e) => (tab === "history" ? e.state === "destroyed" : LIVE.includes(e.state))).length === 0 && !search.scale_set)
     body =
@@ -231,18 +240,19 @@ export function EnvironmentsPage() {
 
   return (
     <Page title={t("environments.list.title")} description={t("environments.list.description")}>
-      <DetailTabs push tabs={tabs} value={tab} />
-      <ListToolbar
-        search={search.q ?? ""}
-        onSearch={(q) => set({ q: q || undefined })}
-        searchLabel={t("environments.list.search")}
-        filters={filters}
-        onFilter={(key, value) => set({ [key]: value })}
-        onClear={() => void navigate({ to: "/environments", search: tab === "history" ? { tab } : {}, replace: true })}
-      />
-      <LayerCard>
-        <LayerCard.Primary className="p-0">{body}</LayerCard.Primary>
-      </LayerCard>
+      <DetailTabs push tabs={tabs} value={tab}>
+        <ListToolbar
+          search={search.q ?? ""}
+          onSearch={(q) => set({ q: q || undefined })}
+          searchLabel={t("environments.list.search")}
+          filters={filters}
+          onFilter={(key, value) => set({ [key]: value })}
+          onClear={() => void navigate({ to: "/environments", search: tab === "history" ? { tab } : {}, replace: true })}
+        />
+        <LayerCard>
+          <LayerCard.Primary className="p-0">{body}</LayerCard.Primary>
+        </LayerCard>
+      </DetailTabs>
     </Page>
   );
 }

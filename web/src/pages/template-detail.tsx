@@ -37,7 +37,10 @@ interface Fidelity {
   note?: string;
 }
 
-const crumbs = () => [{ label: tr("templates.title"), href: "/templates" }];
+// A template that no longer exists belongs to the build history.
+const crumbs = (state?: string) => [
+  { label: tr("templates.title"), href: state && ["failed", "deleted", "retired"].includes(state) ? "/templates?tab=history" : "/templates" },
+];
 const PIPELINE = ["building", "creating", "verifying", "ready", "active"] as const;
 
 function Pipeline({ state }: { state: string }) {
@@ -215,11 +218,14 @@ function FidelityTab({ fid }: { fid: Fidelity }) {
 export function TemplateDetailPage() {
   const tl = useT();
   const { id } = useParams({ strict: false }) as { id: string };
-  const { tab = "build" } = useSearch({ strict: false }) as DetailSearch;
+  const search = useSearch({ strict: false }) as DetailSearch;
   const tpl = useTemplate(id);
   const settings = useSettings();
   const admin = useAdminAction();
 
+  // A build in progress or a failed one opens on its log; a version that exists opens on its details.
+  const defaultTab = !tpl.data || ["building", "creating", "verifying", "failed"].includes(tpl.data.state) ? "build" : "details";
+  const tab = search.tab ?? defaultTab;
   if (tpl.isLoading) return <Page title={tl("templates.detail.title")} crumbs={crumbs()}><Loading /></Page>;
   if (tpl.error instanceof ApiError && tpl.error.status === 404)
     return (
@@ -246,7 +252,7 @@ export function TemplateDetailPage() {
           ? tl("templates.detail.bootstrapDescription")
           : `ubuntu-slim ${t.slim_release} · runner ${t.runner_version} · layer ${t.layer_version}`
       }
-      crumbs={crumbs()}
+      crumbs={crumbs(t.state)}
       actions={
         <>
           <TemplateStateBadge state={t.state} />
@@ -259,32 +265,33 @@ export function TemplateDetailPage() {
         <Banner variant="error" icon={<XCircleIcon weight="fill" />} title={tl("templates.detail.failedAt", { stage: t.failure_stage ?? "" })} description={t.failure_reason} />
       )}
       {!t.bootstrap && <Pipeline state={t.state} />}
-      <DetailTabs tabs={tabs} value={tabs.some((x) => x.value === tab) ? tab : "build"} />
-      {tab === "verification" ? (
-        <VerificationTab t={t} fid={fid} />
-      ) : tab === "fidelity" ? (
-        <FidelityTab fid={fid} />
-      ) : tab === "details" ? (
-        <LayerCard>
-          <LayerCard.Primary className="p-0">
-            <DefinitionList
-              items={[
-                [tl("templates.detail.fields.state"), <TemplateStateBadge key="s" state={t.state} />],
-                [tl("templates.detail.fields.vmid"), t.vmid ? String(t.vmid) : "—"],
-                [tl("templates.detail.fields.trigger"), t.trigger ?? "—"],
-                [tl("templates.detail.fields.sha"), t.archive_sha256 ? <span className="font-mono text-xs break-all">{t.archive_sha256}</span> : "—"],
-                [tl("templates.detail.fields.size"), formatBytes(t.size_bytes)],
-                [tl("templates.detail.fields.pinned"), t.pinned ? tl("templates.detail.fields.yes") : tl("templates.detail.fields.no")],
-                [tl("templates.detail.fields.inUse"), t.in_use ? tl("templates.detail.fields.yes") : tl("templates.detail.fields.no")],
-                [tl("templates.detail.fields.created"), <RelativeTime key="c" value={t.created_at} />],
-                [tl("templates.detail.fields.activated"), <RelativeTime key="a" value={t.activated_at} />],
-              ]}
-            />
-          </LayerCard.Primary>
-        </LayerCard>
-      ) : (
-        <BuildTab t={t} />
-      )}
+      <DetailTabs tabs={tabs} value={tabs.some((x) => x.value === tab) ? tab : defaultTab} defaultValue={defaultTab}>
+        {tab === "verification" ? (
+          <VerificationTab t={t} fid={fid} />
+        ) : tab === "fidelity" ? (
+          <FidelityTab fid={fid} />
+        ) : tab === "details" ? (
+          <LayerCard>
+            <LayerCard.Primary className="p-0">
+              <DefinitionList
+                items={[
+                  [tl("templates.detail.fields.state"), <TemplateStateBadge key="s" state={t.state} />],
+                  [tl("templates.detail.fields.vmid"), t.vmid ? String(t.vmid) : "—"],
+                  [tl("templates.detail.fields.trigger"), t.trigger ?? "—"],
+                  [tl("templates.detail.fields.sha"), t.archive_sha256 ? <span className="font-mono text-xs break-all">{t.archive_sha256}</span> : "—"],
+                  [tl("templates.detail.fields.size"), formatBytes(t.size_bytes)],
+                  [tl("templates.detail.fields.pinned"), t.pinned ? tl("templates.detail.fields.yes") : tl("templates.detail.fields.no")],
+                  [tl("templates.detail.fields.inUse"), t.in_use ? tl("templates.detail.fields.yes") : tl("templates.detail.fields.no")],
+                  [tl("templates.detail.fields.created"), <RelativeTime key="c" value={t.created_at} />],
+                  [tl("templates.detail.fields.activated"), <RelativeTime key="a" value={t.activated_at} />],
+                ]}
+              />
+            </LayerCard.Primary>
+          </LayerCard>
+        ) : (
+          <BuildTab t={t} />
+        )}
+      </DetailTabs>
     </Page>
   );
 }

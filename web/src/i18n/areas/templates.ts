@@ -248,7 +248,7 @@ export const templates: Record<Locale, typeof en> = {
     history: {
       columns: { versions: "Versões", outcome: "Resultado", reason: "Motivo", when: "Quando" },
       replaced: "Substituído por uma versão mais nova",
-      retired: "Aposentado",
+      retired: "Descontinuado",
       empty: { title: "Nenhum build no histórico", description: "Builds que falharam e versões substituídas ou aposentadas aparecem aqui." },
     },
     columns: { version: "Versão", runner: "Runner", layer: "Layer", size: "Tamanho", created: "Criado", actions: "Ações" },

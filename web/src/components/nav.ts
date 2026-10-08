@@ -21,7 +21,7 @@ export const navGroups = [
     items: [
       { href: "/jobs", labelKey: "shell.nav.jobs", icon: BriefcaseIcon },
       { href: "/environments", labelKey: "shell.nav.environments", icon: CubeIcon },
-      { href: "/logs", labelKey: "shell.nav.liveLogs", icon: TerminalWindowIcon },
+      { href: "/logs", labelKey: "shell.nav.events", icon: TerminalWindowIcon },
     ],
   },
   { id: "system", items: [{ href: "/settings", labelKey: "shell.nav.settings", icon: GearSixIcon }] },

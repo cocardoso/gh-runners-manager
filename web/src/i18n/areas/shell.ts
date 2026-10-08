@@ -8,7 +8,7 @@ const en = {
     scaleSets: "Scale sets",
     templates: "Templates",
     repositories: "Repositories",
-    liveLogs: "Events",
+    events: "Events",
     settings: "Settings",
     groups: {
       inventory: "Inventory",
@@ -146,7 +146,7 @@ export const shell: Record<Locale, typeof en> = {
       scaleSets: "Scale sets",
       templates: "Templates",
       repositories: "Repositórios",
-      liveLogs: "Eventos",
+      events: "Eventos",
       settings: "Configurações",
       groups: {
         inventory: "Inventário",
@@ -281,7 +281,7 @@ export const shell: Record<Locale, typeof en> = {
       scaleSets: "Scale sets",
       templates: "Templates",
       repositories: "Repositorios",
-      liveLogs: "Eventos",
+      events: "Eventos",
       settings: "Configuración",
       groups: {
         inventory: "Inventario",
@@ -416,7 +416,7 @@ export const shell: Record<Locale, typeof en> = {
       scaleSets: "Scale sets",
       templates: "Templates",
       repositories: "Dépôts",
-      liveLogs: "Événements",
+      events: "Événements",
       settings: "Paramètres",
       groups: {
         inventory: "Inventaire",
@@ -551,7 +551,7 @@ export const shell: Record<Locale, typeof en> = {
       scaleSets: "Scale set",
       templates: "Template",
       repositories: "Repository",
-      liveLogs: "Eventi",
+      events: "Eventi",
       settings: "Impostazioni",
       groups: {
         inventory: "Inventario",

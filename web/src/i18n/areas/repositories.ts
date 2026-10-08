@@ -4,7 +4,7 @@ const en = {
   title: "Repositories",
   description: "The GitHub repositories and organizations the scale sets serve.",
   organization: "Organization",
-  seen: "Seen in 7 days: {list}",
+  seen: "Seen in the last 7 days: {list}",
   more: { one: "+{n} more", other: "+{n} more" },
   columns: {
     repository: "Repository",
@@ -31,7 +31,7 @@ export const repositories: Record<Locale, typeof en> = {
     title: "Repositórios",
     description: "Os repositórios e organizações do GitHub que os scale sets atendem.",
     organization: "Organização",
-    seen: "Vistos em 7 dias: {list}",
+    seen: "Vistos nos últimos 7 dias: {list}",
     more: { one: "+{n} outro", other: "+{n} outros" },
     columns: {
       repository: "Repositório",
@@ -55,7 +55,7 @@ export const repositories: Record<Locale, typeof en> = {
     title: "Repositorios",
     description: "Los repositorios y organizaciones de GitHub que atienden los scale sets.",
     organization: "Organización",
-    seen: "Vistos en 7 días: {list}",
+    seen: "Vistos en los últimos 7 días: {list}",
     more: { one: "+{n} más", other: "+{n} más" },
     columns: {
       repository: "Repositorio",
@@ -79,7 +79,7 @@ export const repositories: Record<Locale, typeof en> = {
     title: "Dépôts",
     description: "Les dépôts et organisations GitHub que servent les scale sets.",
     organization: "Organisation",
-    seen: "Vus sur 7 jours : {list}",
+    seen: "Vus ces 7 derniers jours : {list}",
     more: { one: "+{n} autre", other: "+{n} autres" },
     columns: {
       repository: "Dépôt",
@@ -103,7 +103,7 @@ export const repositories: Record<Locale, typeof en> = {
     title: "Repository",
     description: "I repository e le organizzazioni GitHub serviti dagli scale set.",
     organization: "Organizzazione",
-    seen: "Visti in 7 giorni: {list}",
+    seen: "Visti negli ultimi 7 giorni: {list}",
     more: { one: "+{n} altro", other: "+{n} altri" },
     columns: {
       repository: "Repository",

@@ -34,6 +34,8 @@ type Repository struct {
 	LastJob      *RepositoryJob `json:"last_job,omitempty"`
 	// RepositoriesSeen (organizations only) are the repositories of the jobs of the last 7 days.
 	RepositoriesSeen []string `json:"repositories_seen,omitempty"`
+	// RepositoriesSeenTotal is how many there are (the list above is capped).
+	RepositoriesSeenTotal int `json:"repositories_seen_total,omitempty"`
 }
 
 // RepositoryJob is the most recent job of a repository or organization.
@@ -135,6 +137,7 @@ func repositories(ctx context.Context, d Deps, now time.Time) ([]Repository, err
 			r.RepositoriesSeen = append(r.RepositoriesSeen, name)
 		}
 		sort.Strings(r.RepositoriesSeen)
+		r.RepositoriesSeenTotal = len(r.RepositoriesSeen)
 		if len(r.RepositoriesSeen) > maxRepositoriesSeen {
 			r.RepositoriesSeen = r.RepositoriesSeen[:maxRepositoriesSeen]
 		}

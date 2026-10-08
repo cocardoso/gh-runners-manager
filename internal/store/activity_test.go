@@ -58,3 +58,11 @@ func TestScaleSetActivity(t *testing.T) {
 		t.Fatal("a scale set without jobs must be absent")
 	}
 }
+
+func TestJobsAreIndexedByScaleSet(t *testing.T) {
+	s := openTemp(t)
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'jobs_scale_set_updated'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("index count = %d, %v; the repositories view groups jobs by scale set on every refresh", n, err)
+	}
+}

@@ -147,6 +147,13 @@ describe("invalidationKeys", () => {
     expect(invalidationKeys(ev(1, "retention.cleaned"))).not.toEqual(expect.arrayContaining([["events"]])); // no query uses that key
   });
 
+  test("the repositories view follows jobs and history, and assigned jobs show at once", () => {
+    for (const kind of ["job.started", "job.completed", "retention.cleaned", "audit.environment_delete", "audit.scale_set_put", "audit.scale_set_delete"]) {
+      expect(invalidationKeys(ev(1, kind))).toEqual(expect.arrayContaining([["repositories"]]));
+    }
+    expect(invalidationKeys(ev(1, "scaleset.demand"))).toEqual(expect.arrayContaining([["jobs"], ["repositories"]]));
+  });
+
   test("unknown kinds refresh only the overview", () => {
     expect(invalidationKeys(ev(1, "something.else"))).toEqual([["overview"]]);
   });

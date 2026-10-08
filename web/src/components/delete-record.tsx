@@ -29,7 +29,7 @@ export function DeleteRecord({ kind, id }: { kind: keyof typeof kinds; id: strin
       else unwrap(await api.DELETE("/api/v1/environments/{id}", { params: { path: { id } } }));
       setOpen(false);
       toast.add({ title: t("environments.deleteRecord.deleted"), description: id, variant: "success" });
-      for (const key of ["templates", "template", "environments", "environment", "jobs", "job", "stats", "overview"]) void qc.invalidateQueries({ queryKey: [key] });
+      for (const key of ["templates", "template", "environments", "environment", "jobs", "job", "stats", "overview", "repositories"]) void qc.invalidateQueries({ queryKey: [key] });
       // The record was history: show the history it was part of.
       void navigate({ to: k.back, search: { tab: "history" } });
     } catch (e) {

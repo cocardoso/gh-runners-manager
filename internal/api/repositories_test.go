@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -91,5 +92,37 @@ func TestListRepositoriesWithoutJobs(t *testing.T) {
 	r := out.Repositories[0]
 	if r["kind"] != "repository" || r["jobs_running"] != float64(0) || r["last_job"] != nil {
 		t.Fatalf("repository = %+v", r)
+	}
+}
+
+func TestListRepositoriesCountsEverySeenRepository(t *testing.T) {
+	h := newHarness(t, "")
+	ctx := context.Background()
+	if err := h.reg.PutCredential(ctx, "home", "github_pat_x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.reg.PutScaleSet(ctx, config.ScaleSet{Name: "org", URL: "https://github.com/acme", Credential: "home"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 60 {
+		j := store.Job{ID: fmt.Sprintf("j%d", i), ScaleSet: "org", Repository: fmt.Sprintf("acme/r%02d", i), Status: "completed", Result: "succeeded", FinishedAt: time.Now()}
+		if err := h.db.UpsertJob(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out struct {
+		Repositories []Repository `json:"repositories"`
+	}
+	if code := h.getJSON(t, "/api/v1/repositories", &out); code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	var org *Repository
+	for i := range out.Repositories {
+		if out.Repositories[i].Owner == "acme" {
+			org = &out.Repositories[i]
+		}
+	}
+	if org == nil || len(org.RepositoriesSeen) != 50 || org.RepositoriesSeenTotal != 60 {
+		t.Fatalf("org = %+v; the list is capped, its total is not", org)
 	}
 }
