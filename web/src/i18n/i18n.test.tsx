@@ -1,6 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { detectLocale, I18nProvider, translate, useI18n } from "./index";
 import { en } from "./en";
+import { formatRelative } from "@/lib/format";
 
 test("detects the browser language, regional variants included", () => {
   expect(detectLocale(null, ["pt-BR", "en"])).toBe("pt-BR");
@@ -53,4 +54,29 @@ test("switching the language re-renders, stores the choice and sets html lang", 
   expect(screen.getByRole("button")).toHaveTextContent(/^pt-BR:/);
   expect(localStorage.getItem("ghrm.locale")).toBe("pt-BR");
   expect(document.documentElement.lang).toBe("pt-BR");
+});
+
+const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+
+function Plain() {
+  // Uses no hook: only the remount on a language change updates it.
+  return <span data-testid="plain">{formatRelative(fiveMinutesAgo)}</span>;
+}
+
+function Switch() {
+  const { setLocale } = useI18n();
+  return <button onClick={() => setLocale("pt-BR")}>switch</button>;
+}
+
+test("text formatted outside React follows a language switch", () => {
+  localStorage.clear();
+  render(
+    <I18nProvider initial="en">
+      <Plain />
+      <Switch />
+    </I18nProvider>,
+  );
+  expect(screen.getByTestId("plain")).toHaveTextContent("5 min. ago");
+  act(() => screen.getByRole("button", { name: "switch" }).click());
+  expect(screen.getByTestId("plain")).toHaveTextContent("há 5 min.");
 });

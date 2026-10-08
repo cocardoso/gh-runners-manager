@@ -31,7 +31,7 @@ export function RelativeTime({ value, className }: { value: string | undefined; 
       content={formatAbsolute(value)}
       render={
         <time dateTime={value} className={cn("whitespace-nowrap", className)}>
-          {formatRelative(value, now)}
+          {formatRelative(value, undefined, now)}
         </time>
       }
     />

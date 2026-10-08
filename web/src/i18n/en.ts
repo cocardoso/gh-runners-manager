@@ -2,5 +2,7 @@
 export const en = {
   common: {
     loading: "Loading…",
+    notYet: "not yet",
+    language: "Language: {language}",
   },
 };

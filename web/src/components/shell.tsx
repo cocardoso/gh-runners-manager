@@ -10,6 +10,7 @@ import { GlobalSearch } from "./command-palette";
 import { LiveIndicator } from "./live-indicator";
 import { navItems } from "./nav";
 import { useTheme, type ThemePreference } from "@/lib/theme";
+import { LanguageMenu } from "./language-menu";
 
 function isActive(pathname: string, href: string) {
   return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
@@ -102,6 +103,7 @@ function AppShell({ username }: { username?: string }) {
             </button>
             <div className="ml-auto flex items-center gap-1">
               <LiveIndicator />
+              <LanguageMenu />
               <ThemeToggle />
               <AccountButton username={username} />
             </div>

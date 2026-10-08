@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { en } from "./en";
 import { locales, type Locale } from "./locales";
 import { ptBR } from "./pt-BR";
@@ -16,6 +16,20 @@ export type Key = Leaves<Messages>;
 export type Params = Record<string, string | number>;
 
 const catalogs: Record<Locale, Messages> = { en, "pt-BR": ptBR, es, fr, it };
+
+// The language in use, for code outside React (formatters, tooltips). The provider sets
+// it before its tree renders, and remounts the tree when it changes.
+let active: Locale = "en";
+
+/** The language in use. */
+export function currentLocale(): Locale {
+  return active;
+}
+
+/** Translates outside React, in the language in use. */
+export function tr(key: Key, params?: Params): string {
+  return translate(catalogs[active], en, active, key, params);
+}
 const STORAGE = "ghrm.locale";
 
 export function detectLocale(stored: string | null, languages: readonly string[]): Locale {
@@ -56,7 +70,10 @@ function readStored(): string | null {
 }
 
 export function I18nProvider({ children, initial }: { children: ReactNode; initial?: Locale }) {
-  const [locale, setState] = useState<Locale>(() => initial ?? detectLocale(readStored(), navigator.languages ?? [navigator.language]));
+  const [locale, setState] = useState<Locale>(() => {
+    active = initial ?? detectLocale(readStored(), navigator.languages ?? [navigator.language]);
+    return active;
+  });
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
@@ -67,10 +84,16 @@ export function I18nProvider({ children, initial }: { children: ReactNode; initi
       /* private mode: the choice lasts for this page */
     }
     document.documentElement.lang = l;
+    active = l;
     setState(l);
   }, []);
   const value = useMemo<Ctx>(() => ({ locale, setLocale, t: (key, params) => translate(catalogs[locale], en, locale, key, params) }), [locale, setLocale]);
-  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+  // A new language remounts the tree, so text formatted outside React follows too.
+  return (
+    <I18nContext.Provider value={value}>
+      <Fragment key={locale}>{children}</Fragment>
+    </I18nContext.Provider>
+  );
 }
 
 export function useI18n(): Ctx {

@@ -1,31 +1,36 @@
+import { currentLocale, tr } from "@/i18n";
+
 /** Go's zero time and missing values count as unset. */
 export function isSet(t: string | undefined | null): t is string {
   if (!t || t.startsWith("0001-01-01")) return false;
   return !Number.isNaN(Date.parse(t));
 }
 
-export function formatRelative(t: string | undefined, now: Date = new Date()): string {
+export function formatRelative(t: string | undefined, locale: string = currentLocale(), now: Date = new Date()): string {
   if (!isSet(t)) return "—";
   const s = Math.round((now.getTime() - Date.parse(t)) / 1000);
-  if (s < 0) return "in the future";
-  if (s < 30) return "just now";
-  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))} min ago`;
-  if (s < 86_400) return `${Math.floor(s / 3600)} h ago`;
-  return `${Math.floor(s / 86_400)} d ago`;
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto", style: "short" });
+  if (s < 30) return rtf.format(0, "second");
+  if (s < 3600) return rtf.format(-Math.max(1, Math.floor(s / 60)), "minute");
+  if (s < 86_400) return rtf.format(-Math.floor(s / 3600), "hour");
+  return rtf.format(-Math.floor(s / 86_400), "day");
 }
 
-export function formatAbsolute(t: string | undefined): string {
-  if (!isSet(t)) return "not yet";
-  return new Date(t).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" });
+export function formatAbsolute(t: string | undefined, locale: string = currentLocale(), unset = tr("common.notYet")): string {
+  if (!isSet(t)) return unset;
+  return new Date(t).toLocaleString(locale, { dateStyle: "medium", timeStyle: "medium" });
 }
 
-export function formatDuration(ms: number | undefined): string {
+const unit = (locale: string, u: "hour" | "minute" | "second", n: number) =>
+  new Intl.NumberFormat(locale, { style: "unit", unit: u, unitDisplay: "narrow" }).format(n);
+
+export function formatDuration(ms: number | undefined, locale: string = currentLocale()): string {
   if (ms === undefined || !Number.isFinite(ms) || ms < 0) return "—";
   const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
+  if (s < 60) return unit(locale, "second", s);
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
+  if (m < 60) return `${unit(locale, "minute", m)} ${unit(locale, "second", s % 60)}`;
+  return `${unit(locale, "hour", Math.floor(m / 60))} ${unit(locale, "minute", m % 60)}`;
 }
 
 export function durationBetween(from: string | undefined, to: string | undefined): number | undefined {
@@ -33,14 +38,17 @@ export function durationBetween(from: string | undefined, to: string | undefined
   return Date.parse(to) - Date.parse(from);
 }
 
-export function formatMB(mb: number): string {
-  if (mb < 1024) return `${mb} MB`;
-  const gb = mb / 1024;
-  return `${Number.isInteger(gb) ? gb : gb.toFixed(1)} GB`;
+export function formatMB(mb: number, locale: string = currentLocale()): string {
+  if (mb < 1024) return `${new Intl.NumberFormat(locale).format(mb)} MB`;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(mb / 1024)} GB`;
 }
 
-export function formatPercent(ratio: number): string {
-  return `${Math.round(ratio * 100)}%`;
+export function formatPercent(ratio: number, locale: string = currentLocale()): string {
+  return new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 }).format(ratio);
+}
+
+export function formatNumber(n: number, locale: string = currentLocale()): string {
+  return new Intl.NumberFormat(locale).format(n);
 }
 
 export function shortId(id: string): string {

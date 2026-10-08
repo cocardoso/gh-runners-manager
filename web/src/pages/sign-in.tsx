@@ -3,6 +3,7 @@ import { Banner, Button, Input, LayerCard, SensitiveInput } from "@cloudflare/ku
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "@/api/client";
 import { setCsrfToken } from "@/api/auth-state";
+import { LanguageMenu } from "@/components/language-menu";
 
 export const MIN_PASSWORD = 12;
 
@@ -15,7 +16,8 @@ function Centered({ title, description, children }: { title: string; description
         <LayerCard.Primary className="flex flex-col gap-4 p-6">
           <div className="flex items-center gap-2">
             <img src="/favicon.svg" alt="" className="size-7" />
-            <h1 className="text-lg font-semibold text-kumo-default">{title}</h1>
+            <h1 className="flex-1 text-lg font-semibold text-kumo-default">{title}</h1>
+            <LanguageMenu />
           </div>
           <p className="text-sm text-kumo-subtle">{description}</p>
           {children}
