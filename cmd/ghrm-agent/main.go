@@ -25,6 +25,17 @@ import (
 )
 
 func main() {
+	// The registry cache container runs the agent binary for its maintenance commands.
+	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "cache-") {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		err := cacheCommand(ctx, os.Args[1], os.Args[2:])
+		stop()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	environ := flag.String("environ", "/proc/1/environ", "file holding the bootstrap variables")
 	runnerDir := flag.String("runner-dir", "/home/runner/actions-runner", "runner install directory")
 	runnerUser := flag.String("runner-user", "runner", "user the runner runs as")
