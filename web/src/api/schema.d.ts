@@ -467,6 +467,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/template-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List template profiles and what they can change */
+        get: operations["list-template-profiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/template-profiles/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Create or change a template profile; its templates are rebuilt (admin) */
+        put: operations["put-template-profile"];
+        post?: never;
+        /** Delete a template profile no scale set uses; its templates are retired (admin) */
+        delete: operations["delete-template-profile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/templates": {
         parameters: {
             query?: never;
@@ -493,7 +528,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Build a new template version (admin) */
+        /** Build a new template version of a profile (admin) */
         post: operations["build-template"];
         delete?: never;
         options?: never;
@@ -583,6 +618,16 @@ export interface components {
             /** Format: date-time */
             time: string;
         };
+        "Build-templateRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/Build-templateRequest.json
+             */
+            readonly $schema?: string;
+            /** @description The template profile to build (default: default) */
+            profile?: string;
+        };
         Capacity: {
             /** Format: double */
             disk_max_percent: number;
@@ -666,6 +711,11 @@ export interface components {
             /** Format: int64 */
             templates: number;
             warning?: string;
+        };
+        Component: {
+            id: string;
+            needs?: string;
+            report: string[] | null;
         };
         CredentialView: {
             name: string;
@@ -945,6 +995,18 @@ export interface components {
             enabled: boolean;
             templates: components["schemas"]["Template"][] | null;
         };
+        ListOutBody1: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ListOutBody1.json
+             */
+            readonly $schema?: string;
+            /** @description What a profile can leave out of GitHub's recipe */
+            components: components["schemas"]["Component"][] | null;
+            profiles: components["schemas"]["TemplateProfile"][] | null;
+            toolcache_tools: string[] | null;
+        };
         LogStream: {
             /** Format: int64 */
             bytes: number;
@@ -1095,6 +1157,8 @@ export interface components {
             /** Format: int64 */
             memory_mb?: number;
             runner_group?: string;
+            /** @description The template profile its environments clone (default: default) */
+            template_profile?: string;
             /** @description https://github.com/<owner>[/<repo>] */
             url: string;
             /**
@@ -1220,6 +1284,7 @@ export interface components {
             in_use: boolean;
             layer_version?: string;
             pinned: boolean;
+            profile: string;
             /** @description Fidelity report: self-test checks and software report differences */
             report?: unknown;
             runner_version?: string;
@@ -1233,6 +1298,36 @@ export interface components {
             verify_environment_id?: string;
             /** Format: int64 */
             vmid: number;
+        };
+        TemplateProfile: {
+            active_template_id?: string;
+            /** @description Extra Ubuntu packages */
+            apt: string[] | null;
+            name: string;
+            /** @description Components of GitHub's recipe left out */
+            remove: string[] | null;
+            /** @description Run as root at the end of the build */
+            script?: string;
+            /** @description Versions preinstalled in the hosted tool cache, per tool */
+            toolcache: {
+                [key: string]: string[] | null;
+            };
+            /** @description Scale sets that clone this profile's template */
+            used_by: string[] | null;
+        };
+        TemplateProfileIn: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/TemplateProfileIn.json
+             */
+            readonly $schema?: string;
+            apt?: string[] | null;
+            remove?: string[] | null;
+            script?: string;
+            toolcache?: {
+                [key: string]: string[] | null;
+            };
         };
         TestOutBody: {
             /**
@@ -2226,6 +2321,97 @@ export interface operations {
             };
         };
     };
+    "list-template-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListOutBody1"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-template-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateProfileIn"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-template-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "list-templates": {
         parameters: {
             query?: never;
@@ -2262,7 +2448,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Build-templateRequest"];
+            };
+        };
         responses: {
             /** @description Accepted */
             202: {

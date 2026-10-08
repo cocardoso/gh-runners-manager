@@ -16,7 +16,7 @@ import (
 func TestTarHoldsTheLayerAndTheAgent(t *testing.T) {
 	var buf bytes.Buffer
 	agent := []byte("\x7fELF agent")
-	if err := Tar(&buf, bytes.NewReader(agent), int64(len(agent))); err != nil {
+	if err := Tar(&buf, bytes.NewReader(agent), int64(len(agent)), "#!/bin/bash\necho profile\n"); err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]*tar.Header{}
@@ -37,7 +37,7 @@ func TestTarHoldsTheLayerAndTheAgent(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "persist-env.sh", "mirrors.sh", "ghrm-agent"} {
+	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "persist-env.sh", "mirrors.sh", "toolcache.sh", "profile.sh", "ghrm-agent"} {
 		if got[name] == nil {
 			t.Fatalf("missing %s in %v", name, got)
 		}

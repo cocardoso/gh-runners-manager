@@ -303,15 +303,21 @@ function PlatformCard({ sets }: { sets: ScaleSet[] }) {
   const templates = useTemplates();
   const cache = useCache();
   const settings = useSettings();
-  const active = templates.data?.templates?.find((v) => v.state === "active");
+  const actives = (templates.data?.templates ?? []).filter((v) => v.state === "active" && v.slim_release);
+  const several = new Set(actives.map((v) => v.profile || "default")).size > 1;
   const listening = sets.filter((s) => s.listening).length;
   const rows: [string, ReactNode][] = [
     [
       t("overview.platform.template"),
-      active?.slim_release ? (
-        <span className="flex flex-wrap items-center gap-x-2">
-          <Link href={`/templates/${encodeURIComponent(active.id)}`}>{active.slim_release}</Link>
-          <RelativeTime className="text-kumo-subtle" value={active.activated_at} />
+      actives.length > 0 ? (
+        <span className="flex flex-col items-end gap-0.5">
+          {actives.map((active) => (
+            <span key={active.id} className="flex flex-wrap items-center justify-end gap-x-2">
+              {several && <span className="text-kumo-subtle">{active.profile || "default"}</span>}
+              <Link href={`/templates/${encodeURIComponent(active.id)}`}>{active.slim_release}</Link>
+              <RelativeTime className="text-kumo-subtle" value={active.activated_at} />
+            </span>
+          ))}
         </span>
       ) : (
         t("overview.platform.bootstrap")

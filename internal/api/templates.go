@@ -16,7 +16,10 @@ import (
 
 // TemplateService is what the API needs from the template service.
 type TemplateService interface {
-	Build(ctx context.Context, trigger string) (store.Template, error)
+	Build(ctx context.Context, trigger, profile string) (store.Template, error)
+	Profiles(ctx context.Context) ([]template.Profile, error)
+	PutProfile(ctx context.Context, p template.Profile) error
+	DeleteProfile(ctx context.Context, name string) error
 	Activate(ctx context.Context, id string) error
 	Pin(ctx context.Context, id string, pinned bool) error
 	Running(ctx context.Context) bool
@@ -27,6 +30,7 @@ type TemplateService interface {
 // Template is the API view of a template version.
 type Template struct {
 	ID            string          `json:"id"`
+	Profile       string          `json:"profile"`
 	SlimRelease   string          `json:"slim_release,omitempty"`
 	RunnerVersion string          `json:"runner_version,omitempty"`
 	LayerVersion  string          `json:"layer_version,omitempty"`
@@ -50,7 +54,7 @@ type Template struct {
 }
 
 func (d Deps) toTemplate(ctx context.Context, t store.Template) Template {
-	out := Template{ID: t.ID, SlimRelease: t.SlimRelease, RunnerVersion: t.RunnerVersion, LayerVersion: t.LayerVersion, State: t.State,
+	out := Template{ID: t.ID, Profile: t.Profile, SlimRelease: t.SlimRelease, RunnerVersion: t.RunnerVersion, LayerVersion: t.LayerVersion, State: t.State,
 		VMID: t.VMID, ArchiveSHA256: t.ArchiveSHA256, SizeBytes: t.SizeBytes, Pinned: t.Pinned, Active: t.State == store.TemplateActive,
 		Bootstrap: t.Trigger == "bootstrap", Trigger: t.Trigger, BuildEnvID: t.BuildEnvID, VerifyEnvID: t.VerifyEnvID,
 		FailureStage: t.FailureStage, FailureReason: t.FailureReason, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, ActivatedAt: t.ActivatedAt}
@@ -67,6 +71,8 @@ func templateError(err error) error {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return huma.Error404NotFound("template not found")
+	case errors.Is(err, template.ErrNoProfile):
+		return huma.Error404NotFound(err.Error())
 	case errors.Is(err, template.ErrBuildRunning), errors.Is(err, template.ErrNotReady):
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, template.ErrDisabled):
@@ -113,12 +119,20 @@ func registerTemplates(a huma.API, d Deps) {
 		})
 
 	huma.Register(a, huma.Operation{OperationID: "build-template", Method: http.MethodPost, Path: "/api/v1/templates/build",
-		Summary: "Build a new template version (admin)", Tags: []string{"templates"}, DefaultStatus: http.StatusAccepted},
-		func(ctx context.Context, _ *struct{}) (*struct{ Body Template }, error) {
+		Summary: "Build a new template version of a profile (admin)", Tags: []string{"templates"}, DefaultStatus: http.StatusAccepted},
+		func(ctx context.Context, in *struct {
+			Body *struct {
+				Profile string `json:"profile,omitempty" doc:"The template profile to build (default: default)"`
+			}
+		}) (*struct{ Body Template }, error) {
 			if d.Templates == nil {
 				return nil, templateError(template.ErrDisabled)
 			}
-			t, err := d.Templates.Build(context.WithoutCancel(ctx), "manual")
+			profile := ""
+			if in.Body != nil {
+				profile = in.Body.Profile
+			}
+			t, err := d.Templates.Build(context.WithoutCancel(ctx), "manual", profile)
 			if err != nil {
 				return nil, templateError(err)
 			}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cocardoso/gh-runners-manager/internal/config"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 	"github.com/cocardoso/gh-runners-manager/internal/template"
 )
@@ -14,17 +15,35 @@ import (
 type fakeTemplates struct {
 	running   bool
 	built     int
+	builtFor  []string
 	activated []string
 	pinned    map[string]bool
+	profiles  []template.Profile
+	deleted   []string
 	err       error
 }
 
-func (f *fakeTemplates) Build(context.Context, string) (store.Template, error) {
+func (f *fakeTemplates) Build(_ context.Context, _, profile string) (store.Template, error) {
 	if f.err != nil {
 		return store.Template{}, f.err
 	}
 	f.built++
-	return store.Template{ID: "new", State: store.TemplateBuilding}, nil
+	f.builtFor = append(f.builtFor, profile)
+	return store.Template{ID: "new", State: store.TemplateBuilding, Profile: profile}, nil
+}
+func (f *fakeTemplates) Profiles(context.Context) ([]template.Profile, error) {
+	return append([]template.Profile{template.DefaultProfile()}, f.profiles...), nil
+}
+func (f *fakeTemplates) PutProfile(_ context.Context, p template.Profile) error {
+	f.profiles = append(f.profiles, p.Normalize())
+	return nil
+}
+func (f *fakeTemplates) DeleteProfile(_ context.Context, name string) error {
+	if name == "default" {
+		return template.ErrDefaultProfile
+	}
+	f.deleted = append(f.deleted, name)
+	return nil
 }
 func (f *fakeTemplates) Activate(_ context.Context, id string) error {
 	if f.err != nil {
@@ -113,5 +132,59 @@ func TestTemplatesListAndActions(t *testing.T) {
 	ft.err = store.ErrNotFound
 	if code := post(t, h.srv.URL+"/api/v1/templates/zzz/activate", "admin"); code != http.StatusNotFound {
 		t.Fatalf("activate missing = %d", code)
+	}
+}
+
+func TestTemplateProfileEndpoints(t *testing.T) {
+	ft := &fakeTemplates{}
+	h := newHarnessWith(t, "admin", func(d *Deps) { d.Templates = ft })
+	admin := map[string]string{"Authorization": "Bearer admin"}
+
+	// Building a profile names it; without a body the default profile is built.
+	if resp, b := h.call(t, "POST", "/api/v1/templates/build", map[string]string{"profile": "lean"}, admin); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("build lean = %d %s", resp.StatusCode, b)
+	}
+	if code := post(t, h.srv.URL+"/api/v1/templates/build", "admin"); code != http.StatusAccepted || strings.Join(ft.builtFor, ",") != "lean," {
+		t.Fatalf("builds = %d %v", code, ft.builtFor)
+	}
+
+	body := map[string]any{"remove": []string{"aws-tools"}, "toolcache": map[string][]string{"node": {"22"}}, "apt": []string{"zip"}}
+	if resp, b := h.call(t, "PUT", "/api/v1/template-profiles/lean", body, admin); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("put = %d %s", resp.StatusCode, b)
+	}
+	if resp, _ := h.call(t, "PUT", "/api/v1/template-profiles/bad", map[string]any{"remove": []string{"docker-cli"}}, admin); resp.StatusCode != 422 {
+		t.Fatalf("invalid profile = %d, want 422", resp.StatusCode)
+	}
+	if resp, _ := h.call(t, "PUT", "/api/v1/template-profiles/lean", body, nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("put without credentials = %d", resp.StatusCode)
+	}
+	var list struct {
+		Profiles   []TemplateProfile `json:"profiles"`
+		Components []map[string]any  `json:"components"`
+	}
+	if code := h.getJSON(t, "/api/v1/template-profiles", &list); code != 200 || len(list.Profiles) != 2 || len(list.Components) == 0 {
+		t.Fatalf("list = %d %+v", code, list)
+	}
+	if def := list.Profiles[0]; def.Name != "default" || strings.Join(def.Toolcache["node"], ",") != "22,24" || def.UsedBy == nil {
+		t.Fatalf("default profile = %+v", def)
+	}
+
+	if resp, _ := h.call(t, "DELETE", "/api/v1/template-profiles/default", nil, admin); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("delete default = %d, want 409", resp.StatusCode)
+	}
+	if resp, _ := h.call(t, "DELETE", "/api/v1/template-profiles/lean", nil, admin); resp.StatusCode != http.StatusNoContent || ft.deleted[0] != "lean" {
+		t.Fatalf("delete lean = %d", resp.StatusCode)
+	}
+}
+
+func TestATemplateProfileInUseIsNotDeleted(t *testing.T) {
+	ft := &fakeTemplates{}
+	h := newHarnessWith(t, "admin", func(d *Deps) {
+		d.Templates = ft
+		d.Config.ScaleSets = append(d.Config.ScaleSets, config.ScaleSet{Name: "fast", TemplateProfile: "lean"})
+	})
+	resp, b := h.call(t, "DELETE", "/api/v1/template-profiles/lean", nil, map[string]string{"Authorization": "Bearer admin"})
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(b), "fast") {
+		t.Fatalf("delete a used profile = %d %s, want 409 naming the scale set", resp.StatusCode, b)
 	}
 }

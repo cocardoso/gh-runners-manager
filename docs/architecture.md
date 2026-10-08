@@ -177,7 +177,7 @@ sequenceDiagram
 
 ## 1c. Editable settings
 
-Credentials and scale sets come from two places: `ghrm.yaml` (read-only in the UI) and the UI (stored in SQLite; tokens sealed in the vault under `github/<name>`). A change applies without a restart.
+Credentials and scale sets come from two places: `ghrm.yaml` (read-only in the UI) and the UI (stored in SQLite; tokens sealed in the vault under `github/<name>`). A change applies without a restart. Template profiles are edited in the UI only (table `template_profiles`); a profile a scale set uses cannot be deleted, and the default one always exists.
 
 ```mermaid
 flowchart LR
@@ -457,9 +457,11 @@ Yellow packages are test doubles; `internal/demo` uses the fake runtime to serve
 
 ## 7. Template pipeline
 
-A build clones the **active template** into a builder environment (it already has Docker, systemd and `ghrm-agent`), because the Proxmox API cannot run commands inside a fresh stock container. The very first template is the bootstrap template (`proxmox.template_vmid`), which the installer creates. Since the builder runs the active template's agent, which can be older than the control plane, it first replaces itself with the control plane's agent, so fixes to the build take effect in the next build.
+Templates come in **profiles**. A profile says what of GitHub's recipe to leave out (its optional install scripts: the cloud CLIs, nvm, Node.js and Python on the PATH, yq, zstd, ...), what to preinstall in the hosted tool cache (Node.js, Python and Go versions, from the actions/*-versions manifests, so `actions/setup-*` finds them instead of downloading them in every job), extra Ubuntu packages and a build script. The `default` profile always exists: GitHub's recipe unchanged, plus Node.js 22 and 24 in the tool cache. Each profile has its own versions, one active at a time; a scale set picks its profile (`template_profile`) and clones that profile's active version, or the default profile's until it has one. The checker walks the profiles in order and builds one at a time: a profile is rebuilt when a release changes or its layer version does, which hashes the layer files, the agent, the cache settings and the profile. Leaving tools out shortens builds and saves disk; jobs do not start faster, as clones are linked.
 
-The fidelity report compares the template's software report with the one GitHub publishes as an asset of the same `ubuntu-slim` release (the recipe's `ubuntu-slim-Report.json` is not refreshed for every release, so it is only a fallback). The recipe installs the latest releases at build time, so a build made after GitHub's shows newer versions: those differences are listed with their reason but do not hold the version back. A missing tool, an older version than GitHub's, a new major version of a language runtime, or an extra tool the layer does not install does.
+A build clones the default profile's **active template** into a builder environment (it already has Docker, systemd and `ghrm-agent`), because the Proxmox API cannot run commands inside a fresh stock container. The very first template is the bootstrap template (`proxmox.template_vmid`), which the installer creates. Since the builder runs the active template's agent, which can be older than the control plane, it first replaces itself with the control plane's agent, so fixes to the build take effect in the next build.
+
+The fidelity report compares the template's software report with the one GitHub publishes as an asset of the same `ubuntu-slim` release (the recipe's `ubuntu-slim-Report.json` is not refreshed for every release, so it is only a fallback). The recipe installs the latest releases at build time, so a build made after GitHub's shows newer versions: those differences are listed with their reason but do not hold the version back. A missing tool, an older version than GitHub's, a new major version of a language runtime, or an extra tool the layer does not install does; the tools a profile leaves out and the packages and cached versions it adds are explained by the profile.
 
 ```mermaid
 flowchart LR
@@ -468,7 +470,7 @@ flowchart LR
     layer["ghrm layer (template/layer, embedded in ghrm)"] --> b2
     subgraph builder["Builder LXC (clone of the active template, job network)"]
         b0["agent update: a builder whose ghrm-agent differs from the control plane's<br/>downloads it (GET /ingest/v1/build/agent), checks the SHA-256, re-executes"] --> b1
-        b1["docker build: official ubuntu-slim Dockerfile, unmodified"] --> b2["docker build: ghrm layer (systemd, Docker Engine, runner, agent)"]
+        b1["docker build: official ubuntu-slim Dockerfile<br/>(minus the install scripts the profile leaves out)"] --> b2["docker build: ghrm layer (systemd, Docker Engine, runner,<br/>profile.sh: apt packages, tool cache, script; agent)"]
         b2 --> b3["docker export, drop container markers, zstd, SHA-256"]
     end
     b3 -- "PUT /ingest/v1/build/rootfs (streamed, size-capped)" --> cp["control plane: verify SHA-256"]

@@ -89,6 +89,10 @@ export function useTemplates() {
   return useQuery({ queryKey: ["templates"], queryFn: async () => unwrap(await api.GET("/api/v1/templates")) });
 }
 
+export function useTemplateProfiles() {
+  return useQuery({ queryKey: ["templates", "profiles"], queryFn: async () => unwrap(await api.GET("/api/v1/template-profiles")) });
+}
+
 export function useTemplate(id: string) {
   return useQuery({ queryKey: ["templates", id], queryFn: async () => unwrap(await api.GET("/api/v1/templates/{id}", { params: { path: { id } } })) });
 }

@@ -21,6 +21,8 @@ export type ScaleSetSettings = Schemas["ScaleSetSettings"];
 export type CacheStatus = Schemas["Status"];
 export type Settings = Schemas["Settings"];
 export type TemplateVersion = Schemas["Template"];
+export type TemplateProfile = Schemas["TemplateProfile"];
+export type TemplateComponent = Schemas["Component"];
 export type ApiEvent = Omit<Schemas["Event"], "$schema" | "data"> & { data?: Record<string, unknown>; [extra: string]: unknown };
 
 // fetch is looked up per call so tests can stub it.

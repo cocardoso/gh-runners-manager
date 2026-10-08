@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cocardoso/gh-runners-manager/internal/config"
@@ -70,6 +71,7 @@ type Service struct {
 	wg sync.WaitGroup
 
 	lastCheck time.Time
+	recheck   atomic.Bool     // a profile changed: check before the interval passes
 	uploading map[string]bool // versions with a root filesystem upload in flight
 
 	cacheMu sync.Mutex
@@ -114,23 +116,6 @@ func (s *Service) EnsureBootstrap(ctx context.Context) error {
 	}
 	t := store.Template{ID: ids.NewEnvironmentID(), State: store.TemplateActive, VMID: s.d.BootstrapVMID, Trigger: "bootstrap", ActivatedAt: s.now()}
 	return s.d.Store.CreateTemplate(ctx, t)
-}
-
-// Active implements controller.TemplateSource.
-func (s *Service) Active(ctx context.Context) (string, int) {
-	ref, vmid, _ := s.ActiveFirewallGated(ctx)
-	return ref, vmid
-}
-
-// ActiveFirewallGated is Active, plus whether the template's agent waits for the job
-// network's firewall: its verification reported the feature and found the probe dropped.
-// The bootstrap template is never verified.
-func (s *Service) ActiveFirewallGated(ctx context.Context) (string, int, bool) {
-	t, err := s.d.Store.ActiveTemplate(ctx)
-	if err != nil || t.RuntimeRef == "" {
-		return "", s.d.BootstrapVMID, false
-	}
-	return s.d.Runtime.TemplateEnvironmentRef(runtime.TemplateRef{ID: t.RuntimeRef}), t.VMID, t.FirewallGate
 }
 
 // firewallGated reports whether a self-test proves the gate: the agent has it, and the
@@ -222,24 +207,25 @@ func (s *Service) Running(ctx context.Context) bool {
 // layerVersionPrefix is the layer files' version; the agent binary's hash completes it.
 func layerVersionPrefix() string { return layer.Version + "." }
 
-// layerVersion identifies what the layer installs: the layer files and the ghrm-agent binary,
-// so an upgraded agent triggers a rebuild (spec §8.5).
-func (s *Service) layerVersion() string {
+// layerVersion identifies what the layer installs: the layer files, the ghrm-agent binary,
+// the cache's settings and the profile, so any change triggers a rebuild (spec §8.5).
+func (s *Service) layerVersion(p Profile) string {
 	sum, err := s.agentSHA256()
 	if err != nil {
 		return layer.Version
 	}
-	if m := s.d.Cache.Mirrors(); m != "" { // the cache's settings are part of the layer
-		h := sha256.Sum256([]byte(sum + "\n" + m))
-		sum = hex.EncodeToString(h[:])
-	}
-	return layerVersionPrefix() + sum[:12]
+	h := sha256.Sum256([]byte(sum + "\n" + s.d.Cache.Mirrors() + "\n" + p.Hash()))
+	return layerVersionPrefix() + hex.EncodeToString(h[:])[:12]
 }
 
-// Build starts a template build. Only one build runs at a time.
-func (s *Service) Build(ctx context.Context, trigger string) (store.Template, error) {
+// Build starts a template build of a profile. Only one build runs at a time.
+func (s *Service) Build(ctx context.Context, trigger, profile string) (store.Template, error) {
 	if !s.d.Config.Enabled() {
 		return store.Template{}, ErrDisabled
+	}
+	prof, err := s.Profile(ctx, profileOrDefault(profile))
+	if err != nil {
+		return store.Template{}, err
 	}
 	if s.Running(ctx) {
 		return store.Template{}, ErrBuildRunning
@@ -252,9 +238,9 @@ func (s *Service) Build(ctx context.Context, trigger string) (store.Template, er
 	if err != nil {
 		return store.Template{}, fmt.Errorf("template: resolve the runner release: %w", err)
 	}
-	lv := s.layerVersion()
+	lv := s.layerVersion(prof)
 	t := store.Template{ID: ids.NewEnvironmentID(), SlimRelease: slim.Version, RunnerVersion: run.Version, LayerVersion: lv,
-		RunnerSHA256: run.SHA256, State: store.TemplateBuilding, Trigger: trigger}
+		RunnerSHA256: run.SHA256, State: store.TemplateBuilding, Trigger: trigger, Profile: prof.Name}
 	// The "building" row is the guard against concurrent builds; the lock covers only its creation,
 	// not the slow start of the builder environment.
 	s.mu.Lock()
@@ -267,10 +253,11 @@ func (s *Service) Build(ctx context.Context, trigger string) (store.Template, er
 	if err != nil {
 		return store.Template{}, err
 	}
-	s.record(ctx, "info", "template.build_started", fmt.Sprintf("building template %s (ubuntu-slim %s, runner %s, layer %s)",
-		t.ID, slim.Version, run.Version, lv), t, map[string]any{"trigger": trigger})
+	s.record(ctx, "info", "template.build_started", fmt.Sprintf("building template %s of profile %s (ubuntu-slim %s, runner %s, layer %s)",
+		t.ID, prof.Name, slim.Version, run.Version, lv), t, map[string]any{"trigger": trigger, "profile": prof.Name})
 
-	ref, vmid := s.Active(ctx)
+	// Builders clone the default profile's template: it has everything a build needs.
+	ref, vmid := s.Active(ctx, store.DefaultProfile)
 	envID, err := s.d.Environments.StartSpecial(ctx, controller.SpecialSpec{Kind: store.KindBuild, Template: ref, TemplateVMID: vmid,
 		Cores: s.d.Config.BuilderCores, MemoryMB: s.d.Config.BuilderMemoryMB, DiskGB: s.d.Config.BuilderDiskGB,
 		Env:       map[string]string{ingest.EnvMode: ingest.ModeBuild},
@@ -326,8 +313,12 @@ func (s *Service) BuildSpec(ctx context.Context, envID string) (ingest.BuildSpec
 	if !ok {
 		return ingest.BuildSpec{}, ingest.ErrWrongKind
 	}
+	prof, err := s.Profile(ctx, profileOrDefault(t.Profile))
+	if err != nil {
+		return ingest.BuildSpec{}, err
+	}
 	spec := ingest.BuildSpec{TemplateID: t.ID, SlimTag: slimPrefix + t.SlimRelease, RunnerVersion: t.RunnerVersion,
-		RunnerSHA256: t.RunnerSHA256, LayerVersion: t.LayerVersion, CacheMirrors: s.d.Cache.Mirrors()}
+		RunnerSHA256: t.RunnerSHA256, LayerVersion: t.LayerVersion, CacheMirrors: s.d.Cache.Mirrors(), Remove: prof.Remove}
 	if t.BuildEnvID == envID {
 		spec.AgentSHA256, _ = s.agentSHA256()
 	}
@@ -377,7 +368,11 @@ func (s *Service) WriteLayer(ctx context.Context, envID string, w io.Writer) err
 	if err != nil {
 		return err
 	}
-	return layer.Tar(w, f, st.Size())
+	prof, err := s.Profile(ctx, profileOrDefault(t.Profile))
+	if err != nil {
+		return err
+	}
+	return layer.Tar(w, f, st.Size(), prof.BuildScript())
 }
 
 func (s *Service) agentPath() string {
@@ -559,6 +554,8 @@ func (s *Service) conclude(ctx context.Context, id string, rep ingest.SelfTestRe
 	default:
 		if fid, err = CompareReports(published, rep.Software, rep.Checks); err != nil {
 			fid = FidelityReport{Checks: rep.Checks, Differences: []Difference{}, Unexpected: -1, Note: err.Error()}
+		} else if prof, perr := s.Profile(ctx, profileOrDefault(t.Profile)); perr == nil {
+			fid.ExplainProfile(prof)
 		}
 	}
 	raw, _ := json.Marshal(fid)
@@ -593,7 +590,7 @@ func (s *Service) conclude(ctx context.Context, id string, rep ingest.SelfTestRe
 	switch {
 	case !s.d.Config.AutoActivate:
 		s.record(ctx, "info", "template.held", "automatic activation is off; activate the new template from the Templates page", t, nil)
-	case s.pinned(ctx):
+	case s.pinned(ctx, t.Profile):
 		s.record(ctx, "info", "template.held", "a pinned template blocks automatic activation", t, nil)
 	case fid.Unexpected != 0:
 		s.record(ctx, "warn", "template.held", "the software report differs from GitHub's in ways the ghrm layer does not explain; review it before activating", t,
@@ -603,10 +600,10 @@ func (s *Service) conclude(ctx context.Context, id string, rep ingest.SelfTestRe
 	}
 }
 
-func (s *Service) pinned(ctx context.Context) bool {
+func (s *Service) pinned(ctx context.Context, profile string) bool {
 	list, _ := s.d.Store.ListTemplates(ctx)
 	for _, t := range list {
-		if t.Pinned && (t.State == store.TemplateReady || t.State == store.TemplateActive) {
+		if t.Profile == profile && t.Pinned && (t.State == store.TemplateReady || t.State == store.TemplateActive) {
 			return true
 		}
 	}
@@ -817,6 +814,18 @@ func (s *Service) retain(ctx context.Context) {
 }
 
 func (s *Service) retainFrom(ctx context.Context, list []store.Template) {
+	byProfile := map[string][]store.Template{}
+	for _, t := range list {
+		byProfile[t.Profile] = append(byProfile[t.Profile], t)
+	}
+	for _, versions := range byProfile {
+		s.retireBeyond(ctx, versions)
+	}
+	s.deleteRetired(ctx)
+}
+
+// retireBeyond retires one profile's ready versions beyond those kept (list is newest first).
+func (s *Service) retireBeyond(ctx context.Context, list []store.Template) {
 	var previous, candidates []store.Template
 	for _, t := range list {
 		if t.RuntimeRef == "" || t.State != store.TemplateReady || t.Pinned {
@@ -850,6 +859,10 @@ func (s *Service) retainFrom(ctx context.Context, list []store.Template) {
 			s.record(ctx, "info", "template.retired", "template "+cur.ID+" retired (beyond the versions kept for roll-back)", cur, nil)
 		}
 	}
+}
+
+// deleteRetired deletes retired versions no environment depends on.
+func (s *Service) deleteRetired(ctx context.Context) {
 	all, err := s.d.Store.ListTemplates(ctx)
 	if err != nil {
 		return
@@ -878,13 +891,17 @@ func (s *Service) retainFrom(ctx context.Context, list []store.Template) {
 	}
 }
 
-// check starts a build when a new slim release, runner release or layer version appears.
+// check starts a build when a profile's active version is behind: a new slim release,
+// runner release or layer version (the layer includes the profile), or none built yet.
+// One build runs at a time; profiles are checked in order, the default one first.
 func (s *Service) check(ctx context.Context, now time.Time) {
 	iv := s.d.Config.CheckInterval.Std()
-	if !s.d.Config.Enabled() || iv <= 0 || (!s.lastCheck.IsZero() && now.Sub(s.lastCheck) < iv) || s.Running(ctx) {
+	due := s.lastCheck.IsZero() || now.Sub(s.lastCheck) >= iv || s.recheck.Load()
+	if !s.d.Config.Enabled() || iv <= 0 || !due || s.Running(ctx) {
 		return
 	}
 	s.lastCheck = now
+	s.recheck.Store(false)
 	slim, err := s.d.Releases.LatestSlim(ctx)
 	if err != nil {
 		return
@@ -893,33 +910,48 @@ func (s *Service) check(ctx context.Context, now time.Time) {
 	if err != nil {
 		return
 	}
-	active, err := s.d.Store.ActiveTemplate(ctx)
+	profiles, err := s.Profiles(ctx)
 	if err != nil {
 		return
 	}
-	trigger := ""
-	switch {
-	case active.RuntimeRef == "":
-		trigger = "bootstrap-replacement"
-	case active.SlimRelease != slim.Version:
-		trigger = "slim-release"
-	case active.RunnerVersion != run.Version:
-		trigger = "runner-release"
-	case active.LayerVersion != s.layerVersion():
-		trigger = "layer"
-	default:
-		return
-	}
-	// Do not retry the same inputs over and over: a failed attempt waits a day, a held one forever.
 	list, _ := s.d.Store.ListTemplates(ctx)
-	for _, t := range list {
-		if t.SlimRelease == slim.Version && t.RunnerVersion == run.Version && t.LayerVersion == s.layerVersion() &&
-			(t.State != store.TemplateFailed || now.Sub(t.UpdatedAt) < 24*time.Hour) && t.State != store.TemplateDeleted {
-			return
+	for _, p := range profiles {
+		lv := s.layerVersion(p)
+		active, err := s.d.Store.ActiveTemplate(ctx, p.Name)
+		trigger := ""
+		switch {
+		case errors.Is(err, store.ErrNotFound) && p.Name != store.DefaultProfile:
+			trigger = "new-profile"
+		case err != nil:
+			continue
+		case active.RuntimeRef == "":
+			trigger = "bootstrap-replacement"
+		case active.SlimRelease != slim.Version:
+			trigger = "slim-release"
+		case active.RunnerVersion != run.Version:
+			trigger = "runner-release"
+		case active.LayerVersion != lv:
+			trigger = "layer"
+		default:
+			continue
 		}
-	}
-	tpl, err := s.Build(ctx, trigger)
-	if err == nil {
-		s.record(ctx, "info", "template.check", "new inputs found ("+trigger+"); building template "+tpl.ID, tpl, map[string]any{"trigger": trigger})
+		// Do not retry the same inputs over and over: a failed attempt waits a day, a held one forever.
+		tried := false
+		for _, t := range list {
+			if t.Profile == p.Name && t.SlimRelease == slim.Version && t.RunnerVersion == run.Version && t.LayerVersion == lv &&
+				(t.State != store.TemplateFailed || now.Sub(t.UpdatedAt) < 24*time.Hour) && t.State != store.TemplateDeleted && t.State != store.TemplateRetired {
+				tried = true
+				break
+			}
+		}
+		if tried {
+			continue
+		}
+		tpl, err := s.Build(ctx, trigger, p.Name)
+		if err == nil {
+			s.record(ctx, "info", "template.check", "new inputs found ("+trigger+"); building template "+tpl.ID+" of profile "+p.Name, tpl,
+				map[string]any{"trigger": trigger, "profile": p.Name})
+		}
+		return
 	}
 }

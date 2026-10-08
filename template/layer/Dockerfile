@@ -46,6 +46,10 @@ ARG CACHE_MIRRORS=""
 COPY mirrors.sh /tmp/mirrors.sh
 RUN /tmp/mirrors.sh / "$CACHE_MIRRORS" && rm /tmp/mirrors.sh
 
+# The template profile: extra apt packages, tool cache versions, its script.
+COPY toolcache.sh profile.sh /tmp/ghrm-profile/
+RUN AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache /tmp/ghrm-profile/profile.sh && rm -rf /tmp/ghrm-profile
+
 COPY ghrm-agent /usr/local/bin/ghrm-agent
 COPY ghrm-agent.service /etc/systemd/system/ghrm-agent.service
 

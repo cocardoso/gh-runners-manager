@@ -26,7 +26,7 @@ The target audience is homelabs and small teams that want hosted-runner behaviou
 - Kubernetes support.
 - Windows or macOS runners.
 - Cloud runtimes (AWS, GCP, Azure). The runtime interface allows them later; none is built now.
-- A "full" image equivalent to `ubuntu-24.04`, and per-project custom images. Only the `ubuntu-slim`-based profile is in scope.
+- A "full" image equivalent to `ubuntu-24.04`. Templates stay `ubuntu-slim`-based; template profiles only leave out its optional tools and add packages, tool cache versions and a script.
 - Multi-node Proxmox clusters. Single node first; the design does not preclude clusters.
 - GitHub App authentication. Fine-grained PATs first, behind an interface that admits an App later.
 

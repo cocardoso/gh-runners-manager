@@ -96,7 +96,7 @@ func TestDemoBuildsATemplateEndToEnd(t *testing.T) {
 	}
 	defer d.Close()
 	go d.Run(ctx)
-	tpl, err := d.Templates.Build(ctx, "manual")
+	tpl, err := d.Templates.Build(ctx, "manual", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestDemoBuildsATemplateEndToEnd(t *testing.T) {
 	if !names["build"] {
 		t.Fatalf("builder streams = %v, want a build log", names)
 	}
-	if ref, _ := d.Templates.Active(ctx); ref == "" {
+	if ref, _ := d.Templates.Active(ctx, "default"); ref == "" {
 		t.Fatal("the new template must be active for new environments")
 	}
 }

@@ -13,21 +13,25 @@ import (
 
 // Version identifies the layer. Bump it with every change to the files in this directory:
 // a new version triggers a template rebuild (spec §8.5).
-const Version = "5"
+const Version = "6"
 
-//go:embed Dockerfile ghrm-agent.service apt-ipv4.conf persist-env.sh mirrors.sh
+//go:embed Dockerfile ghrm-agent.service apt-ipv4.conf persist-env.sh mirrors.sh toolcache.sh
 var files embed.FS
 
 // Files returns the layer files.
 func Files() fs.FS { return files }
 
-// Tar writes the docker build context: the layer files plus the ghrm-agent binary.
-func Tar(w io.Writer, agent io.Reader, agentSize int64) error {
+// Tar writes the docker build context: the layer files, the template profile's build
+// script (profile.sh) and the ghrm-agent binary.
+func Tar(w io.Writer, agent io.Reader, agentSize int64, profileScript string) error {
 	tw := tar.NewWriter(w)
 	mtime := time.Unix(0, 0)
-	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "persist-env.sh", "mirrors.sh"} {
-		b, err := fs.ReadFile(files, name)
-		if err != nil {
+	for _, name := range []string{"Dockerfile", "ghrm-agent.service", "apt-ipv4.conf", "persist-env.sh", "mirrors.sh", "toolcache.sh", "profile.sh"} {
+		var b []byte
+		var err error
+		if name == "profile.sh" {
+			b = []byte(profileScript)
+		} else if b, err = fs.ReadFile(files, name); err != nil {
 			return err
 		}
 		mode := int64(0o644)

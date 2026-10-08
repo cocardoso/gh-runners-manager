@@ -65,6 +65,15 @@ export function defaultRoutes(): Routes {
     "/api/v1/scale-sets": { scale_sets: [] },
     "/api/v1/events": { events: [] },
     "/api/v1/templates": { templates: [], building: false, enabled: false },
+    "/api/v1/template-profiles": {
+      profiles: [{ name: "default", remove: [], toolcache: { node: ["22", "24"] }, apt: [], used_by: [] }],
+      components: [
+        { id: "azure-cli", report: ["Azure CLI"] },
+        { id: "azure-devops-cli", report: ["Azure CLI (azure-devops)"], needs: "azure-cli" },
+        { id: "github-cli", report: ["GitHub CLI"] },
+      ],
+      toolcache_tools: ["go", "node", "python"],
+    },
     "/api/v1/settings": { version: "dev", admin_actions: false, proxmox: {}, ingest: {}, capacity: {}, scale_sets: [] },
   };
 }

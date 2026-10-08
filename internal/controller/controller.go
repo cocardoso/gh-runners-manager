@@ -58,13 +58,13 @@ type StageObserver interface {
 // TemplateSource reports the active template: the runtime reference environments clone
 // ("" for the configured one) and its VMID (recorded for retention).
 type TemplateSource interface {
-	Active(ctx context.Context) (ref string, vmid int)
+	Active(ctx context.Context, profile string) (ref string, vmid int)
 }
 
 // FirewallGatedSource is a TemplateSource that also tells whether the active template's agent waits for the
 // job network's firewall before it starts the runner.
 type FirewallGatedSource interface {
-	ActiveFirewallGated(ctx context.Context) (ref string, vmid int, gated bool)
+	ActiveFirewallGated(ctx context.Context, profile string) (ref string, vmid int, gated bool)
 }
 
 // TemplateEvents receives agent events of build and verify environments.

@@ -86,6 +86,7 @@ function ScaleSetCard({ s, onEdit, onRemove }: { s: ScaleSet; onEdit: () => void
                   t("templates.scaleSets.fields.resources"),
                   t("templates.scaleSets.fields.resourcesValue", { cores: config.cores ?? "?", memory: config.memory_mb ? formatMB(config.memory_mb) : "?" }),
                 ],
+                [t("templates.scaleSets.fields.profile"), config.template_profile || "default"],
                 [t("templates.scaleSets.fields.warm"), config.warm_runners ? String(config.warm_runners) : t("templates.scaleSets.fields.no")],
                 [t("templates.scaleSets.fields.runnerGroup"), config.runner_group || "default"],
                 [t("templates.scaleSets.fields.credential"), config.credential || "—"],

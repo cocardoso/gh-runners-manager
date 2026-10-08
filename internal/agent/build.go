@@ -57,6 +57,22 @@ func RunBuild(ctx context.Context, c *Client, cmd Commander, work string) (err e
 		return err
 	}
 
+	if len(spec.Remove) > 0 {
+		begin("recipe", "leaving out "+strings.Join(spec.Remove, ", ")+" (template profile)")
+		dockerfile := filepath.Join(recipe, "images", "ubuntu-slim", "Dockerfile")
+		b, err := os.ReadFile(dockerfile)
+		if err != nil {
+			return err
+		}
+		edited, err := RemoveComponents(string(b), spec.Remove)
+		if err != nil {
+			return fmt.Errorf("%w at %s", err, spec.SlimTag)
+		}
+		if err := os.WriteFile(dockerfile, []byte(edited), 0o644); err != nil {
+			return err
+		}
+	}
+
 	begin("slim", "building the official ubuntu-slim image")
 	// GitHub builds the image with its release as IMAGE_VERSION; the software report shows it.
 	imageVersion := strings.TrimPrefix(spec.SlimTag, "ubuntu-slim/")
@@ -214,4 +230,28 @@ func untar(r io.Reader, dir string) error {
 			return fmt.Errorf("unsupported entry %q (type %s)", h.Name, strconv.Itoa(int(h.Typeflag)))
 		}
 	}
+}
+
+// RemoveComponents drops the install scripts of the given components from the recipe's
+// Dockerfile, whose RUN chain calls each as "/tmp/scripts/build/install-<id>.sh && \".
+// A component the recipe does not call is an error: the recipe changed under the profile.
+func RemoveComponents(dockerfile string, ids []string) (string, error) {
+	lines := strings.Split(dockerfile, "\n")
+	for _, id := range ids {
+		call := "/tmp/scripts/build/install-" + id + ".sh && \\"
+		found := false
+		kept := lines[:0:0]
+		for _, l := range lines {
+			if strings.TrimSpace(l) == call {
+				found = true
+				continue
+			}
+			kept = append(kept, l)
+		}
+		if !found {
+			return "", fmt.Errorf("the recipe does not install %q (install-%s.sh)", id, id)
+		}
+		lines = kept
+	}
+	return strings.Join(lines, "\n"), nil
 }

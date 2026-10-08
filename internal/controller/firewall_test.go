@@ -11,8 +11,8 @@ import (
 
 type gatedSource struct{ gated bool }
 
-func (gatedSource) Active(context.Context) (string, int) { return "tpl/abc", 951 }
-func (g gatedSource) ActiveFirewallGated(context.Context) (string, int, bool) {
+func (gatedSource) Active(context.Context, string) (string, int) { return "tpl/abc", 951 }
+func (g gatedSource) ActiveFirewallGated(context.Context, string) (string, int, bool) {
 	return "tpl/abc", 951, g.gated
 }
 

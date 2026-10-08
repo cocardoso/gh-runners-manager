@@ -32,12 +32,13 @@ type ScaleSetSettings struct {
 	MemoryMB             int      `json:"memory_mb,omitempty"`
 	KeepOnFailureMinutes int      `json:"keep_on_failure_minutes,omitempty"`
 	WarmRunners          int      `json:"warm_runners,omitempty" minimum:"0" doc:"Runners kept online before any job arrives (counts toward max_concurrent)"`
+	TemplateProfile      string   `json:"template_profile,omitempty" doc:"The template profile its environments clone (default: default)"`
 }
 
 func toScaleSetSettings(ss config.ScaleSet) *ScaleSetSettings {
 	return &ScaleSetSettings{URL: ss.URL, Credential: ss.Credential, RunnerGroup: ss.RunnerGroup, Labels: ss.Labels,
 		MaxConcurrent: ss.MaxConcurrent, Cores: ss.Cores, MemoryMB: ss.MemoryMB, KeepOnFailureMinutes: ss.KeepOnFailureMinutes,
-		WarmRunners: ss.WarmRunners}
+		WarmRunners: ss.WarmRunners, TemplateProfile: ss.TemplateProfile}
 }
 
 // settingsError maps registry errors; anything else is a validation error.
@@ -139,7 +140,7 @@ func registerSettingsEdit(a huma.API, d Deps) {
 			b := in.Body
 			ss := config.ScaleSet{Name: in.Name, URL: b.URL, Credential: b.Credential, RunnerGroup: b.RunnerGroup, Labels: b.Labels,
 				MaxConcurrent: b.MaxConcurrent, Cores: b.Cores, MemoryMB: b.MemoryMB, KeepOnFailureMinutes: b.KeepOnFailureMinutes,
-				WarmRunners: b.WarmRunners}
+				WarmRunners: b.WarmRunners, TemplateProfile: b.TemplateProfile}
 			put := d.Settings.PutScaleSet
 			if in.IfNoneMatch == "*" {
 				put = d.Settings.CreateScaleSet
