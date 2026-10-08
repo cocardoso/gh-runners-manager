@@ -9,6 +9,8 @@ failures=0 count=0
 setup() {
   tmp=$(mktemp -d)
   export FAKE_STATE=$tmp/state FAKE_LOG=$tmp/log GHRM_FIREWALL_SETTLE=0
+  GHRM_REGISTRY_SHA256=$(sha256sum "$here/fixtures/registry.tar.gz" | cut -d' ' -f1)
+  export GHRM_REGISTRY_SHA256
   mkdir -p "$FAKE_STATE" "$tmp/bin"
   : >"$FAKE_LOG"
   binaries v1.0.0
@@ -95,7 +97,7 @@ seed_dev_host() { # an existing hand-made setup, like the development host
 
 test_install_reuses_existing_setup() {
   seed_dev_host
-  install --vmid 310 --security-group gh-runner || fail "exit $?: $(tail -n 3 "$tmp/out")"
+  install --vmid 310 --security-group gh-runner --no-cache || fail "exit $?: $(tail -n 3 "$tmp/out")"
   expect_no_log "$CREATES"
   expect_out "✓ template 951" # found by its tag
   expect_out "✓ container 310"
@@ -105,7 +107,7 @@ test_install_reuses_existing_setup() {
 test_missing_ingest_rule_is_reported() {
   seed_dev_host
   : >"$FAKE_STATE/group_gh-runner"
-  install --vmid 310 --security-group gh-runner || fail "exit $?"
+  install --vmid 310 --security-group gh-runner --no-cache || fail "exit $?"
   expect_out "has no rule for the ingest (10.50.0.2:8443)"
   expect_no_log 'pvesh create /cluster/firewall'
 }
@@ -179,6 +181,63 @@ test_a_new_release_is_installed() {
   expect_log 'systemctl restart ghrm'
 }
 
+ct_file() { cat "$FAKE_STATE/files/$1$2" 2>/dev/null; } # ct_file VMID PATH: a file inside a container
+
+test_cache_is_created() {
+  install || fail "exit $?: $(tail -n 3 "$tmp/out")"
+  expect_out "+ container 102 (registry cache"
+  expect_log '^pct create 102 local:vztmpl/debian-13-standard.* --hostname ghrm-cache .*--rootfs local-lvm:100 --net0 name=eth0,bridge=jobnet,ip=10.50.0.3/24,gw=10.50.0.1'
+  expect_no_log '^pct create 102 .*--pool'
+  ct_file 102 /etc/ghrm-cache/docker.io.yml | grep -q 'remoteurl: https://registry-1.docker.io' || fail "docker.io proxy configuration"
+  ct_file 102 /etc/ghrm-cache/mcr.microsoft.com.yml | grep -q 'addr: ":5002"' || fail "mcr port"
+  ct_file 102 /etc/ghrm-cache/quay.io.yml | grep -q 'addr: ":5103"' || fail "quay metrics port"
+  ct_file 102 /etc/systemd/system/ghrm-cache-registry@.service | grep -q 'registry serve /etc/ghrm-cache/%i.yml' || fail "registry unit"
+  ct_file 102 /etc/systemd/system/ghrm-cache-prune.service | grep -q 'cache-prune --root /var/lib/ghrm-cache --budget-gb 90' || fail "prune unit (90% of the disk)"
+  ct_file 102 /etc/systemd/system/ghrm-cache-exporter.service | grep -q 'cache-exporter --listen :5199' || fail "exporter unit"
+  ct_file 102 /usr/local/bin/registry | grep -q 'v3.1.2' || fail "registry binary"
+  ct_file 100 /etc/ghrm/ghrm.yaml | grep -q '^  address: 10.50.0.3' || fail "control plane configuration lacks the cache"
+  grep -qx 10.50.0.3 "$FAKE_STATE/group_ghrm-job" || fail "security group lacks the cache rule"
+  last_two=$(grep 'pvesh create /cluster/firewall/groups/ghrm-job' "$FAKE_LOG" | tail -n 2 | head -n 1)
+  [[ $last_two == *"--dest 10.50.0.3 --dport 5000:5003"* ]] || fail "the cache rule must sit with the ingest rule above the drops, got: $last_two"
+}
+
+test_cache_rerun_changes_nothing() {
+  install || fail "first run: exit $?"
+  : >"$FAKE_LOG"
+  install || fail "second run: exit $?: $(tail -n 3 "$tmp/out")"
+  expect_no_log '^pct (create|push) 102'
+  expect_no_log 'cat > /etc/ghrm-cache'
+  expect_out "✓ container 102 (registry cache)"
+  expect_no_out '^  \+ .*cache'
+}
+
+test_existing_group_gets_the_cache_rule_once() {
+  seed_dev_host
+  install --vmid 310 --security-group gh-runner || fail "exit $?: $(tail -n 3 "$tmp/out")"
+  expect_log 'pvesh create /cluster/firewall/groups/gh-runner --type out --action ACCEPT --proto tcp --dest 10.50.0.3 --dport 5000:5003 .*--pos 0'
+  expect_out "+ cache rule in security group gh-runner"
+  ct_file 310 /etc/ghrm/ghrm.yaml | grep -q '^cache:' || fail "the cache section must be added to an existing configuration"
+  : >"$FAKE_LOG"
+  install --vmid 310 --security-group gh-runner || fail "rerun: exit $?"
+  expect_no_log 'pvesh create /cluster/firewall'
+  expect_no_log 'cat >> /etc/ghrm/ghrm.yaml'
+}
+
+test_no_cache_skips_it() {
+  install --no-cache || fail "exit $?"
+  expect_no_log 'ghrm-cache'
+  ct_file 100 /etc/ghrm/ghrm.yaml | grep -q '^cache:' && fail "no cache section without a cache"
+  ! grep -qx 10.50.0.3 "$FAKE_STATE/group_ghrm-job" || fail "no cache rule without a cache"
+}
+
+test_dockerhub_token_never_touches_the_host_disk() {
+  echo "dckr_pat_secret123" | PATH="$here/fakebin:$PATH" bash "$installer" --binary-dir "$tmp/bin" --dockerhub-user bob >"$tmp/out" 2>&1 || fail "exit $?: $(tail -n 3 "$tmp/out")"
+  ct_file 102 /etc/ghrm-cache/docker.io.yml | grep -q 'password: dckr_pat_secret123' || fail "the credential belongs in the cache's docker.io configuration"
+  ct_file 102 /etc/ghrm-cache/docker.io.yml | grep -q 'username: bob' || fail "username"
+  if grep -rl dckr_pat_secret123 "$tmp" | grep -v "^$FAKE_STATE/files/"; then fail "the token was written outside the cache container"; fi
+  ! grep -q dckr_pat_secret123 "$tmp/out" || fail "the token was printed"
+}
+
 test_install_refuses_old_pve() {
   if FAKE_PVEVERSION="pve-manager/8.4.1/abc (running kernel: 6.8)" install; then fail "a Proxmox VE 8 host must be refused"; fi
   expect_out "Proxmox VE 9.1 or later is required (found 8.4)"
@@ -195,7 +254,7 @@ test_dry_run_changes_nothing() {
 
 test_dry_run_on_a_complete_host_reports_nothing_to_do() {
   seed_dev_host
-  install --dry-run --vmid 310 --security-group gh-runner || fail "exit $?"
+  install --dry-run --vmid 310 --security-group gh-runner --no-cache || fail "exit $?"
   expect_out "everything is in place"
   expect_no_out "would run: (pveum (pool|role|user)|pvesm|pvesh create|pct create)"
 }

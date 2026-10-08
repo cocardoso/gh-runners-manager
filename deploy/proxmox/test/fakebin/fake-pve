@@ -48,6 +48,7 @@ curl)
           echo "0000000000000000000000000000000000000000000000000000000000000000  install.sh"; } >"$out"
         if [ -n "${FAKE_BAD_SUM:-}" ]; then sed -i.bak '1s/^./f/' "$out"; fi ;;
       *ghrm-agent-linux-amd64) release ghrm-agent >"$out" ;;
+      *registry_*_linux_amd64.tar.gz) cp "$(dirname "$0")/../fixtures/registry.tar.gz" "$out" ;;
       *ghrm-linux-amd64) release ghrm >"$out" ;;
     esac
   fi ;;
@@ -117,6 +118,7 @@ pct)
     set) t=$(opt tags "${@:3}"); [ -n "$t" ] && sed -i.bak "s/^$vmid [^ ]*/$vmid $t/" "$S/guests" ;;
     push)
       echo "$vmid $4" >>"$S/ct_files"
+      /bin/mkdir -p "$(dirname "$S/files/$vmid$4")" && cp "$3" "$S/files/$vmid$4"
       [ "$4" = /usr/local/bin/ghrm ] && sh "$3" version >"$S/ct_version_$vmid"
       if [ "$4" = /etc/ghrm/ghrm.yaml ]; then echo "$vmid $(sed -n 's/^ *template_vmid: *\([0-9]*\).*/\1/p' "$3")" >>"$S/ct_tplvmid"; fi
       exit 0 ;;
@@ -124,8 +126,16 @@ pct)
       shift 3 # pct exec VMID --
       line="$*"
       grep -q "^$vmid .* running$" "$S/guests" || { echo "CT $vmid not running" >&2; exit 1; }
+      f="$S/files/$vmid"
       case $line in
         "test -x /usr/local/bin/ghrm") has ct_files "$vmid /usr/local/bin/ghrm"; exit $? ;;
+        "sh -c umask 077; cat > "*) p=${line##*cat > }; /bin/mkdir -p "$(dirname "$f$p")"; cat >"$f$p"; echo "$vmid $p" >>"$S/ct_files"; exit 0 ;;
+        "sh -c cat >> "*) p=${line##*cat >> }; /bin/mkdir -p "$(dirname "$f$p")"; cat >>"$f$p"; exit 0 ;;
+        "cat /var/lib/ghrm/setup-token") echo setup-token-xyz; exit 0 ;;
+        "cat "*) cat "$f${line#cat }" 2>/dev/null; exit $? ;;
+        "grep -q ^cache: "*) grep -q '^cache:' "$f${line##* }" 2>/dev/null; exit $? ;;
+        "sha256sum "*) [ -f "$f${line#sha256sum }" ] || exit 1; sha256sum "$f${line#sha256sum }" | sed "s| .*|  ${line#sha256sum }|"; exit 0 ;;
+        *"registry --version") [ -f "$f/usr/local/bin/registry" ] && sh "$f/usr/local/bin/registry" --version; exit $? ;;
         *template_vmid*) sed -n "s|^$vmid ||p" "$S/ct_tplvmid" 2>/dev/null ;;
         "test -f "* | "test -s "*) has ct_files "$vmid ${line##* }"; exit $? ;;
         *"ghrm secret list"*) sed -n "s|^$vmid ||p" "$S/ct_secrets" ;;
