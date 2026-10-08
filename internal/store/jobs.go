@@ -31,9 +31,13 @@ type Job struct {
 
 // JobFilter narrows ListJobs.
 type JobFilter struct {
-	ScaleSet string
-	Status   string
-	Limit    int
+	ScaleSet    string
+	Status      string
+	DisplayName string
+	// QueuedAfter and QueuedBefore, when set, keep jobs queued in that window.
+	QueuedAfter  time.Time
+	QueuedBefore time.Time
+	Limit        int
 }
 
 const jobColumns = `id, scale_set, repository, owner, workflow_ref, display_name, event_name, run_id, runner_name,
@@ -85,6 +89,19 @@ func (s *Store) GetJob(ctx context.Context, id string) (Job, error) {
 	return scanJob(s.db.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM jobs WHERE id = ?`, id))
 }
 
+// ClaimJob marks a queued job running on an environment, only if it is still queued and
+// on no environment: of two concurrent claims (the agent's and GitHub's message), one wins.
+func (s *Store) ClaimJob(ctx context.Context, id, environmentID, runnerName string, startedAt time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE jobs SET status = 'running', started_at = ?, environment_id = ?, runner_name = ?, updated_at = ?
+		WHERE id = ? AND status = 'assigned' AND environment_id = ''`,
+		ms(startedAt), environmentID, runnerName, time.Now().UnixMilli(), id)
+	if err != nil {
+		return false, fmt.Errorf("store: claim job %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // ListJobs returns jobs, most recently updated first.
 func (s *Store) ListJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 	var where []string
@@ -96,6 +113,18 @@ func (s *Store) ListJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 	if f.Status != "" {
 		where = append(where, "status = ?")
 		args = append(args, f.Status)
+	}
+	if f.DisplayName != "" {
+		where = append(where, "display_name = ?")
+		args = append(args, f.DisplayName)
+	}
+	if !f.QueuedAfter.IsZero() {
+		where = append(where, "queued_at > ?")
+		args = append(args, ms(f.QueuedAfter))
+	}
+	if !f.QueuedBefore.IsZero() {
+		where = append(where, "queued_at < ?")
+		args = append(args, ms(f.QueuedBefore))
 	}
 	q := `SELECT ` + jobColumns + ` FROM jobs`
 	if len(where) > 0 {

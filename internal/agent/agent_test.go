@@ -386,7 +386,8 @@ func TestRunnerHandlesVeryLongLinesAndLingeringChildren(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("Run = %d, %v", code, err)
 	}
-	if time.Since(start) > 5*time.Second {
+	// The child lingers 30 s; writing 3 MB can take several seconds on a loaded machine.
+	if time.Since(start) > 15*time.Second {
 		t.Fatal("Run waited for a lingering child that kept stdout open")
 	}
 	mu.Lock()

@@ -213,6 +213,9 @@ test_cache_is_created() {
   ct_file 102 /etc/systemd/system/ghrm-cache-registry@.service | grep -q 'registry serve /etc/ghrm-cache/%i.yml' || fail "registry unit"
   ct_file 102 /etc/systemd/system/ghrm-cache-prune.service | grep -q 'cache-prune --root /var/lib/ghrm-cache --budget-gb 90' || fail "prune unit (90% of the disk)"
   ct_file 102 /etc/systemd/system/ghrm-cache-exporter.service | grep -q 'cache-exporter --listen :5199' || fail "exporter unit"
+  # systemd warns about unit files others cannot read; the registry configurations stay private.
+  expect_log 'pct exec 102 -- chmod 0644 /etc/systemd/system/ghrm-cache-registry@.service'
+  expect_no_log 'chmod 0644 /etc/ghrm-cache/'
   ct_file 102 /usr/local/bin/registry | grep -q '3.1.2' || fail "registry binary"
   ct_file 100 /etc/ghrm/ghrm.yaml | grep -q '^  address: 10.50.0.3' || fail "control plane configuration lacks the cache"
   grep -qx 10.50.0.3 "$FAKE_STATE/group_ghrm-job" || fail "security group lacks the cache rule"
@@ -226,8 +229,20 @@ test_cache_rerun_changes_nothing() {
   install || fail "second run: exit $?: $(tail -n 3 "$tmp/out")"
   expect_no_log '^pct (create|push) 102'
   expect_no_log 'cat > /etc/ghrm-cache'
+  # Modes already right are left alone.
+  expect_no_log 'chmod'
   expect_out "✓ container 102 (registry cache)"
   expect_no_out '^  \+ .*cache'
+}
+
+test_cache_units_written_private_are_made_readable() {
+  install || fail "first run: exit $?"
+  echo "102 /etc/systemd/system/ghrm-cache-prune.timer 600" >>"$FAKE_STATE/ct_modes" # as v0.5.0 left it
+  : >"$FAKE_LOG"
+  install || fail "second run: exit $?: $(tail -n 3 "$tmp/out")"
+  expect_log 'pct exec 102 -- chmod 0644 /etc/systemd/system/ghrm-cache-prune.timer'
+  expect_out "+ mode 0644 on /etc/systemd/system/ghrm-cache-prune.timer"
+  expect_no_log 'chmod 0644 /etc/systemd/system/ghrm-cache-exporter.service'
 }
 
 test_cache_upgrades_its_running_agent() {

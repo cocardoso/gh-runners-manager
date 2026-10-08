@@ -104,8 +104,25 @@ func (s *scaler) HandleJobStarted(ctx context.Context, info *scaleset.JobStarted
 		_, _ = c.d.Store.UpdateEnvironment(ctx, e.ID, func(x *store.Environment) { x.JobID = j.ID })
 		c.advance(ctx, e.ID, environment.Running, nil)
 	}
+	// The agent may have claimed the job already: then this message only completes the
+	// record. A job that finished before this late message keeps its result, and gets its
+	// start event only if nobody recorded one.
+	record := true
+	if claimed, err := c.d.Store.ClaimJob(ctx, j.ID, envID, info.RunnerName, j.StartedAt); err != nil {
+		return err
+	} else if !claimed {
+		if known, err := c.d.Store.GetJob(ctx, j.ID); err == nil {
+			record = known.StartedAt.IsZero()
+			if known.Status != "assigned" {
+				j.Status = "" // keep running or completed
+			}
+		}
+	}
 	if err := c.d.Store.UpsertJob(ctx, j); err != nil {
 		return err
+	}
+	if !record {
+		return nil
 	}
 	_, _ = c.d.Recorder.Record(ctx, store.Event{Kind: "job.started", Level: "info", Time: c.now(),
 		Message:  j.DisplayName + " started on " + info.RunnerName,

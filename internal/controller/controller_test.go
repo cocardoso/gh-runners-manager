@@ -217,6 +217,17 @@ func TestRunnerExitedStraightFromBooting(t *testing.T) {
 	}
 }
 
+// fullScaler exposes HandleJobAvailable, which the listener calls through an extension interface.
+func fullScaler(sc listener.Scaler) interface {
+	listener.Scaler
+	HandleJobAvailable(context.Context, *scaleset.JobAvailable) error
+} {
+	return sc.(interface {
+		listener.Scaler
+		HandleJobAvailable(context.Context, *scaleset.JobAvailable) error
+	})
+}
+
 func jobBase(id, runner string) scaleset.JobMessageBase {
 	return scaleset.JobMessageBase{JobID: id, RepositoryName: "r", OwnerName: "o", JobDisplayName: "build", WorkflowRunID: 99, QueueTime: time.Now()}
 }
@@ -249,6 +260,85 @@ func TestJobMessagesUpsertJobsAndTolerateUnknownRunners(t *testing.T) {
 	}
 	if j2, err := h.db.GetJob(ctx, "j2"); err != nil || j2.Result != "canceled" {
 		t.Fatalf("j2 = %+v, %v", j2, err)
+	}
+}
+
+// GitHub's JobStarted message often arrives well after the job started, sometimes after it
+// finished: the agent's job_started marks the job running as soon as the runner takes it.
+func TestAgentJobStartedMarksTheJobRunning(t *testing.T) {
+	h := newHarness(t, nil)
+	e := h.provision(t, 1)[0]
+	ctx := context.Background()
+	sc := fullScaler(h.c.Scaler("lab"))
+	if err := sc.HandleJobAvailable(ctx, &scaleset.JobAvailable{JobMessageBase: jobBase("j1", "")}); err != nil {
+		t.Fatal(err)
+	}
+	h.c.AgentEvent(ctx, e.ID, ingest.EventHello, time.Now(), nil)
+	h.c.AgentEvent(ctx, e.ID, ingest.EventRunnerOnline, time.Now(), nil)
+	at := time.Now().Add(-time.Second).Truncate(time.Millisecond)
+	h.c.AgentEvent(ctx, e.ID, ingest.EventJobStarted, at, map[string]any{"job": "build"})
+
+	j, _ := h.db.GetJob(ctx, "j1")
+	if j.Status != "running" || !j.StartedAt.Equal(at) || j.EnvironmentID != e.ID || j.RunnerName != e.RunnerName {
+		t.Fatalf("job = %+v, want running since %v on %s", j, at, e.ID)
+	}
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.JobID != "j1" {
+		t.Fatalf("env job = %q, want j1", got.JobID)
+	}
+	started := func() int {
+		evs, _ := h.db.ListEvents(ctx, store.EventFilter{Limit: 1000})
+		n := 0
+		for _, ev := range evs {
+			if ev.Kind == "job.started" {
+				n++
+			}
+		}
+		return n
+	}
+	if started() != 1 {
+		t.Fatalf("job.started events = %d, want 1", started())
+	}
+	// GitHub's late message completes the record without a second job.started.
+	if err := sc.HandleJobStarted(ctx, &scaleset.JobStarted{RunnerName: e.RunnerName, JobMessageBase: jobBase("j1", e.RunnerName)}); err != nil {
+		t.Fatal(err)
+	}
+	if started() != 1 {
+		t.Fatalf("job.started events = %d after GitHub's message, want 1", started())
+	}
+}
+
+func TestLateJobStartedNeverReopensAFinishedJob(t *testing.T) {
+	h := newHarness(t, nil)
+	e := h.provision(t, 1)[0]
+	ctx := context.Background()
+	sc := fullScaler(h.c.Scaler("lab"))
+	_ = sc.HandleJobAvailable(ctx, &scaleset.JobAvailable{JobMessageBase: jobBase("j1", "")})
+	_ = sc.HandleJobCompleted(ctx, &scaleset.JobCompleted{Result: "succeeded", RunnerName: e.RunnerName, JobMessageBase: jobBase("j1", e.RunnerName)})
+	_ = sc.HandleJobStarted(ctx, &scaleset.JobStarted{RunnerName: e.RunnerName, JobMessageBase: jobBase("j1", e.RunnerName)})
+	if j, _ := h.db.GetJob(ctx, "j1"); j.Status != "completed" {
+		t.Fatalf("status = %s, want completed", j.Status)
+	}
+}
+
+// Two queued jobs with the same name (a matrix) cannot be told apart: the job waits for GitHub.
+func TestAgentJobStartedLeavesAmbiguousJobsToGitHub(t *testing.T) {
+	h := newHarness(t, nil)
+	e := h.provision(t, 1)[0]
+	ctx := context.Background()
+	sc := fullScaler(h.c.Scaler("lab"))
+	for _, id := range []string{"j1", "j2"} {
+		if err := sc.HandleJobAvailable(ctx, &scaleset.JobAvailable{JobMessageBase: jobBase(id, "")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.c.AgentEvent(ctx, e.ID, ingest.EventJobStarted, time.Now(), map[string]any{"job": "build"})
+	for _, id := range []string{"j1", "j2"} {
+		if j, _ := h.db.GetJob(ctx, id); j.Status != "assigned" {
+			t.Fatalf("%s status = %s, want assigned", id, j.Status)
+		}
+	}
+	if got, _ := h.db.GetEnvironment(ctx, e.ID); got.State != "running" {
+		t.Fatalf("env state = %s, want running", got.State)
 	}
 }
 

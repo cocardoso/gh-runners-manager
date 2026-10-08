@@ -11,7 +11,9 @@ import (
 	"time"
 )
 
-// maxTransientPollErrors bounds consecutive transient errors while polling a task.
+// maxTransientPollErrors bounds consecutive transient errors while polling a task. Each
+// poll is a read, itself sent up to readAttempts times, so a 596 can repeat up to
+// readAttempts × (maxTransientPollErrors + 1) times before WaitTask gives up.
 const maxTransientPollErrors = 5
 
 // transient reports errors worth retrying while polling: proxy errors (595/596

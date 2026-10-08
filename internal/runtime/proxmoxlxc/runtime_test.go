@@ -409,6 +409,35 @@ func TestCapacityFallsBackToStorageStatus(t *testing.T) {
 	if c.ThinPoolPercent != 25 {
 		t.Fatalf("ThinPoolPercent = %v, want 25 from the storage status", c.ThinPoolPercent)
 	}
+	// The token's permissions do not change: the refused path is not asked again.
+	if _, err := h.rt.Capacity(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	asked := 0
+	for _, r := range h.srv.Requests() {
+		if strings.HasSuffix(r, "/disks/lvmthin") {
+			asked++
+		}
+	}
+	if asked != 1 {
+		t.Fatalf("/disks/lvmthin asked %d times, want 1", asked)
+	}
+	// Permissions can be granted later: the path is asked again after a while.
+	h.rt.SetClock(func() time.Time { return time.Now().Add(11 * time.Minute) })
+	h.srv.DenyLVMThin = false
+	h.srv.ThinPools = []proxmoxtest.ThinPool{{LV: "data", Size: 100, Used: 10, MetadataSize: 10, MetadataUsed: 1}}
+	if _, err := h.rt.Capacity(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	asked = 0
+	for _, r := range h.srv.Requests() {
+		if strings.HasSuffix(r, "/disks/lvmthin") {
+			asked++
+		}
+	}
+	if asked != 2 {
+		t.Fatalf("/disks/lvmthin asked %d times after 11 minutes, want 2", asked)
+	}
 }
 
 // The LXC list status comes from pvestatd's cache and lags behind a start by

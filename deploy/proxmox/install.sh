@@ -606,15 +606,22 @@ EOF
   fi
 }
 
-# put_file VMID PATH: writes standard input to PATH in the container (0600) when it
-# differs; it returns 0 when it changed something.
+# put_file VMID PATH [MODE]: writes standard input to PATH in the container (mode 0600)
+# when it differs, and returns 0 when it changed the content. MODE, when given, is set
+# whenever the file has another one (an earlier install wrote it 0600), and reported.
 put_file() {
-  local vmid=$1 path=$2 want have
+  local vmid=$1 path=$2 mode=${3:-} want have rc=1
   want=$(cat)
   have=$(pct exec "$vmid" -- cat "$path" 2>/dev/null || true)
-  [ "$want" = "$have" ] && return 1
-  printf '%s\n' "$want" | pct exec "$vmid" -- sh -c "umask 077; cat > $path"
-  return 0
+  if [ "$want" != "$have" ]; then
+    printf '%s\n' "$want" | pct exec "$vmid" -- sh -c "umask 077; cat > $path" || die "cannot write $path in container $vmid"
+    rc=0
+  fi
+  if [ -n "$mode" ] && [ "$(pct exec "$vmid" -- stat -c %a "$path" 2>/dev/null)" != "${mode#0}" ]; then
+    pct exec "$vmid" -- chmod "$mode" "$path" || die "cannot set mode $mode on $path in container $vmid"
+    [ $rc = 0 ] || created "mode $mode on $path (container $vmid)"
+  fi
+  return $rc
 }
 
 # push_binary VMID SRC DEST: replaces DEST even while it runs. pct push cannot write a
@@ -707,7 +714,7 @@ cache() {
     fi
   done
   local budget=$((CACHE_DISK_GB * 9 / 10))
-  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-registry@.service <<EOF; then changed="$changed units"; fi
+  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-registry@.service 0644 <<EOF; then changed="$changed units"; fi
 [Unit]
 Description=gh-runners-manager registry cache for %i
 Wants=network-online.target
@@ -720,7 +727,7 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 EOF
-  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-exporter.service <<EOF; then changed="$changed units"; fi
+  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-exporter.service 0644 <<EOF; then changed="$changed units"; fi
 [Unit]
 Description=gh-runners-manager registry cache disk exporter
 
@@ -731,7 +738,7 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 EOF
-  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-prune.service <<EOF; then changed="$changed units"; fi
+  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-prune.service 0644 <<EOF; then changed="$changed units"; fi
 [Unit]
 Description=gh-runners-manager registry cache eviction
 
@@ -739,7 +746,7 @@ Description=gh-runners-manager registry cache eviction
 Type=oneshot
 ExecStart=/usr/local/bin/ghrm-agent cache-prune --root /var/lib/ghrm-cache --budget-gb $budget$instances
 EOF
-  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-prune.timer <<EOF; then changed="$changed units"; fi
+  if put_file "$CACHE_VMID" /etc/systemd/system/ghrm-cache-prune.timer 0644 <<EOF; then changed="$changed units"; fi
 [Unit]
 Description=Keep the gh-runners-manager registry cache under its disk budget
 

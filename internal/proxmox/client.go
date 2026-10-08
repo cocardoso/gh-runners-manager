@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -40,6 +41,8 @@ type Client struct {
 
 	// PollInterval is the delay between task status polls.
 	PollInterval time.Duration
+	// RetryDelay is the first delay before a failed read is sent again; it doubles each time.
+	RetryDelay time.Duration
 	// OnTaskWarnings, when set, receives every task that succeeded with warnings.
 	OnTaskWarnings func(TaskWarnings)
 }
@@ -115,12 +118,51 @@ func New(cfg Config) (*Client, error) {
 		auth:         "PVEAPIToken=" + cfg.TokenID + "=" + cfg.TokenSecret,
 		http:         hc,
 		PollInterval: 500 * time.Millisecond,
+		RetryDelay:   250 * time.Millisecond,
 	}, nil
 }
 
+// readAttempts bounds how often a read is sent when it fails transiently.
+const readAttempts = 3
+
 // do performs a request. params go in the query string for GET/DELETE and in a
 // form body otherwise. When out is non-nil, the response's "data" field is decoded into it.
+// A read that fails transiently is sent again: Proxmox answers 500 now and then while a
+// guest starts or stops ("failed to read from command socket"), and reads are idempotent.
 func (c *Client) do(ctx context.Context, method, path string, params url.Values, out any) error {
+	delay := c.RetryDelay
+	for attempt := 1; ; attempt++ {
+		err := c.doOnce(ctx, method, path, params, out)
+		if err == nil || method != http.MethodGet || attempt == readAttempts || !retryableRead(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(delay):
+		}
+		delay *= 2
+	}
+}
+
+// retryableRead reports read failures worth sending again: server errors that pass
+// (500 from a guest's command socket, proxy errors during a pveproxy reload) and a
+// connection the server dropped. A missing guest, an answer that did not decode, and
+// timeouts (a host that drops packets would only make the read wait three times
+// longer) are final.
+func retryableRead(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case 500, 502, 503, 504, 595, 596:
+			return !errors.Is(err, ErrNotFound)
+		}
+		return false
+	}
+	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+func (c *Client) doOnce(ctx context.Context, method, path string, params url.Values, out any) error {
 	target := c.base + path
 	var body io.Reader
 	if len(params) > 0 {
