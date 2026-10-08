@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -81,9 +82,57 @@ func TestPruneEvictsLeastRecentlyUsedFirstAndCollectsGarbage(t *testing.T) {
 	if !strings.Contains(h.log.String(), "evicted docker.io/old") || strings.Contains(h.log.String(), "recent") {
 		t.Fatalf("log = %q; each eviction is logged", h.log.String())
 	}
-	want := []string{"systemctl stop ghrm-cache-registry@docker.io", "/usr/local/bin/registry garbage-collect --delete-untagged /etc/ghrm-cache/docker.io.yml", "systemctl start ghrm-cache-registry@docker.io"}
+	want := []string{"systemctl stop ghrm-cache-registry@docker.io", "/usr/local/bin/registry garbage-collect /etc/ghrm-cache/docker.io.yml", "systemctl start ghrm-cache-registry@docker.io"}
 	if strings.Join(h.cmds, "|") != strings.Join(want, "|") {
 		t.Fatalf("commands = %v, want %v (only the touched instance)", h.cmds, want)
+	}
+}
+
+func TestPruneStopsTheRegistryBeforeDeleting(t *testing.T) {
+	h := newPrune(t, 1000)
+	repo(t, h.root, "docker.io", "old", 900, time.Now().Add(-time.Hour))
+	old := filepath.Join(h.root, "docker.io/docker/registry/v2/repositories/old")
+	stoppedFirst := false
+	run := h.prune.Run
+	h.prune.Run = func(ctx context.Context, name string, args ...string) error {
+		if name == "systemctl" && args[0] == "stop" {
+			_, err := os.Stat(old)
+			stoppedFirst = err == nil
+		}
+		return run(ctx, name, args...)
+	}
+	if err := h.prune.Once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !stoppedFirst {
+		t.Fatal("the repository was deleted while its registry could still serve it")
+	}
+}
+
+// vanishing reports one directory as gone, as when the registry removes an upload
+// while the cache is measured.
+type vanishing struct {
+	fs.FS
+	dir string
+}
+
+func (v vanishing) ReadDir(name string) ([]fs.DirEntry, error) {
+	if name == v.dir {
+		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
+	}
+	return fs.ReadDir(v.FS, name)
+}
+
+func TestPruneToleratesFilesThatVanish(t *testing.T) {
+	h := newPrune(t, 1000)
+	repo(t, h.root, "docker.io", "old", 900, time.Now().Add(-time.Hour))
+	repo(t, h.root, "ghcr.io", "recent", 50, time.Now())
+	h.prune.fsys = vanishing{os.DirFS(h.root), "ghcr.io/docker/registry/v2/repositories/recent/_layers"}
+	if err := h.prune.Once(context.Background()); err != nil {
+		t.Fatalf("a file removed during the walk must not fail the run: %v", err)
+	}
+	if b, _ := os.ReadFile(h.prune.StatusPath); !strings.Contains(string(b), "used_bytes ") {
+		t.Fatalf("status = %q", b)
 	}
 }
 

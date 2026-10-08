@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -28,6 +29,8 @@ type CachePrune struct {
 	Log         io.Writer         // one line per eviction; nil discards
 	// Run executes a command (systemctl, registry); exec when nil.
 	Run func(ctx context.Context, name string, args ...string) error
+
+	fsys fs.FS // the cache directory as read for measuring; os.DirFS(Root) when nil
 }
 
 type cachedRepo struct {
@@ -46,11 +49,22 @@ func (p *CachePrune) run(ctx context.Context, name string, args ...string) error
 	return nil
 }
 
+func (p *CachePrune) fs() fs.FS {
+	if p.fsys != nil {
+		return p.fsys
+	}
+	return os.DirFS(p.Root)
+}
+
 // usage sums the sizes of the cache's files.
 func (p *CachePrune) usage() (int64, error) {
 	var total int64
-	err := filepath.WalkDir(p.Root, func(path string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(p.fs(), ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// The registry removes uploads and expired content while it serves.
+			if path != "." && errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			return err
 		}
 		if d.Type().IsRegular() {
@@ -68,22 +82,26 @@ func (p *CachePrune) usage() (int64, error) {
 func (p *CachePrune) repos() ([]cachedRepo, error) {
 	var out []cachedRepo
 	for origin := range p.Instances {
-		base := filepath.Join(p.Root, origin, "docker/registry/v2/repositories")
-		err := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
+		base := origin + "/docker/registry/v2/repositories"
+		err := fs.WalkDir(p.fs(), base, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				if os.IsNotExist(err) {
-					return filepath.SkipAll
+				switch {
+				case !errors.Is(err, fs.ErrNotExist):
+					return err
+				case path == base: // nothing cached for this origin yet
+					return fs.SkipAll
+				default: // removed while walking
+					return nil
 				}
-				return err
 			}
 			if !d.IsDir() {
 				return nil
 			}
-			if _, err := os.Stat(filepath.Join(path, "_manifests")); err != nil {
+			if _, err := fs.Stat(p.fs(), path+"/_manifests"); err != nil {
 				return nil
 			}
-			r := cachedRepo{origin: origin, dir: path}
-			_ = filepath.WalkDir(path, func(_ string, f fs.DirEntry, err error) error {
+			r := cachedRepo{origin: origin, dir: filepath.Join(p.Root, filepath.FromSlash(path))}
+			_ = fs.WalkDir(p.fs(), path, func(_ string, f fs.DirEntry, err error) error {
 				if err == nil && f.Type().IsRegular() {
 					if info, err := f.Info(); err == nil {
 						if t := lastUse(info); t.After(r.lastUsed) {
@@ -131,24 +149,26 @@ func (p *CachePrune) Once(ctx context.Context) error {
 			if used < low {
 				break
 			}
-			if err := os.RemoveAll(r.dir); err != nil {
-				return err
-			}
 			unit := "ghrm-cache-registry@" + r.origin
-			// The registry must not serve while its garbage is collected.
+			// The registry must not serve while the repository and its garbage go.
 			if err := p.run(ctx, "systemctl", "stop", unit); err != nil {
 				return err
 			}
-			gcErr := p.run(ctx, p.Registry, "garbage-collect", "--delete-untagged", p.Instances[r.origin])
+			// Without --delete-untagged: that would also drop every image pulled only by
+			// digest, in every repository. The deleted repository's blobs are unreferenced.
+			evictErr := os.RemoveAll(r.dir)
+			if evictErr == nil {
+				evictErr = p.run(ctx, p.Registry, "garbage-collect", p.Instances[r.origin])
+			}
 			if err := p.run(ctx, "systemctl", "start", unit); err != nil {
 				return err
 			}
-			if gcErr != nil {
+			if evictErr != nil {
 				// What was deleted is gone; the exporter still gets the current usage.
 				if used, err := p.usage(); err == nil {
 					_ = p.writeStatus(used)
 				}
-				return gcErr
+				return evictErr
 			}
 			if used, err = p.usage(); err != nil {
 				return err
