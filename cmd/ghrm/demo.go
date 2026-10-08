@@ -17,6 +17,7 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/api"
 	"github.com/cocardoso/gh-runners-manager/internal/demo"
 	"github.com/cocardoso/gh-runners-manager/internal/metrics"
+	"github.com/cocardoso/gh-runners-manager/internal/retention"
 	"github.com/cocardoso/gh-runners-manager/internal/secrets"
 	"github.com/cocardoso/gh-runners-manager/internal/settings"
 	"github.com/cocardoso/gh-runners-manager/internal/version"
@@ -103,7 +104,8 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 		ReadHeaderTimeout: 10 * time.Second,
 		Handler: api.New(api.Deps{Store: d.Store, Recorder: d.Recorder, Logs: d.Logs, Controller: d.Controller,
-			Config: d.Config, Capacity: d.Runtime.Capacity, AdminToken: "demo", UI: uiHandler(), Templates: d.Templates, Auth: signIn,
+			History: &retention.Retention{Store: d.Store, Logs: d.Logs, Recorder: d.Recorder},
+			Config:  d.Config, Capacity: d.Runtime.Capacity, AdminToken: "demo", UI: uiHandler(), Templates: d.Templates, Auth: signIn,
 			Settings: reg, TestCredential: demoTestCredential, Metrics: demoMetrics.Handler(), Cache: cache}),
 	}
 	fmt.Fprintf(stdout, "ghrm demo: serving a simulated fleet on http://%s (sign in as admin / %s; API token: demo)\n", *listen, demoPassword)
