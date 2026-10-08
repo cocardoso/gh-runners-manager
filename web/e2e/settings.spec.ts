@@ -46,3 +46,20 @@ test("history settings are saved and a cleanup previews what it deletes", async 
   await dialog.getByRole("button", { name: "Cancel" }).click();
   expect(errors).toEqual([]);
 });
+
+test("the scale set form keeps its buttons in view and fits a phone", async ({ page, demo }) => {
+  await page.goto(`${demo.url}/scale-sets`);
+  await page.getByRole("button", { name: "New scale set" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("button", { name: "Save scale set" })).toBeInViewport();
+  const width = await dialog.evaluate((d) => d.getBoundingClientRect().width);
+  expect(width).toBeGreaterThan(700); // the wide layout on a desktop
+  expect(await dialog.evaluate((d) => d.scrollWidth <= d.clientWidth)).toBe(true);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload(); // lay the page out at phone size, as a phone would
+  await page.getByRole("button", { name: "New scale set" }).click();
+  await expect(dialog.getByRole("button", { name: "Save scale set" })).toBeInViewport();
+  expect(await dialog.evaluate((d) => d.scrollWidth <= d.clientWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});

@@ -9,6 +9,13 @@ for (const [path, title] of pages) {
     await page.waitForTimeout(500);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow).toBeLessThanOrEqual(1);
+    // A phone zooms out to fit wide content, which hides an overflow from the check above:
+    // the page must keep the device width, start at its left edge, and fit its top bar.
+    const layout = await page.evaluate(() => {
+      const header = document.querySelector("header")!;
+      return { width: window.innerWidth, mainLeft: document.querySelector("main")!.getBoundingClientRect().left, headerFits: header.scrollWidth <= header.clientWidth };
+    });
+    expect(layout).toEqual({ width: 390, mainLeft: 0, headerFits: true });
   });
 }
 
