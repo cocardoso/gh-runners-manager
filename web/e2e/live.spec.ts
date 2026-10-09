@@ -78,7 +78,11 @@ test("the inventory and activity menus lead to the repositories and to the histo
   await page.getByRole("group", { name: "Inventory" }).getByRole("link", { name: "Repositories" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Repositories" })).toBeVisible();
   await expect(page.getByRole("link", { name: /octo/ }).first()).toBeVisible();
-  await page.getByRole("group", { name: "Activity" }).getByRole("link", { name: "Jobs" }).click();
+  // Jobs opens to its tabs; In progress is the page, History its other tab.
+  const activity = page.getByRole("group", { name: "Activity" });
+  await activity.getByRole("button", { name: /^Jobs/ }).click();
+  await activity.getByRole("link", { name: "In progress" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Jobs" })).toBeVisible();
   await page.getByRole("tab", { name: "History" }).click();
   await expect(page).toHaveURL(/\/jobs\?tab=history/);
   await page.goBack();

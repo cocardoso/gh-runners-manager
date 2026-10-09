@@ -16,8 +16,7 @@ const en = {
       system: "System",
     },
     allScaleSets: "All scale sets",
-    versions: "Versions",
-    badge: { running: "{n} running", waiting: "Jobs waiting" },
+    badge: { running: "{n} running", waiting: "waiting for a runner" },
   },
   header: {
     mainNavigation: "Main navigation",
@@ -161,8 +160,7 @@ export const shell: Record<Locale, typeof en> = {
         system: "Sistema",
       },
       allScaleSets: "Todos os scale sets",
-      versions: "Versões",
-      badge: { running: "{n} em execução", waiting: "Jobs esperando" },
+      badge: { running: "{n} em execução", waiting: "esperando runner" },
     },
     header: {
       mainNavigation: "Navegação principal",
@@ -303,8 +301,7 @@ export const shell: Record<Locale, typeof en> = {
         system: "Sistema",
       },
       allScaleSets: "Todos los scale sets",
-      versions: "Versiones",
-      badge: { running: "{n} en ejecución", waiting: "Jobs en espera" },
+      badge: { running: "{n} en ejecución", waiting: "esperando runner" },
     },
     header: {
       mainNavigation: "Navegación principal",
@@ -445,8 +442,7 @@ export const shell: Record<Locale, typeof en> = {
         system: "Système",
       },
       allScaleSets: "Tous les scale sets",
-      versions: "Versions",
-      badge: { running: "{n} en cours", waiting: "Jobs en attente" },
+        badge: { running: "{n} en cours", waiting: "en attente d'un runner" },
     },
     header: {
       mainNavigation: "Navigation principale",
@@ -587,8 +583,7 @@ export const shell: Record<Locale, typeof en> = {
         system: "Sistema",
       },
       allScaleSets: "Tutti gli scale set",
-      versions: "Versioni",
-      badge: { running: "{n} in esecuzione", waiting: "Job in attesa" },
+      badge: { running: "{n} in esecuzione", waiting: "in attesa di un runner" },
     },
     header: {
       mainNavigation: "Navigazione principale",

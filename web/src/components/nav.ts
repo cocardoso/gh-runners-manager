@@ -26,9 +26,9 @@ export const navGroups = [
         labelKey: "shell.nav.templates",
         icon: PackageIcon,
         subs: [
-          { href: "/templates", labelKey: "shell.nav.versions" },
-          { href: "/templates?tab=profiles", labelKey: "templates.profiles.tab" },
+          { href: "/templates", labelKey: "templates.tabs.available" },
           { href: "/templates?tab=history", labelKey: "templates.tabs.history" },
+          { href: "/templates?tab=profiles", labelKey: "templates.profiles.tab" },
         ],
       },
     ],
@@ -87,11 +87,21 @@ export type NavItem = (typeof navGroups)[number]["items"][number];
 /** Every page in sidebar order. */
 export const navItems: readonly NavItem[] = navGroups.flatMap((g): readonly NavItem[] => g.items);
 
+/** The section id a link names (decoded, as the router gives location.hash), or "". */
+export function hashId(href: string): string {
+  const raw = new URL(href, "http://x").hash.slice(1);
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 /** Whether a sub link is the place shown: same page and tab (no tab: the first one), or the
  * same section when it names one. hash comes without its "#". */
 export function subActive(href: string, at: { pathname: string; tab?: string; hash: string }): boolean {
   const url = new URL(href, "http://x");
   if (url.pathname !== at.pathname) return false;
-  if (url.hash) return url.hash.slice(1) === at.hash;
+  if (url.hash) return hashId(href) === at.hash;
   return !at.hash && (url.searchParams.get("tab") ?? "") === (at.tab ?? "");
 }

@@ -26,6 +26,7 @@ test("a credential and a scale set are created, tested and removed from the UI",
   await page.getByRole("button", { name: "Save scale set" }).click();
   const card = page.locator("section").filter({ has: page.getByRole("heading", { name: "e2e-set", exact: true }) });
   await expect(card.getByText("Listening")).toBeVisible();
+  await card.getByRole("button", { name: "Details" }).click();
   await expect(card.getByText("Created in the UI")).toBeVisible();
 
   await card.getByRole("button", { name: "Remove e2e-set" }).click();
