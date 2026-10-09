@@ -26,10 +26,34 @@ test("scale sets show listener status, counts and a runs-on snippet", async () =
   expect(within(card).getByText("Listening")).toBeInTheDocument();
   expect(within(card).getByText("Jobs are waiting: the memory budget is full")).toBeInTheDocument();
   expect(within(card).getByText("runs-on: homelab")).toBeInTheDocument();
-  expect(within(card).getByText("homelab, linux")).toBeInTheDocument();
+  // The settings sit in a closed Details section.
+  const details = within(card).getByRole("button", { name: "Details" });
+  expect(details).toHaveAttribute("aria-expanded", "false");
+  await userEvent.setup().click(details);
+  expect(within(card).getByText("homelab, linux")).toBeVisible();
   expect(within(card).getByText("Warm runners").nextSibling).toHaveTextContent("1");
   const broken = screen.getByRole("heading", { name: "broken" }).closest("section")!;
   expect(within(broken).getByText(/401 Bad credentials/)).toBeInTheDocument();
+});
+
+test("scale sets can be listed one per row, and the choice is remembered", async () => {
+  mockApi({
+    "/api/v1/scale-sets": { scale_sets: [scaleSet({ name: "homelab", desired: 3, live: 1, waiting: "memory_budget", source: "ui", settings: { url: "https://github.com/octo/app", credential: "personal", cores: 2, memory_mb: 4096, max_concurrent: 2, template_profile: "lean" } })] },
+    "/api/v1/settings": settings,
+  });
+  const user = userEvent.setup();
+  const { unmount } = renderApp("/scale-sets");
+  await screen.findByRole("heading", { name: "homelab" });
+  await user.click(screen.getByRole("button", { name: "List" }));
+  expect(screen.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+  const row = screen.getByRole("row", { name: /homelab/ });
+  expect(within(row).getByText("1 / 2")).toBeInTheDocument();
+  expect(within(row).getByText("lean")).toBeInTheDocument();
+  expect(within(row).getByText("Jobs are waiting: the memory budget is full")).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Edit homelab" })).toBeInTheDocument();
+  unmount();
+  renderApp("/scale-sets");
+  expect(await screen.findByRole("row", { name: /homelab/ })).toBeInTheDocument();
 });
 
 test("a scale set whose profile has no template yet says it clones the default one", async () => {

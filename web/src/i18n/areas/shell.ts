@@ -13,7 +13,10 @@ const en = {
     groups: {
       inventory: "Inventory",
       activity: "Activity",
+      system: "System",
     },
+    allScaleSets: "All scale sets",
+    badge: { running: "{n} running", waiting: "waiting for a runner" },
   },
   header: {
     mainNavigation: "Main navigation",
@@ -154,7 +157,10 @@ export const shell: Record<Locale, typeof en> = {
       groups: {
         inventory: "Inventário",
         activity: "Atividade",
+        system: "Sistema",
       },
+      allScaleSets: "Todos os scale sets",
+      badge: { running: "{n} em execução", waiting: "esperando runner" },
     },
     header: {
       mainNavigation: "Navegação principal",
@@ -292,7 +298,10 @@ export const shell: Record<Locale, typeof en> = {
       groups: {
         inventory: "Inventario",
         activity: "Actividad",
+        system: "Sistema",
       },
+      allScaleSets: "Todos los scale sets",
+      badge: { running: "{n} en ejecución", waiting: "esperando runner" },
     },
     header: {
       mainNavigation: "Navegación principal",
@@ -430,7 +439,10 @@ export const shell: Record<Locale, typeof en> = {
       groups: {
         inventory: "Inventaire",
         activity: "Activité",
+        system: "Système",
       },
+      allScaleSets: "Tous les scale sets",
+        badge: { running: "{n} en cours", waiting: "en attente d'un runner" },
     },
     header: {
       mainNavigation: "Navigation principale",
@@ -568,7 +580,10 @@ export const shell: Record<Locale, typeof en> = {
       groups: {
         inventory: "Inventario",
         activity: "Attività",
+        system: "Sistema",
       },
+      allScaleSets: "Tutti gli scale set",
+      badge: { running: "{n} in esecuzione", waiting: "in attesa di un runner" },
     },
     header: {
       mainNavigation: "Navigazione principale",

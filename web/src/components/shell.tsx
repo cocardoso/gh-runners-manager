@@ -1,14 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Button, LinkProvider, Sidebar, Tooltip, useSidebar } from "@cloudflare/kumo";
 import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { ListIcon, MagnifyingGlassIcon, MonitorIcon, MoonIcon, SunIcon, UserCircleIcon } from "@phosphor-icons/react";
-import { useSession } from "@/api/queries";
+import { useOverview, useScaleSets, useSession } from "@/api/queries";
 import { LoginPage, SetupPage } from "@/pages/sign-in";
 import { ErrorState, Loading } from "./common";
 import { AppLink } from "./app-link";
 import { GlobalSearch } from "./command-palette";
 import { LiveIndicator } from "./live-indicator";
-import { navGroups } from "./nav";
+import { hashId, navGroups, subActive, type NavItem } from "./nav";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { LanguageMenu } from "./language-menu";
 import { useT } from "@/i18n";
@@ -56,6 +56,119 @@ function AccountButton({ username }: { username?: string }) {
   );
 }
 
+interface At {
+  pathname: string;
+  tab?: string;
+  hash: string;
+}
+
+/** The Jobs item's running count and waiting dot, and the words a screen reader says for them. */
+function useJobsBadge(label: string): { badge: ReactNode; name: string } {
+  const t = useT();
+  const kpis = useOverview().data?.kpis;
+  if (!kpis) return { badge: null, name: label };
+  const waiting = kpis.queued_jobs > 0;
+  const running = kpis.running_jobs;
+  const name = [label, running > 0 && t("shell.nav.badge.running", { n: running }), waiting && t("shell.nav.badge.waiting")].filter(Boolean).join(", ");
+  // The button is named in words; the dot and the count are for the eye.
+  const badge = (
+    <span aria-hidden className="ml-auto flex items-center gap-1.5">
+      {waiting && <span className="size-2 rounded-full bg-kumo-warning" />}
+      {running > 0 && <Sidebar.MenuBadge>{running}</Sidebar.MenuBadge>}
+    </span>
+  );
+  return { badge, name };
+}
+
+/** A sidebar item. With subs it opens (Cloudflare-style) to its page's tabs or sections, and
+ * to one link per scale set; collapsed to icons, it is a plain link to its page. */
+function NavEntry({
+  item,
+  at,
+  scaleSets,
+  jobs,
+  open,
+  onOpenChange,
+}: {
+  item: NavItem;
+  at: At;
+  scaleSets: string[];
+  jobs: { badge: ReactNode; name: string };
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const t = useT();
+  const { state, isMobile, setOpenMobile } = useSidebar();
+  const label = t(item.labelKey);
+  const { badge, name } = "badge" in item ? jobs : { badge: null, name: label };
+  const active = isActive(at.pathname, item.href);
+  const subs =
+    !("subs" in item)
+      ? []
+      : item.subs === "scale-sets"
+        ? [{ href: "/scale-sets", label: t("shell.nav.allScaleSets") }, ...scaleSets.map((ss) => ({ href: `/scale-sets#${encodeURIComponent(ss)}`, label: ss }))]
+        : item.subs.map((sub) => ({ href: sub.href, label: t(sub.labelKey) }));
+  // On a phone the menu is a drawer over the page: a link closes it. A link to the section
+  // already shown scrolls to it again (the location does not change).
+  const followed = (href: string) => {
+    if (isMobile) setOpenMobile(false);
+    const id = hashId(href);
+    if (id && id === at.hash && new URL(href, "http://x").pathname === at.pathname) document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  if (subs.length === 0 || (state === "collapsed" && !isMobile))
+    return (
+      <Sidebar.MenuItem>
+        <Sidebar.MenuButton icon={item.icon} href={item.href} active={active} tooltip={label} aria-label={name === label ? undefined : name} onClick={() => followed(item.href)}>
+          {label}
+          {badge}
+        </Sidebar.MenuButton>
+      </Sidebar.MenuItem>
+    );
+  // The item stays marked while open unless one of its links is the place shown (a detail
+  // page, or Settings without a section, has none).
+  const shown = subs.some((sub) => subActive(sub.href, at));
+  return (
+    <Sidebar.MenuItem>
+      <Sidebar.Collapsible open={open} onOpenChange={onOpenChange}>
+        <Sidebar.CollapsibleTrigger
+          render={
+            <Sidebar.MenuButton icon={item.icon} active={active && !(open && shown)} aria-label={name === label ? undefined : name}>
+              {label}
+              {badge}
+              <Sidebar.MenuChevron />
+            </Sidebar.MenuButton>
+          }
+        />
+        <Sidebar.CollapsibleContent aria-label={label}>
+          <Sidebar.MenuSub>
+            {subs.map((sub) => (
+              <Sidebar.MenuSubButton key={sub.href} href={sub.href} active={subActive(sub.href, at)} onClick={() => followed(sub.href)}>
+                <span className="truncate">{sub.label}</span>
+              </Sidebar.MenuSubButton>
+            ))}
+          </Sidebar.MenuSub>
+        </Sidebar.CollapsibleContent>
+      </Sidebar.Collapsible>
+    </Sidebar.MenuItem>
+  );
+}
+
+/** Scrolls to the #section a link names, once the page has rendered it (lists load later). */
+function useScrollToHash(at: At) {
+  useEffect(() => {
+    if (!at.hash) return;
+    let tries = 0;
+    const timer = setInterval(() => {
+      const el = document.getElementById(at.hash);
+      if (el || ++tries > 40) {
+        clearInterval(timer);
+        el?.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+    }, 50);
+    return () => clearInterval(timer);
+  }, [at.pathname, at.hash]);
+}
+
 /** A sidebar section; a labelled one is announced as a group (its label hides when the sidebar collapses to icons). */
 function NavGroup({ id, label, children }: { id: string; label?: string; children: React.ReactNode }) {
   return (
@@ -77,9 +190,23 @@ export function Shell() {
 }
 
 function AppShell({ username }: { username?: string }) {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const location = useRouterState({ select: (s) => s.location });
+  const at: At = { pathname: location.pathname, tab: (location.search as { tab?: string }).tab, hash: location.hash };
+  const pathname = at.pathname;
   const [searchOpen, setSearchOpen] = useState(false);
+  // An item is open while its page is shown, unless closed by hand there; another page's
+  // item stays as it was left. Each choice remembers the page it was made on.
+  const [opened, setOpened] = useState<Record<string, { open: boolean; on: string }>>({});
+  const isOpen = (href: string) => {
+    const choice = opened[href];
+    const active = isActive(pathname, href);
+    return choice && (!active || choice.on === pathname) ? choice.open : active;
+  };
+  useScrollToHash(at);
+  const scaleSets = useScaleSets();
+  const scaleSetNames = (scaleSets.data ?? []).map((ss) => ss.name);
   const t = useT();
+  const jobs = useJobsBadge(t("shell.nav.jobs"));
   return (
     <LinkProvider component={AppLink}>
       <Sidebar.Provider defaultOpen collapsible="icon" className="min-h-dvh">
@@ -91,11 +218,15 @@ function AppShell({ username }: { username?: string }) {
             {navGroups.map((g) => (
               <NavGroup key={g.id} id={`nav-${g.id}`} label={"labelKey" in g ? t(g.labelKey) : undefined}>
                 {g.items.map((n) => (
-                  <Sidebar.MenuItem key={n.href}>
-                    <Sidebar.MenuButton icon={n.icon} href={n.href} active={isActive(pathname, n.href)} tooltip={t(n.labelKey)}>
-                      {t(n.labelKey)}
-                    </Sidebar.MenuButton>
-                  </Sidebar.MenuItem>
+                  <NavEntry
+                    key={n.href}
+                    item={n}
+                    at={at}
+                    scaleSets={scaleSetNames}
+                    jobs={jobs}
+                    open={isOpen(n.href)}
+                    onOpenChange={(o) => setOpened((prev) => ({ ...prev, [n.href]: { open: o, on: pathname } }))}
+                  />
                 ))}
               </NavGroup>
             ))}

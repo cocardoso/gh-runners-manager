@@ -120,7 +120,7 @@ export function CapacityCard() {
   const capacity = useCapacity();
   const c = capacity.data;
   return (
-    <section aria-labelledby="capacity-title">
+    <section id="capacity" aria-labelledby="capacity-title" className="scroll-mt-20">
       <LayerCard>
         <LayerCard.Secondary>
           <h2 id="capacity-title" className="text-base font-medium">

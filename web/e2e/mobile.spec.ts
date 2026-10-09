@@ -40,3 +40,15 @@ test("the credential dialog fits a phone, and a tap opens a field's help", async
   await dialog.getByRole("button", { name: "More information" }).first().tap();
   await expect(page.getByText("A name for this token in ghrm; scale sets refer to it.")).toBeVisible();
 });
+
+test("on a phone, a link in a submenu closes the menu and shows its section", async ({ page, demo }) => {
+  await page.goto(`${demo.url}/`);
+  await page.getByRole("button", { name: "Open navigation" }).tap();
+  // On a phone the sidebar is a drawer, announced as navigation.
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  await nav.getByRole("button", { name: "Settings" }).tap();
+  await nav.getByRole("link", { name: "Capacity" }).tap();
+  await expect(page).toHaveURL(/\/settings#capacity$/);
+  await expect(nav.getByRole("link", { name: "Capacity" })).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Capacity" })).toBeInViewport();
+});

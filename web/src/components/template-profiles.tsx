@@ -1,10 +1,12 @@
 import { useId, useState, type FormEvent } from "react";
-import { Banner, Button, Checkbox, Dialog, DialogRoot, DialogTitle, Empty, Input, LayerCard, Link, Textarea, Tooltip, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, Checkbox, Dialog, DialogRoot, DialogTitle, Empty, Input, LayerCard, Link, Table, Textarea, Tooltip, useKumoToastManager } from "@cloudflare/kumo";
 import { PencilSimpleIcon, PlusIcon, StackIcon, TrashIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type TemplateComponent, type TemplateProfile } from "@/api/client";
 import { useTemplateProfiles, useTemplates } from "@/api/queries";
-import { ErrorState, Loading } from "@/components/common";
+import { ErrorState, Loading, Truncate } from "@/components/common";
+import { ViewToggle } from "@/components/view-toggle";
+import { useViewMode } from "@/lib/view-mode";
 import { useT, type Key } from "@/i18n";
 
 const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^template: /, "") : String(e));
@@ -31,6 +33,46 @@ function preinstalled(p: TemplateProfile) {
     .map(([tool, vs]) => `${TOOL_NAMES[tool] ?? tool} ${(vs ?? []).join(", ")}`);
 }
 
+/** Edit, and delete unless the profile is the default one or in use (then the reason is told). */
+function ProfileActions({ p, onEdit, onDelete }: { p: TemplateProfile; onEdit: () => void; onDelete: () => void }) {
+  const t = useT();
+  const users = p.used_by ?? [];
+  const keptReason = p.name === "default" ? t("templates.profiles.defaultKept") : users.length > 0 ? t("templates.profiles.usedKept", { names: users.join(", ") }) : "";
+  return (
+    <span className="flex gap-2">
+      <Button size="sm" variant="secondary" icon={PencilSimpleIcon} onClick={onEdit}>
+        {t("templates.profiles.edit")}
+      </Button>
+      {keptReason ? (
+        // A disabled button takes no focus: its wrapper carries the reason.
+        <Tooltip
+          content={keptReason}
+          render={
+            <span tabIndex={0} aria-label={keptReason}>
+              <Button size="sm" variant="secondary-destructive" icon={TrashIcon} aria-label={t("templates.profiles.deleteLabel", { name: p.name })} disabled>
+                {t("templates.profiles.delete")}
+              </Button>
+            </span>
+          }
+        />
+      ) : (
+        <Button size="sm" variant="secondary-destructive" icon={TrashIcon} aria-label={t("templates.profiles.deleteLabel", { name: p.name })} onClick={onDelete}>
+          {t("templates.profiles.delete")}
+        </Button>
+      )}
+    </span>
+  );
+}
+
+function ActiveTemplate({ p, release }: { p: TemplateProfile; release?: string }) {
+  const t = useT();
+  return p.active_template_id ? (
+    <Link href={`/templates/${encodeURIComponent(p.active_template_id)}`}>{release || p.active_template_id}</Link>
+  ) : (
+    <span className="text-kumo-subtle">{t("templates.profiles.notBuilt")}</span>
+  );
+}
+
 function ProfileCard({
   p,
   release,
@@ -51,7 +93,6 @@ function ProfileCard({
   const leftOut = (p.remove ?? []).map((id) => (byID.get(id) ? componentLabel(byID.get(id)!) : id));
   const pre = preinstalled(p);
   const users = p.used_by ?? [];
-  const keptReason = p.name === "default" ? t("templates.profiles.defaultKept") : users.length > 0 ? t("templates.profiles.usedKept", { names: users.join(", ") }) : "";
   const rows: [string, string][] = [
     [t("templates.profiles.usedBy"), users.length > 0 ? users.join(", ") : t("templates.profiles.nobody")],
     [t("templates.profiles.leftOut"), leftOut.length > 0 ? leftOut.join(" · ") : t("templates.profiles.nothingLeftOut")],
@@ -64,41 +105,14 @@ function ProfileCard({
       <LayerCard>
         <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-heading text-base font-semibold text-kumo-default">{p.name}</h3>
-          {canAct && (
-            <span className="flex gap-2">
-              <Button size="sm" variant="secondary" icon={PencilSimpleIcon} onClick={onEdit}>
-                {t("templates.profiles.edit")}
-              </Button>
-              {keptReason ? (
-                // A disabled button takes no focus: its wrapper carries the reason.
-                <Tooltip
-                  content={keptReason}
-                  render={
-                    <span tabIndex={0} aria-label={keptReason}>
-                      <Button size="sm" variant="secondary-destructive" icon={TrashIcon} aria-label={t("templates.profiles.deleteLabel", { name: p.name })} disabled>
-                        {t("templates.profiles.delete")}
-                      </Button>
-                    </span>
-                  }
-                />
-              ) : (
-                <Button size="sm" variant="secondary-destructive" icon={TrashIcon} aria-label={t("templates.profiles.deleteLabel", { name: p.name })} onClick={onDelete}>
-                  {t("templates.profiles.delete")}
-                </Button>
-              )}
-            </span>
-          )}
+          {canAct && <ProfileActions p={p} onEdit={onEdit} onDelete={onDelete} />}
         </LayerCard.Secondary>
         <LayerCard.Primary className="p-0">
           <dl className="divide-y divide-kumo-line">
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-2.5 text-sm">
               <dt className="text-kumo-subtle">{t("templates.profiles.active")}</dt>
               <dd className="min-w-0">
-                {p.active_template_id ? (
-                  <Link href={`/templates/${encodeURIComponent(p.active_template_id)}`}>{release || p.active_template_id}</Link>
-                ) : (
-                  <span className="text-kumo-subtle">{t("templates.profiles.notBuilt")}</span>
-                )}
+                <ActiveTemplate p={p} release={release} />
               </dd>
             </div>
             {rows.map(([label, value]) => (
@@ -311,6 +325,66 @@ function DeleteProfile({ name, onClose }: { name: string; onClose: () => void })
 }
 
 /** The Profiles tab of the Templates page. */
+/** One row per profile: its template, who uses it and what it changes. */
+function ProfileTable({ profiles, releases, components, canAct, onEdit, onDelete }: {
+  profiles: TemplateProfile[];
+  releases: Map<string, string | undefined>;
+  components: TemplateComponent[];
+  canAct: boolean;
+  onEdit: (p: TemplateProfile) => void;
+  onDelete: (p: TemplateProfile) => void;
+}) {
+  const t = useT();
+  const byID = new Map(components.map((c) => [c.id, c]));
+  return (
+    <LayerCard>
+      <LayerCard.Primary className="overflow-x-auto p-0">
+        <Table layout="auto" className="min-w-[48rem]">
+          <Table.Header>
+            <Table.Row>
+              <Table.Head>{t("templates.scaleSets.columns.name")}</Table.Head>
+              <Table.Head>{t("templates.profiles.active")}</Table.Head>
+              <Table.Head>{t("templates.profiles.usedBy")}</Table.Head>
+              <Table.Head>{t("templates.profiles.leftOut")}</Table.Head>
+              <Table.Head>{t("templates.profiles.preinstalled")}</Table.Head>
+              {canAct && (
+                <Table.Head>
+                  <span className="sr-only">{t("templates.scaleSets.columns.actions")}</span>
+                </Table.Head>
+              )}
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {profiles.map((p) => {
+              const leftOut = (p.remove ?? []).map((id) => (byID.get(id) ? componentLabel(byID.get(id)!) : id));
+              const pre = preinstalled(p);
+              const users = p.used_by ?? [];
+              return (
+                <Table.Row key={p.name}>
+                  <Table.Cell className="font-medium">{p.name}</Table.Cell>
+                  <Table.Cell>
+                    <ActiveTemplate p={p} release={p.active_template_id ? releases.get(p.active_template_id) : undefined} />
+                  </Table.Cell>
+                  <Table.Cell>{users.length > 0 ? users.join(", ") : <span className="text-kumo-subtle">{t("templates.profiles.nobody")}</span>}</Table.Cell>
+                  <Table.Cell>
+                    {leftOut.length > 0 ? <Truncate className="max-w-64" text={leftOut.join(" · ")} /> : <span className="text-kumo-subtle">{t("templates.profiles.nothingLeftOut")}</span>}
+                  </Table.Cell>
+                  <Table.Cell>{pre.length > 0 ? pre.join(" · ") : <span className="text-kumo-subtle">{t("templates.profiles.nothingPreinstalled")}</span>}</Table.Cell>
+                  {canAct && (
+                    <Table.Cell className="whitespace-nowrap">
+                      <ProfileActions p={p} onEdit={() => onEdit(p)} onDelete={() => onDelete(p)} />
+                    </Table.Cell>
+                  )}
+                </Table.Row>
+              );
+            })}
+          </Table.Body>
+        </Table>
+      </LayerCard.Primary>
+    </LayerCard>
+  );
+}
+
 export function ProfilesTab({ canAct }: { canAct: boolean }) {
   const t = useT();
   const q = useTemplateProfiles();
@@ -318,6 +392,7 @@ export function ProfilesTab({ canAct }: { canAct: boolean }) {
   const releases = new Map((versions.data?.templates ?? []).map((v) => [v.id, v.slim_release]));
   const [editing, setEditing] = useState<TemplateProfile | "new" | null>(null);
   const [deleting, setDeleting] = useState<string>();
+  const [view, setView] = useViewMode("template-profiles", "cards");
   if (q.isLoading) return <Loading />;
   if (q.error || !q.data) return <ErrorState error={q.error} />;
   const profiles = q.data.profiles ?? [];
@@ -327,14 +402,19 @@ export function ProfilesTab({ canAct }: { canAct: boolean }) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-3xl text-sm text-kumo-subtle">{t("templates.profiles.description")}</p>
-        {canAct && (
-          <Button variant="secondary" icon={PlusIcon} onClick={() => setEditing("new")}>
-            {t("templates.profiles.new")}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <ViewToggle value={view} onChange={setView} />
+          {canAct && (
+            <Button variant="secondary" icon={PlusIcon} onClick={() => setEditing("new")}>
+              {t("templates.profiles.new")}
+            </Button>
+          )}
+        </div>
       </div>
       {profiles.length === 0 ? (
         <Empty icon={<StackIcon size={48} className="text-kumo-inactive" />} title={t("templates.profiles.tab")} />
+      ) : view === "list" ? (
+        <ProfileTable profiles={profiles} releases={releases} components={components} canAct={canAct} onEdit={setEditing} onDelete={(p) => setDeleting(p.name)} />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           {profiles.map((p) => (

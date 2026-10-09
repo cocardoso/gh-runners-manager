@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Badge, Empty, LayerCard, Link, Table } from "@cloudflare/kumo";
 import { ClockCounterClockwiseIcon, CubeIcon, FunnelSimpleIcon } from "@phosphor-icons/react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -8,6 +8,8 @@ import { ErrorState, Loading, Page, RelativeTime, Truncate, useNow } from "@/com
 import { DetailTabs } from "@/components/detail-tabs";
 import { EnvironmentStateBadge, JobStatusBadge } from "@/components/status-badge";
 import { ListToolbar } from "@/components/list-toolbar";
+import { ViewToggle } from "@/components/view-toggle";
+import { useViewMode } from "@/lib/view-mode";
 import { AppPagination } from "@/components/app-pagination";
 import { currentFormatLocale, useT } from "@/i18n";
 import { durationBetween, formatDuration, formatMB, formatNumber } from "@/lib/format";
@@ -63,6 +65,29 @@ function EnvLink({ env }: { env: Environment }) {
   );
 }
 
+/** An environment as a card: its id and state, then a few facts. */
+function EnvironmentCard({ e, badges, facts, note }: { e: Environment; badges: ReactNode; facts: [string, ReactNode][]; note?: ReactNode }) {
+  return (
+    <article aria-label={e.id} className="flex min-w-0 flex-col gap-2 rounded-lg border border-kumo-line bg-kumo-base p-3">
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="min-w-0">
+          <EnvLink env={e} />
+          {note}
+        </div>
+        <div className="flex shrink-0 flex-wrap justify-end gap-1">{badges}</div>
+      </div>
+      <dl className="grid grid-cols-2 gap-2 text-sm">
+        {facts.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <dt className="text-xs text-kumo-subtle">{label}</dt>
+            <dd className="min-w-0">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </article>
+  );
+}
+
 export function EnvironmentsPage() {
   const search = useSearch({ strict: false }) as ListSearch;
   const navigate = useNavigate();
@@ -73,6 +98,7 @@ export function EnvironmentsPage() {
   const sets = useScaleSets();
   const jobs = useJobs({ limit: 1000 });
   const [hovering, setHovering] = useState(false);
+  const [view, setView] = useViewMode("environments", "list");
   const set = (patch: Partial<ListSearch>) =>
     void navigate({ to: "/environments", search: (prev: ListSearch) => ({ ...prev, page: undefined, ...patch }), replace: true });
 
@@ -185,6 +211,53 @@ export function EnvironmentsPage() {
     </Table>
   );
 
+  const failedNote = (e: Environment) =>
+    e.failure_stage ? <Truncate className="text-xs text-kumo-danger" text={t("environments.list.failedAt", { stage: e.failure_stage, reason: e.failure_reason ?? "" })} /> : undefined;
+  const cards = (
+    <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
+      {rows.map((e) =>
+        tab === "history" ? (
+          <EnvironmentCard
+            key={e.id}
+            e={e}
+            note={failedNote(e)}
+            badges={
+              e.failure_stage ? (
+                <EnvironmentStateBadge state="failed" />
+              ) : e.job_id && jobsById.get(e.job_id)?.status === "completed" && jobsById.get(e.job_id)?.result ? (
+                <JobStatusBadge status="completed" result={jobsById.get(e.job_id)!.result} />
+              ) : null
+            }
+            facts={[
+              [t("environments.list.col.scaleSet"), e.scale_set],
+              [t("environments.list.col.job"), <JobCell key="job" id={e.job_id} jobs={jobsById} />],
+              [t("environments.list.col.lived"), formatDuration(durationBetween(e.created_at, e.state_changed_at))],
+              [t("environments.list.col.ended"), <RelativeTime key="ended" value={e.state_changed_at} />],
+            ]}
+          />
+        ) : (
+          <EnvironmentCard
+            key={e.id}
+            e={e}
+            note={failedNote(e)}
+            badges={
+              <>
+                <EnvironmentStateBadge state={e.state} />
+                {e.state === "failed" && <KeptBadge env={e} keepMinutes={keepMinutes.get(e.scale_set)} known={sets.data !== undefined} />}
+              </>
+            }
+            facts={[
+              [t("environments.list.col.scaleSet"), e.scale_set],
+              [t("environments.list.col.job"), <JobCell key="job" id={e.job_id} jobs={jobsById} />],
+              [t("environments.list.col.memory"), formatMB(e.memory_mb)],
+              [t("environments.list.col.created"), <RelativeTime key="created" value={e.created_at} />],
+            ]}
+          />
+        ),
+      )}
+    </div>
+  );
+
   let body;
   // While the other tab's list loads, its placeholder is this tab's data: show loading,
   // not a list (or an empty state) that is not true.
@@ -212,7 +285,7 @@ export function EnvironmentsPage() {
     body = (
       <>
         <div className="overflow-x-auto" onPointerEnter={() => setHovering(true)} onPointerLeave={() => setHovering(false)}>
-          {tab === "history" ? historyTable : runningTable}
+          {view === "cards" ? cards : tab === "history" ? historyTable : runningTable}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-kumo-line px-3 py-2">
           <span className="text-sm text-kumo-subtle" aria-live="polite">
@@ -239,7 +312,7 @@ export function EnvironmentsPage() {
     });
 
   return (
-    <Page title={t("environments.list.title")} description={t("environments.list.description")}>
+    <Page title={t("environments.list.title")} description={t("environments.list.description")} actions={<ViewToggle value={view} onChange={setView} />}>
       <DetailTabs push tabs={tabs} value={tab}>
         <ListToolbar
           search={search.q ?? ""}

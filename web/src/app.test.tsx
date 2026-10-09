@@ -32,7 +32,8 @@ test("the sidebar navigates between pages", async () => {
   renderApp("/");
   await screen.findByRole("heading", { level: 1, name: "Overview" });
   const nav = screen.getByRole("complementary", { name: "Main navigation" });
-  await user.click(within(nav).getByRole("link", { name: /Jobs/ }));
+  await user.click(within(nav).getByRole("button", { name: /^Jobs/ }));
+  await user.click(within(nav).getByRole("link", { name: "In progress" }));
   expect(await screen.findByRole("heading", { level: 1, name: "Jobs" })).toBeInTheDocument();
 });
 

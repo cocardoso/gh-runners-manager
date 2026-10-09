@@ -1,5 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Empty, LayerCard, Link, Table } from "@cloudflare/kumo";
+import { ViewToggle } from "@/components/view-toggle";
+import { useViewMode, type ViewMode } from "@/lib/view-mode";
 import { BriefcaseIcon, FunnelSimpleIcon, HourglassIcon } from "@phosphor-icons/react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { Job } from "@/api/client";
@@ -46,14 +48,15 @@ export function JobsPage() {
   const search = useSearch({ strict: false }) as ListSearch;
   const t = useT();
   const history = search.tab === "history";
+  const [view, setView] = useViewMode("jobs", "list");
   const tabs = [
     { value: "now", label: t("overview.jobs.tabs.inProgress") },
     { value: "history", label: t("overview.jobs.tabs.history") },
   ];
   return (
-    <Page title={t("overview.jobs.title")} description={t("overview.jobs.description")}>
+    <Page title={t("overview.jobs.title")} description={t("overview.jobs.description")} actions={<ViewToggle value={view} onChange={setView} />}>
       <DetailTabs push tabs={tabs} value={history ? "history" : "now"}>
-        {history ? <JobHistory search={search} /> : <JobsInProgress search={search} />}
+        {history ? <JobHistory search={search} view={view} /> : <JobsInProgress search={search} view={view} />}
       </DetailTabs>
     </Page>
   );
@@ -71,7 +74,7 @@ function JobColumn({ j }: { j: Job }) {
 }
 
 /** Jobs assigned to a scale set or running now. The API takes one status, so both are asked for. */
-function JobsInProgress({ search }: { search: ListSearch }) {
+function JobsInProgress({ search, view }: { search: ListSearch; view: ViewMode }) {
   const t = useT();
   const now = useNow();
   const set = useListNav();
@@ -93,9 +96,14 @@ function JobsInProgress({ search }: { search: ListSearch }) {
   return (
     <JobList
       search={search}
+      view={view}
       set={set}
       all={all}
       filtered={filtered}
+      facts={(j) => [
+        [t("overview.jobs.columns.queued"), <RelativeTime key="q" value={j.queued_at} />],
+        [t("overview.jobs.columns.runningFor"), <JobDuration key="d" job={j} now={now} />],
+      ]}
       capped={(assigned.data?.length ?? 0) >= LIST_LIMIT || (running.data?.length ?? 0) >= LIST_LIMIT}
       isLoading={assigned.isLoading || running.isLoading}
       error={assigned.error ?? running.error}
@@ -141,7 +149,7 @@ function JobsInProgress({ search }: { search: ListSearch }) {
 }
 
 /** Completed jobs, newest first, filtered by result, scale set, repository and period. */
-function JobHistory({ search }: { search: ListSearch }) {
+function JobHistory({ search, view }: { search: ListSearch; view: ViewMode }) {
   const t = useT();
   const now = useNow();
   const set = useListNav();
@@ -166,9 +174,14 @@ function JobHistory({ search }: { search: ListSearch }) {
   return (
     <JobList
       search={search}
+      view={view}
       set={set}
       all={all}
       filtered={filtered}
+      facts={(j) => [
+        [t("overview.jobs.columns.duration"), <JobDuration key="d" job={j} now={now} />],
+        [t("overview.jobs.columns.finished"), <RelativeTime key="f" value={finishedAt(j)} />],
+      ]}
       capped={all.length >= LIST_LIMIT}
       isLoading={jobs.isLoading}
       error={jobs.error}
@@ -240,11 +253,39 @@ function repoFilter(t: T, search: ListSearch, all: Job[]): FilterDef {
   return { key: "repo", label: t("overview.jobs.columns.repository"), value: search.repo, options: Object.fromEntries(repos.map((s) => [s, s])) };
 }
 
+/** A job as a card: name, status, where it runs and the tab's times. */
+function JobCard({ j, facts }: { j: Job; facts: [string, ReactNode][] }) {
+  return (
+    <article aria-label={j.display_name || j.id} className="flex min-w-0 flex-col gap-2 rounded-lg border border-kumo-line bg-kumo-base p-3">
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="min-w-0">
+          <Link href={`/jobs/${encodeURIComponent(j.id)}`} className="block truncate font-medium" title={j.display_name || j.id}>
+            {j.display_name || j.id}
+          </Link>
+          {j.workflow_ref && <Truncate className="text-xs text-kumo-subtle" text={j.workflow_ref} />}
+        </div>
+        <JobStatusBadge status={j.status} result={j.result} />
+      </div>
+      <Truncate className="text-sm text-kumo-subtle" text={`${j.repository} · ${j.scale_set}`} />
+      <dl className="grid grid-cols-2 gap-2 text-sm">
+        {facts.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <dt className="text-xs text-kumo-subtle">{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </article>
+  );
+}
+
 function JobList({
   search,
+  view,
   set,
   all,
   filtered,
+  facts,
   capped,
   isLoading,
   error,
@@ -254,9 +295,12 @@ function JobList({
   row,
 }: {
   search: ListSearch;
+  view: ViewMode;
   set: (patch: Partial<ListSearch>) => void;
   all: Job[];
   filtered: Job[];
+  /** What a card shows below the job: the tab's times. */
+  facts: (j: Job) => [string, ReactNode][];
   capped: boolean;
   isLoading: boolean;
   error: unknown;
@@ -289,18 +333,26 @@ function JobList({
   else
     body = (
       <>
-        <div className="overflow-x-auto" onPointerEnter={() => setHovering(true)} onPointerLeave={() => setHovering(false)}>
-          <Table layout="auto" className="min-w-[56rem]">
-            <Table.Header>
-              <Table.Row>{head}</Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {rows.map((j) => (
-                <Table.Row key={j.id}>{row(j)}</Table.Row>
-              ))}
-            </Table.Body>
-          </Table>
-        </div>
+        {view === "cards" ? (
+          <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3" onPointerEnter={() => setHovering(true)} onPointerLeave={() => setHovering(false)}>
+            {rows.map((j) => (
+              <JobCard key={j.id} j={j} facts={facts(j)} />
+            ))}
+          </div>
+        ) : (
+          <div className="overflow-x-auto" onPointerEnter={() => setHovering(true)} onPointerLeave={() => setHovering(false)}>
+            <Table layout="auto" className="min-w-[56rem]">
+              <Table.Header>
+                <Table.Row>{head}</Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {rows.map((j) => (
+                  <Table.Row key={j.id}>{row(j)}</Table.Row>
+                ))}
+              </Table.Body>
+            </Table>
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-kumo-line px-3 py-2">
           <span className="text-sm text-kumo-subtle" aria-live="polite">
             {pending > 0

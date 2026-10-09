@@ -1,4 +1,5 @@
 import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderApp } from "@/test/render-app";
 import { mockApi } from "@/test/api-mock";
 import { FakeEventSource } from "@/test/fake-event-source";
@@ -55,7 +56,7 @@ test("lists each repository and organization with its scale sets, credential and
   expect(screen.getByRole("link", { name: "acme" })).toHaveAttribute("href", "https://github.com/acme");
   expect(within(org).getByText("Organization")).toBeInTheDocument();
   expect(within(org).getByText(/acme\/api/)).toBeInTheDocument();
-  expect(within(org).getByRole("link", { name: "acme-big" })).toHaveAttribute("href", "/scale-sets");
+  expect(within(org).getByRole("link", { name: "acme-big" })).toHaveAttribute("href", "/scale-sets#acme-big");
   expect(within(org).getByText("org-token")).toBeInTheDocument();
   expect(within(org).getByText("2")).toBeInTheDocument();
   expect(within(org).getByText("4 jobs")).toBeInTheDocument();
@@ -106,4 +107,15 @@ test("the counts lead to the matching jobs, and an organization's hidden reposit
   const orgRow = screen.getByRole("link", { name: "acme" }).closest("tr")!;
   expect(within(orgRow).getByRole("link", { name: "2" }).getAttribute("href")).toBe("/jobs?scale_set=acme-big");
   expect(within(orgRow).getByText(/\+55 more/)).toBeInTheDocument(); // 60 seen, 5 shown
+});
+
+test("repositories can be shown as cards, linking each scale set to its card", async () => {
+  mockApi({ "/api/v1/repositories": data });
+  const user = userEvent.setup();
+  renderApp("/repositories");
+  await screen.findByRole("table");
+  await user.click(screen.getByRole("button", { name: "Cards" }));
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "acme-big" })).toHaveAttribute("href", "/scale-sets#acme-big");
+  expect(screen.getAllByText("Last job").length).toBe(2);
 });
