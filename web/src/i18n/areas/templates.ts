@@ -147,8 +147,8 @@ const en = {
     field: {
       name: "Name",
       nameHelp: "Lower-case letters, digits and dashes.",
-      components: "Leave out of GitHub's image",
-      componentsHelp: "Leaving tools out shortens builds and saves disk; jobs do not start faster.",
+      components: "Optional tools in GitHub's image",
+      componentsHelp: "Uncheck what your jobs do not use. Leaving tools out shortens builds and saves disk; jobs do not start faster.",
       toolcache: "Preinstall in the tool cache",
       toolcacheHelp: "Versions actions/setup-* finds without downloading them, such as 22, 24.",
       apt: "Extra Ubuntu packages",
@@ -165,7 +165,7 @@ const en = {
       zstd: "actions/cache compresses with it",
       nodejs: "Node.js on the PATH, for jobs without setup-node",
       python: "pip and pipx (Python itself stays)",
-      "azure-cli": "the Azure DevOps CLI needs it",
+      "azure-cli": "unchecking it also leaves out the Azure DevOps CLI",
     },
   },
   scaleSets: {
@@ -438,8 +438,8 @@ export const templates: Record<Locale, typeof en> = {
       field: {
         name: "Nome",
         nameHelp: "Letras minúsculas, números e hífens.",
-        components: "Deixar de fora da imagem do GitHub",
-        componentsHelp: "Deixar ferramentas de fora encurta o build e economiza disco; os jobs não começam mais rápido.",
+        components: "Ferramentas opcionais da imagem do GitHub",
+        componentsHelp: "Desmarque o que seus jobs não usam. Deixar ferramentas de fora encurta o build e economiza disco; os jobs não começam mais rápido.",
         toolcache: "Pré-instalar no tool cache",
         toolcacheHelp: "Versões que o actions/setup-* encontra sem baixar, como 22, 24.",
         apt: "Pacotes extras do Ubuntu",
@@ -456,7 +456,7 @@ export const templates: Record<Locale, typeof en> = {
         zstd: "o actions/cache comprime com ele",
         nodejs: "Node.js no PATH, para jobs sem setup-node",
         python: "pip e pipx (o Python continua)",
-        "azure-cli": "o Azure DevOps CLI depende dele",
+        "azure-cli": "desmarcar também tira o Azure DevOps CLI",
       },
     },
     scaleSets: {
@@ -726,8 +726,8 @@ export const templates: Record<Locale, typeof en> = {
       field: {
         name: "Nombre",
         nameHelp: "Letras minúsculas, dígitos y guiones.",
-        components: "Dejar fuera de la imagen de GitHub",
-        componentsHelp: "Dejar herramientas fuera acorta el build y ahorra disco; los jobs no empiezan más rápido.",
+        components: "Herramientas opcionales de la imagen de GitHub",
+        componentsHelp: "Desmarca lo que tus jobs no usan. Dejar herramientas fuera acorta el build y ahorra disco; los jobs no empiezan más rápido.",
         toolcache: "Preinstalar en el tool cache",
         toolcacheHelp: "Versiones que actions/setup-* encuentra sin descargarlas, como 22, 24.",
         apt: "Paquetes extra de Ubuntu",
@@ -744,7 +744,7 @@ export const templates: Record<Locale, typeof en> = {
         zstd: "actions/cache comprime con él",
         nodejs: "Node.js en el PATH, para jobs sin setup-node",
         python: "pip y pipx (Python se queda)",
-        "azure-cli": "la CLI de Azure DevOps lo necesita",
+        "azure-cli": "desmarcarlo también quita la CLI de Azure DevOps",
       },
     },
     scaleSets: {
@@ -1015,8 +1015,8 @@ export const templates: Record<Locale, typeof en> = {
       field: {
         name: "Nom",
         nameHelp: "Lettres minuscules, chiffres et tirets.",
-        components: "Laisser de côté dans l'image de GitHub",
-        componentsHelp: "Laisser des outils de côté raccourcit le build et économise du disque ; les jobs ne démarrent pas plus vite.",
+        components: "Outils facultatifs de l'image de GitHub",
+        componentsHelp: "Décochez ce que vos jobs n'utilisent pas. Laisser des outils de côté raccourcit le build et économise du disque ; les jobs ne démarrent pas plus vite.",
         toolcache: "Préinstaller dans le tool cache",
         toolcacheHelp: "Versions qu'actions/setup-* trouve sans les télécharger, comme 22, 24.",
         apt: "Paquets Ubuntu supplémentaires",
@@ -1033,7 +1033,7 @@ export const templates: Record<Locale, typeof en> = {
         zstd: "actions/cache compresse avec lui",
         nodejs: "Node.js dans le PATH, pour les jobs sans setup-node",
         python: "pip et pipx (Python reste)",
-        "azure-cli": "la CLI Azure DevOps en dépend",
+        "azure-cli": "le décocher retire aussi la CLI Azure DevOps",
       },
     },
     scaleSets: {
@@ -1304,8 +1304,8 @@ export const templates: Record<Locale, typeof en> = {
       field: {
         name: "Nome",
         nameHelp: "Lettere minuscole, cifre e trattini.",
-        components: "Lasciare fuori dall'immagine di GitHub",
-        componentsHelp: "Lasciare fuori strumenti accorcia la build e risparmia disco; i job non partono più in fretta.",
+        components: "Strumenti opzionali dell'immagine di GitHub",
+        componentsHelp: "Togli la spunta a ciò che i tuoi job non usano. Lasciare fuori strumenti accorcia la build e risparmia disco; i job non partono più in fretta.",
         toolcache: "Preinstallare nel tool cache",
         toolcacheHelp: "Versioni che actions/setup-* trova senza scaricarle, come 22, 24.",
         apt: "Pacchetti Ubuntu extra",
@@ -1322,7 +1322,7 @@ export const templates: Record<Locale, typeof en> = {
         zstd: "actions/cache comprime con esso",
         nodejs: "Node.js nel PATH, per i job senza setup-node",
         python: "pip e pipx (Python resta)",
-        "azure-cli": "la CLI di Azure DevOps ne ha bisogno",
+        "azure-cli": "togliere la spunta toglie anche la CLI di Azure DevOps",
       },
     },
     scaleSets: {

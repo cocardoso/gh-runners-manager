@@ -304,9 +304,26 @@ test("a new profile is saved with what it leaves out and preinstalls", async () 
   await user.click(await screen.findByRole("button", { name: "New profile" }));
   const dialog = await screen.findByRole("dialog");
   await user.type(within(dialog).getByLabelText("Name"), "lean");
-  // Leaving out the Azure CLI leaves out the Azure DevOps CLI, which needs it.
-  await user.click(within(dialog).getByRole("checkbox", { name: "Azure CLI" }));
-  expect(within(dialog).getByRole("checkbox", { name: "Azure CLI (azure-devops)" })).toBeChecked();
+  // Checked means the image has it: everything starts checked; unchecking leaves it out.
+  const azure = within(dialog).getByRole("checkbox", { name: "Azure CLI" });
+  const devops = within(dialog).getByRole("checkbox", { name: "Azure CLI (azure-devops)" });
+  expect(azure).toBeChecked();
+  await user.click(azure);
+  // The Azure DevOps CLI needs the Azure CLI: it goes too, and coming back brings both.
+  expect(azure).not.toBeChecked();
+  expect(devops).not.toBeChecked();
+  await user.click(devops);
+  expect(azure).toBeChecked();
+  expect(devops).toBeChecked();
+  // Unchecking the DevOps CLI alone keeps the Azure CLI; checking the Azure CLI alone
+  // does not bring back the DevOps CLI.
+  await user.click(devops);
+  expect(azure).toBeChecked();
+  expect(devops).not.toBeChecked();
+  await user.click(azure);
+  await user.click(azure);
+  expect(devops).not.toBeChecked();
+  await user.click(azure);
   await user.type(within(dialog).getByLabelText("Python"), "3.12");
   await user.type(within(dialog).getByLabelText("Extra Ubuntu packages"), "zip, libpq-dev");
   await user.click(within(dialog).getByRole("button", { name: "Save profile" }));
@@ -317,6 +334,31 @@ test("a new profile is saved with what it leaves out and preinstalls", async () 
     apt: ["zip", "libpq-dev"],
     script: "",
   });
+});
+
+test("a saved profile opens with what it leaves out unchecked", async () => {
+  mockApi({
+    "/api/v1/settings": settings,
+    "/api/v1/template-profiles": {
+      profiles: [
+        { name: "default", remove: [], toolcache: {}, apt: [], used_by: [] },
+        { name: "lean", remove: ["github-cli"], toolcache: {}, apt: [], used_by: [] },
+      ],
+      components: [
+        { id: "azure-cli", report: ["Azure CLI"] },
+        { id: "github-cli", report: ["GitHub CLI"] },
+      ],
+      toolcache_tools: [],
+    },
+  });
+  const user = userEvent.setup();
+  renderApp("/templates?tab=profiles");
+  const lean = await screen.findByRole("region", { name: "lean" });
+  await user.click(within(lean).getByRole("button", { name: "Edit" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("checkbox", { name: "GitHub CLI" })).not.toBeChecked();
+  expect(within(dialog).getByRole("checkbox", { name: "Azure CLI" })).toBeChecked();
+  expect(within(dialog).getByRole("group", { name: "Optional tools in GitHub's image" })).toHaveAccessibleDescription(/Uncheck what your jobs do not use/);
 });
 
 test("versions are shown and built per profile", async () => {

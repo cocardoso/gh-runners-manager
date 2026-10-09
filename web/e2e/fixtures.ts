@@ -1,8 +1,21 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
+
+/** A TCP port nothing listens on now (the demo keeps it across restarts). */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      srv.close(() => (addr && typeof addr === "object" ? resolve(addr.port) : reject(new Error("no port"))));
+    });
+  });
+}
 
 /** A `ghrm demo` process that can be stopped and started again on the same port and state. */
 export class Demo {
@@ -17,11 +30,17 @@ export class Demo {
   async start() {
     const bin = process.env.GHRM_E2E_BIN;
     if (!bin) throw new Error("GHRM_E2E_BIN is not set (global setup did not run)");
-    this.proc = spawn(bin, ["demo", "--listen", `127.0.0.1:${this.port}`, "--data-dir", path.join(this.dataDir, "state"), "--seed", "42", "--tick", "250ms", "--job-seconds", "4-8"], {
-      stdio: "ignore",
+    const proc = spawn(bin, ["demo", "--listen", `127.0.0.1:${this.port}`, "--data-dir", path.join(this.dataDir, "state"), "--seed", "42", "--tick", "250ms", "--job-seconds", "4-8"], {
+      stdio: ["ignore", "ignore", "pipe"],
     });
+    this.proc = proc;
+    let stderr = "";
+    proc.stderr?.on("data", (b: Buffer) => (stderr = (stderr + b.toString()).slice(-2000)));
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
+      // A demo that exited (the port was taken meanwhile) must not leave the tests talking
+      // to whatever else answers on that port.
+      if (proc.exitCode !== null) throw new Error(`the demo exited (${proc.exitCode}): ${stderr.trim()}`);
       try {
         if ((await fetch(`${this.url}/readyz`)).ok) return;
       } catch {
@@ -67,8 +86,9 @@ export const test = base.extend<object, { demo: Demo }>({
   },
   demo: [
     // eslint-disable-next-line no-empty-pattern
-    async ({}, use, workerInfo) => {
-      const demo = new Demo(18_100 + workerInfo.workerIndex);
+    async ({}, use) => {
+      // A free port, not a fixed one: another local server may hold any given port.
+      const demo = new Demo(await freePort());
       await demo.start();
       await use(demo);
       await demo.stop();
