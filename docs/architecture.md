@@ -28,7 +28,7 @@ This document holds the architecture diagrams of gh-runners-manager (`ghrm`). It
 | Agent build and self-test modes | `internal/agent` (`build.go`, `selftest.go`) |
 | Sign-in: admin account (argon2id), sessions, CSRF, audit | `internal/auth`, `internal/api/auth.go` |
 | Secrets sealed at rest (AES-256-GCM, separate key file), `ghrm secret` | `internal/secrets` |
-| Editable credentials and scale sets, listener supervisor | `internal/settings`, `cmd/ghrm/supervisor.go` |
+| Editable credentials, scale sets and capacity limits, listener supervisor | `internal/settings`, `cmd/ghrm/supervisor.go` |
 | Repository picker and token check: what a credential can register runners for (`GET /api/v1/credentials/{name}/targets`, `POST /api/v1/credentials/check`) | `internal/github/targets.go`, `internal/api/credential_targets.go` |
 | Prometheus metrics, daily backups | `internal/metrics`, `internal/backup` |
 | Repositories view: scale sets and job activity per GitHub repository or organization (`GET /api/v1/repositories`) | `internal/api/repositories.go`, `internal/store/activity.go` |
@@ -177,16 +177,16 @@ sequenceDiagram
 
 ## 1c. Editable settings
 
-Credentials and scale sets come from two places: `ghrm.yaml` (read-only in the UI) and the UI (stored in SQLite; tokens sealed in the vault under `github/<name>`). A change applies without a restart. Template profiles are edited in the UI only (table `template_profiles`); a profile a scale set uses cannot be deleted, and the default one always exists.
+Credentials and scale sets come from two places: `ghrm.yaml` (read-only in the UI) and the UI (stored in SQLite; tokens sealed in the vault under `github/<name>`). A change applies without a restart. The capacity limits (`GET/PUT /api/v1/capacity`) come from the `capacity` section of `ghrm.yaml` when it has one (read-only in the UI), else from the UI (the `capacity` key of the `meta` table), else the defaults; the scheduler reads them on every pass. A memory budget below a scale set's environment is refused (422), as is a scale set larger than the budget, since its jobs would never start. The supervisor restarts a listener only when its GitHub session changes (name, URL, credential, runner group, labels, max concurrent); sizes, warm runners, the template profile and the keep time are read from the controller, and a listener stopped on purpose leaves no error on its scale set. Template profiles are edited in the UI only (table `template_profiles`); a profile a scale set uses cannot be deleted, and the default one always exists.
 
 ```mermaid
 flowchart LR
     file["ghrm.yaml"] --> reg["settings.Registry"]
-    ui["UI: Settings, Scale sets"] -- "PUT / DELETE (audited)" --> reg
+    ui["UI: Settings (credentials, capacity), Scale sets"] -- "PUT / DELETE (audited)" --> reg
     reg -- "tokens" --> vault["Vault (AES-256-GCM, key in secret.key 0600)"]
     reg -- "rows" --> db[("SQLite")]
-    reg -- "change" --> ctl["Controller: add, update, drain removed"]
-    reg -- "change" --> sup["Supervisor: start, restart, stop listeners"]
+    reg -- "change" --> ctl["Controller: add, update, drain removed; capacity limits"]
+    reg -- "change" --> sup["Supervisor: start, restart (session settings only), stop listeners"]
     reg -- "current token" --> gh["GitHub client (rebuilt when URL or token change)"]
     ui -- "GET credentials/{name}/targets, POST credentials/check" --> tgt["Targets (5-minute cache per credential and token)"]
     reg -- "token" --> tgt

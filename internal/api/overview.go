@@ -241,10 +241,11 @@ func overview(ctx context.Context, d Deps, now time.Time) (Overview, error) {
 			ov.KPIs.ReadyRunners++
 		}
 	}
-	if d.Config != nil {
-		ov.Capacity.EnvironmentsMax = d.Config.Capacity.MaxEnvironments
-		ov.Capacity.MemoryBudgetMB = d.Config.Capacity.MemoryBudgetMB
-		ov.Capacity.DiskMaxPercent = d.Config.Capacity.MaxDiskPercent
+	if d.Config != nil || d.Settings != nil {
+		limits, _ := d.capacityLimits()
+		ov.Capacity.EnvironmentsMax = limits.MaxEnvironments
+		ov.Capacity.MemoryBudgetMB = limits.MemoryBudgetMB
+		ov.Capacity.DiskMaxPercent = limits.MaxDiskPercent
 	}
 	if d.Capacity != nil {
 		if rc, err := d.Capacity(ctx); err == nil {
@@ -287,8 +288,9 @@ func settingsView(d Deps) Settings {
 		"vmid_range": []int{p.VMIDRange.Start, p.VMIDRange.End}, "storage": p.Storage, "thin_pool": p.ThinPool,
 		"firewall_settle": p.FirewallSettle.Std().String(), "tls_pinned": p.TLSFingerprint != ""}
 	s.Ingest = map[string]string{"listen": c.Ingest.Listen, "advertise_url": c.Ingest.AdvertiseURL}
-	s.Capacity = map[string]any{"max_environments": c.Capacity.MaxEnvironments, "memory_budget_mb": c.Capacity.MemoryBudgetMB,
-		"memory_margin_mb": c.Capacity.MemoryMarginMB, "max_disk_percent": c.Capacity.MaxDiskPercent}
+	limits, src := d.capacityLimits()
+	s.Capacity = map[string]any{"max_environments": limits.MaxEnvironments, "memory_budget_mb": limits.MemoryBudgetMB,
+		"memory_margin_mb": limits.MemoryMarginMB, "max_disk_percent": limits.MaxDiskPercent, "source": src}
 	for _, ss := range c.ScaleSets {
 		s.ScaleSets = append(s.ScaleSets, map[string]any{"name": ss.Name, "url": ss.URL, "credential": ss.Credential, "runner_group": ss.RunnerGroup,
 			"labels": ss.Labels, "max_concurrent": ss.MaxConcurrent, "cores": ss.Cores, "memory_mb": ss.MemoryMB, "keep_on_failure_minutes": ss.KeepOnFailureMinutes,

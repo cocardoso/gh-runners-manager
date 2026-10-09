@@ -4,8 +4,8 @@ import { ErrorState, Loading, Page } from "@/components/common";
 import { DefinitionList } from "@/components/definition-list";
 import { CredentialsEditor } from "@/components/credentials-editor";
 import { CacheCard } from "@/components/cache-card";
+import { CapacityCard } from "@/components/capacity-card";
 import { HistoryCard } from "@/components/history-card";
-import { formatMB, formatPercent } from "@/lib/format";
 import { useT } from "@/i18n";
 
 type Map = Record<string, unknown>;
@@ -27,7 +27,6 @@ export function SettingsPage() {
   if (settings.error || !settings.data) return <Page title={t("settings.title")}><ErrorState error={settings.error} /></Page>;
   const s = settings.data;
   const p = (s.proxmox ?? {}) as Map;
-  const c = (s.capacity ?? {}) as Map;
   const i = (s.ingest ?? {}) as Map;
   const range = Array.isArray(p.vmid_range) ? `${p.vmid_range[0]}–${p.vmid_range[1]}` : "—";
   return (
@@ -35,6 +34,7 @@ export function SettingsPage() {
       <Section title={t("settings.sections.credentials")}>
         <CredentialsEditor />
       </Section>
+      <CapacityCard />
       <CacheCard />
       <HistoryCard />
       <Section title={t("settings.sections.controlPlane")}>
@@ -65,16 +65,6 @@ export function SettingsPage() {
             [t("settings.fields.storage"), text(p.storage)],
             [t("settings.fields.thinPool"), text(p.thin_pool)],
             [t("settings.fields.firewallSettle"), text(p.firewall_settle)],
-          ]}
-        />
-      </Section>
-      <Section title={t("settings.sections.capacity")}>
-        <DefinitionList
-          items={[
-            [t("settings.fields.maxEnvironments"), text(c.max_environments)],
-            [t("settings.fields.memoryBudget"), typeof c.memory_budget_mb === "number" ? formatMB(c.memory_budget_mb) : "—"],
-            [t("settings.fields.memoryMargin"), typeof c.memory_margin_mb === "number" ? formatMB(c.memory_margin_mb) : "—"],
-            [t("settings.fields.maxDisk"), typeof c.max_disk_percent === "number" ? formatPercent(c.max_disk_percent / 100) : "—"],
           ]}
         />
       </Section>

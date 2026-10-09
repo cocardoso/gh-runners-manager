@@ -54,17 +54,37 @@ test("without a credential, one can be added without leaving the form", async ()
   expect(await within(dialog).findByText("home")).toBeInTheDocument();
 });
 
-test("memory is chosen in GB and failed environments are kept for a chosen time", async () => {
+test("memory is typed in GiB and failed environments are kept for a chosen time", async () => {
   const { calls, user, dialog } = await openNew({ "PUT /api/v1/scale-sets/big": noContent });
   await user.type(within(dialog).getByLabelText("Name"), "big");
   await user.type(within(dialog).getByLabelText("Repository or organization URL"), "https://github.com/octo/app");
-  await user.click(within(dialog).getByRole("combobox", { name: "Memory" }));
-  await user.click(await screen.findByRole("option", { name: "16 GB" }));
+  const memory = within(dialog).getByRole("spinbutton", { name: "Memory (GiB)" });
+  expect(memory).toHaveValue(4);
+  await user.clear(memory);
+  await user.type(memory, "3");
   await user.click(within(dialog).getByRole("combobox", { name: "Keep a failed environment" }));
   await user.click(await screen.findByRole("option", { name: "1 h" }));
   await user.click(within(dialog).getByRole("button", { name: "Save scale set" }));
   await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
-  expect(await calls.find((c) => c.method === "PUT")!.request.json()).toMatchObject({ memory_mb: 16384, keep_on_failure_minutes: 60, credential: "personal" });
+  expect(await calls.find((c) => c.method === "PUT")!.request.json()).toMatchObject({ memory_mb: 3072, keep_on_failure_minutes: 60, credential: "personal" });
+});
+
+test("memory must fit the memory budget and be at least half a GiB", async () => {
+  const { user, dialog } = await openNew();
+  await user.type(within(dialog).getByLabelText("Name"), "big");
+  await user.type(within(dialog).getByLabelText("Repository or organization URL"), "https://github.com/octo/app");
+  const memory = within(dialog).getByRole("spinbutton", { name: "Memory (GiB)" });
+  await user.clear(memory);
+  await user.type(memory, "20");
+  expect(await within(dialog).findByText("Above the memory budget (16 GB); raise it under Settings.")).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "Save scale set" })).toBeDisabled();
+  expect(within(dialog).getByText(/Fix the memory to save/)).toBeInTheDocument();
+  await user.clear(memory);
+  await user.type(memory, "0.25");
+  expect(within(dialog).getByText("At least 0.5 GiB.")).toBeInTheDocument();
+  await user.clear(memory);
+  await user.type(memory, "1.5");
+  expect(within(dialog).getByRole("button", { name: "Save scale set" })).toBeEnabled();
 });
 
 test("warm runners are saved and never exceed the jobs at a time", async () => {
@@ -104,16 +124,16 @@ test("a scale set picks its template profile", async () => {
   expect(await calls.find((c) => c.method === "PUT")!.request.json()).toMatchObject({ template_profile: "lean" });
 });
 
-test("a memory size outside the list, set earlier, stays selected", async () => {
+test("a memory size set earlier shows in GiB", async () => {
   mockApi({
-    "/api/v1/scale-sets": { scale_sets: [{ name: "odd", github_id: 1, desired: 0, live: 0, listening: true, waiting_since: "0001-01-01T00:00:00Z", source: "ui", settings: { url: "https://github.com/o/r", credential: "personal", memory_mb: 6144, cores: 2, max_concurrent: 1, keep_on_failure_minutes: 30 } }] },
+    "/api/v1/scale-sets": { scale_sets: [{ name: "odd", github_id: 1, desired: 0, live: 0, listening: true, waiting_since: "0001-01-01T00:00:00Z", source: "ui", settings: { url: "https://github.com/o/r", credential: "personal", memory_mb: 6656, cores: 2, max_concurrent: 1, keep_on_failure_minutes: 30 } }] },
     "/api/v1/credentials": { credentials: personal },
   });
   const user = userEvent.setup();
   renderApp("/scale-sets");
   await user.click(await screen.findByRole("button", { name: "Edit odd" }));
   const dialog = await screen.findByRole("dialog");
-  expect(within(dialog).getByRole("combobox", { name: "Memory" })).toHaveTextContent("6 GB");
+  expect(within(dialog).getByRole("spinbutton", { name: "Memory (GiB)" })).toHaveValue(6.5);
   expect(within(dialog).getByRole("combobox", { name: "Keep a failed environment" })).toHaveTextContent("30 min");
 });
 

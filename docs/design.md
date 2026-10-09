@@ -269,9 +269,11 @@ Creation is gated by global limits, which are evaluated at creation time:
 | Limit | Rule |
 |---|---|
 | Environments | Global maximum of concurrent environments, plus the per-scale-set maximum |
-| Memory | The sum of the memory limits of live environments must stay within a configured budget, **and** the host's available memory must be at least the environment's limit plus a safety margin (default 4 GiB). This protects other guests on a shared homelab host. |
+| Memory | The sum of the memory limits of live environments must stay within a configured budget (default 16 GiB), **and** the host's available memory must be at least the environment's limit plus a safety margin (default 4 GiB). This protects other guests on a shared homelab host. An LXC's memory is a cgroup limit, not a reservation (containers have no ballooning; Proxmox only spends what the processes use), so the budget may exceed the host's memory: the margin, measured on the host, is what stops new environments when memory runs short. |
 | Disk | No new environments while thin pool data or metadata usage is above a threshold (default 85%) |
 | CPU | Not limited; overcommit is allowed |
+
+The limits are set in the UI (Settings, Capacity) unless `ghrm.yaml` has a `capacity` section, which then wins and is shown read-only.
 
 - When capacity is short, waiting jobs are served first-in, first-out across scale sets. The UI shows why each job waits, for example "waiting for memory" or "scale set limit reached".
 - `warm_runners` defaults to 0. Warm runners trade idle memory for the cold start (about 15 s: clone, boot, firewall check and registration). Queued jobs are served before warm runners: the scheduler hands out capacity to assigned jobs first, and warm runners take what is left. Missing warm runners never count as waiting jobs. An idle runner past the idle timeout stays while its scale set has no more idle runners than `warm_runners`, and is replaced after an hour so it picks up a newer template (not while jobs are queued, as one may be on its way to it; a removed scale set keeps none).

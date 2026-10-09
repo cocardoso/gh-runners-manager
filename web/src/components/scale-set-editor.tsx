@@ -3,11 +3,12 @@ import { Badge, Banner, Button, ClipboardText, Combobox, Dialog, DialogRoot, Dia
 import { BookBookmarkIcon, BuildingsIcon, LockSimpleIcon, PlusIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type ScaleSetSettings, type Target } from "@/api/client";
-import { useCredentials, useCredentialTargets, useRefreshCredentialTargets, useScaleSets, useTemplateProfiles } from "@/api/queries";
+import { useCapacity, useCredentials, useCredentialTargets, useRefreshCredentialTargets, useScaleSets, useTemplateProfiles } from "@/api/queries";
 import { HelpLabel, helpField } from "@/components/help-tip";
 import { CredentialDialog } from "@/components/credentials-editor";
 import { currentFormatLocale, useT } from "@/i18n";
 import { formatMB, formatNumber } from "@/lib/format";
+import { gibFromMB, mbFromGiB } from "@/lib/memory";
 
 const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^settings: /, "") : String(e));
 
@@ -17,7 +18,8 @@ const numberOr = (v: string, fallback: number) => (v.trim() === "" || Number.isN
 const NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const URL_RE = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]*)(?:\/([A-Za-z0-9._-]+))?\/?$/;
 
-const MEMORY_MB = [1024, 2048, 4096, 8192, 16384, 32768, 65536];
+// The control plane's floor is 256 MB; below half a GiB a job environment barely boots.
+const MIN_MEMORY_MB = 512;
 const KEEP_MINUTES = [0, 15, 60, 240, 1440] as const;
 
 /** A scale set name from a repository (its name) or an organization (its login), with
@@ -191,7 +193,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
   const [group, setGroup] = useState(initial?.runner_group ?? "default");
   const [maxConcurrent, setMaxConcurrent] = useState(String(initial?.max_concurrent ?? 2));
   const [cores, setCores] = useState(String(initial?.cores ?? 2));
-  const [memory, setMemory] = useState(String(initial?.memory_mb ?? 4096));
+  const [memory, setMemory] = useState(gibFromMB(initial?.memory_mb ?? 4096));
   const [keep, setKeep] = useState(String(initial?.keep_on_failure_minutes ?? 0));
   const [warm, setWarm] = useState(String(initial?.warm_runners ?? 0));
   const [profile, setProfile] = useState(initial?.template_profile || "default");
@@ -208,14 +210,22 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
   const urlBad = url.trim() !== "" && !URL_RE.test(url.trim());
   const warmMax = numberOr(maxConcurrent, 2);
   const warmBad = numberOr(warm, 0) > warmMax || numberOr(warm, 0) < 0;
+  const capacity = useCapacity();
+  const memoryMB = mbFromGiB(memory);
+  const budget = capacity.data?.memory_budget_mb;
+  const memoryError =
+    memoryMB === undefined || memoryMB < MIN_MEMORY_MB
+      ? t("templates.scaleSetForm.memoryTooSmall", { min: gibFromMB(MIN_MEMORY_MB) })
+      : budget !== undefined && memoryMB > budget
+        ? t("templates.scaleSetForm.memoryOverBudget", { budget: formatMB(budget) })
+        : undefined;
   const missing = [!name.trim() && "name", !url.trim() && "url", !chosen && "credential"].filter(Boolean) as ("name" | "url" | "credential")[];
-  const wrong = [(nameBad || nameTaken) && "name", urlBad && "url", warmBad && "warm"].filter(Boolean) as ("name" | "url" | "warm")[];
-  const list = (fields: ("name" | "url" | "credential" | "warm")[]) =>
+  const wrong = [(nameBad || nameTaken) && "name", urlBad && "url", warmBad && "warm", memoryError && "memory"].filter(Boolean) as ("name" | "url" | "warm" | "memory")[];
+  const list = (fields: ("name" | "url" | "credential" | "warm" | "memory")[]) =>
     new Intl.ListFormat(currentFormatLocale(), { type: "conjunction" }).format(fields.map((f) => t(`templates.scaleSetForm.field.${f}`)));
   const blocked = wrong.length > 0 ? t("templates.scaleSetForm.fix", { fields: list(wrong) }) : missing.length > 0 ? t("templates.scaleSetForm.fill", { fields: list(missing) }) : "";
 
   // Values outside the lists (set in an earlier version, or by hand) stay selectable.
-  const memoryItems = Object.fromEntries([...new Set([...MEMORY_MB, Number(memory)])].sort((a, b) => a - b).map((mb) => [String(mb), formatMB(mb)]));
   const keepLabel = (m: number) =>
     m === 0 ? t("templates.scaleSetForm.keepOff") : m === 15 ? t("templates.scaleSetForm.m15") : m === 60 ? t("templates.scaleSetForm.h1") : m === 240 ? t("templates.scaleSetForm.h4") : m === 1440 ? t("templates.scaleSetForm.h24") : `${m} min`;
   const keepItems = Object.fromEntries([...new Set<number>([...KEEP_MINUTES, Number(keep)])].sort((a, b) => a - b).map((m) => [String(m), keepLabel(m)]));
@@ -233,7 +243,7 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
         labels: labels.split(",").map((l) => l.trim()).filter(Boolean),
         max_concurrent: numberOr(maxConcurrent, 2),
         cores: numberOr(cores, 2),
-        memory_mb: numberOr(memory, 4096),
+        memory_mb: memoryMB ?? 4096,
         keep_on_failure_minutes: numberOr(keep, 0),
         warm_runners: numberOr(warm, 0),
         template_profile: profile,
@@ -361,14 +371,16 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
                     />
                   </div>
                   <div className="min-w-0">
-                    <Select
-                      aria-label={t("templates.scaleSetForm.memory")}
-                      label={<HelpLabel label={t("templates.scaleSetForm.memory")} help={t("templates.scaleSetHelp.memoryTip")} />}
+                    <Input
+                      {...helpField(`${id}-memory`, t("templates.scaleSetForm.memory"), t("templates.scaleSetHelp.memoryTip"))}
+                      type="number"
+                      inputMode="decimal"
+                      min={MIN_MEMORY_MB / 1024}
+                      step="any"
                       value={memory}
-                      onValueChange={(v) => setMemory(String(v ?? memory))}
-                      items={memoryItems}
-                      className="w-full"
-                      description={t("templates.scaleSetForm.memoryHelp")}
+                      onChange={(e) => setMemory(e.target.value)}
+                      error={memoryError}
+                      description={memoryError ? undefined : t("templates.scaleSetForm.memoryHelp")}
                     />
                   </div>
                 </div>

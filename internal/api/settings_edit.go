@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -33,6 +34,32 @@ type ScaleSetSettings struct {
 	KeepOnFailureMinutes int      `json:"keep_on_failure_minutes,omitempty"`
 	WarmRunners          int      `json:"warm_runners,omitempty" minimum:"0" doc:"Runners kept online before any job arrives (counts toward max_concurrent)"`
 	TemplateProfile      string   `json:"template_profile,omitempty" doc:"The template profile its environments clone (default: default)"`
+}
+
+// CapacitySettings are the global capacity limits.
+type CapacitySettings struct {
+	MaxEnvironments int     `json:"max_environments" minimum:"1" maximum:"100" doc:"Job environments at the same time"`
+	MemoryBudgetMB  int     `json:"memory_budget_mb" minimum:"512" doc:"Sum of the environments' memory limits; may exceed the host's memory, as an LXC only uses what it needs"`
+	MemoryMarginMB  int     `json:"memory_margin_mb" minimum:"0" doc:"Host memory that must stay available after a new environment"`
+	MaxDiskPercent  float64 `json:"max_disk_percent" exclusiveMinimum:"0" maximum:"100" doc:"Thin pool usage above which no environment is created"`
+}
+
+// CapacityView is the capacity limits in effect, where they come from and the host's memory.
+type CapacityView struct {
+	CapacitySettings
+	Source            string `json:"source" enum:"file,ui,default" doc:"file: read-only, from ghrm.yaml"`
+	HostMemoryTotalMB int    `json:"host_memory_total_mb,omitempty"`
+}
+
+// capacityLimits returns the capacity limits in effect and their source.
+func (d Deps) capacityLimits() (config.Capacity, string) {
+	if d.Settings != nil {
+		return d.Settings.Capacity()
+	}
+	if d.Config != nil {
+		return d.Config.Capacity, settings.SourceFile
+	}
+	return config.Capacity{}, settings.CapacityDefault
 }
 
 func toScaleSetSettings(ss config.ScaleSet) *ScaleSetSettings {
@@ -165,6 +192,34 @@ func registerSettingsEdit(a huma.API, d Deps) {
 			}
 			audit(ctx, d, "scale_set_delete", "scale set "+in.Name+" removed by "+Actor(ctx)+
 				"; it stays registered on GitHub (without runners) until deleted there", events.Refs{ScaleSet: in.Name}, nil)
+			return &struct{}{}, nil
+		})
+
+	huma.Register(a, huma.Operation{OperationID: "get-capacity", Method: http.MethodGet, Path: "/api/v1/capacity",
+		Summary: "The capacity limits in effect", Tags: tags},
+		func(ctx context.Context, _ *struct{}) (*struct{ Body CapacityView }, error) {
+			c, src := d.capacityLimits()
+			out := &struct{ Body CapacityView }{CapacityView{CapacitySettings: CapacitySettings(c), Source: src}}
+			if d.Capacity != nil {
+				if rc, err := d.Capacity(ctx); err == nil {
+					out.Body.HostMemoryTotalMB = rc.HostMemoryTotalMB
+				}
+			}
+			return out, nil
+		})
+	huma.Register(a, huma.Operation{OperationID: "put-capacity", Method: http.MethodPut, Path: "/api/v1/capacity",
+		Summary: "Change the capacity limits; they apply to the next environment", Tags: tags, DefaultStatus: http.StatusNoContent},
+		func(ctx context.Context, in *struct{ Body CapacitySettings }) (*struct{}, error) {
+			if d.Settings == nil {
+				return nil, readOnly()
+			}
+			c := config.Capacity(in.Body)
+			if err := d.Settings.PutCapacity(ctx, c); err != nil {
+				return nil, settingsError(err)
+			}
+			audit(ctx, d, "capacity_put", fmt.Sprintf("capacity changed by %s: %d environments, %d MB budget, %d MB margin, %g%% disk",
+				Actor(ctx), c.MaxEnvironments, c.MemoryBudgetMB, c.MemoryMarginMB, c.MaxDiskPercent), events.Refs{},
+				map[string]any{"max_environments": c.MaxEnvironments, "memory_budget_mb": c.MemoryBudgetMB, "memory_margin_mb": c.MemoryMarginMB, "max_disk_percent": c.MaxDiskPercent})
 			return &struct{}{}, nil
 		})
 

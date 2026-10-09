@@ -8,6 +8,7 @@ import (
 
 	"github.com/cocardoso/gh-runners-manager/internal/cachemon"
 	"github.com/cocardoso/gh-runners-manager/internal/config"
+	"github.com/cocardoso/gh-runners-manager/internal/runtime"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
 
@@ -130,5 +131,68 @@ func TestCacheEndpointAndAlert(t *testing.T) {
 	_, b = none.call(t, "GET", "/api/v1/cache", nil, tok)
 	if !strings.Contains(string(b), `"enabled":false`) {
 		t.Fatalf("no cache = %s", b)
+	}
+}
+
+func TestCapacityEndpoints(t *testing.T) {
+	h := newHarnessWith(t, "", func(d *Deps) {
+		d.Config.Capacity.ApplyDefaults()
+		d.Config.ScaleSets[0].ApplyDefaults()
+		d.Capacity = func(context.Context) (runtime.Capacity, error) {
+			return runtime.Capacity{HostMemoryTotalMB: 40960, HostMemoryAvailableMB: 30000}, nil
+		}
+	})
+	tok := map[string]string{"Authorization": "Bearer " + harnessToken}
+	code, b := h.callCode(t, "GET", "/api/v1/capacity", nil, tok)
+	if code != 200 || !strings.Contains(string(b), `"source":"default"`) || !strings.Contains(string(b), `"memory_budget_mb":16384`) ||
+		!strings.Contains(string(b), `"host_memory_total_mb":40960`) {
+		t.Fatalf("get = %d %s", code, b)
+	}
+	if code, _ := h.callCode(t, "PUT", "/api/v1/capacity", map[string]any{"max_environments": 6, "memory_budget_mb": 49152, "memory_margin_mb": 2048, "max_disk_percent": 90},
+		map[string]string{"X-Test-No-Auth": "1"}); code != 401 {
+		t.Fatalf("put without credentials = %d, want 401", code)
+	}
+	if code, b := h.callCode(t, "PUT", "/api/v1/capacity", map[string]any{"max_environments": 6, "memory_budget_mb": 49152, "memory_margin_mb": 2048, "max_disk_percent": 90}, tok); code != 204 {
+		t.Fatalf("put = %d %s", code, b)
+	}
+	code, b = h.callCode(t, "GET", "/api/v1/capacity", nil, tok)
+	if code != 200 || !strings.Contains(string(b), `"source":"ui"`) || !strings.Contains(string(b), `"memory_budget_mb":49152`) {
+		t.Fatalf("get after put = %d %s", code, b)
+	}
+	// The overview and the settings show the limits in effect.
+	if _, b := h.callCode(t, "GET", "/api/v1/overview", nil, tok); !strings.Contains(string(b), `"memory_budget_mb":49152`) || !strings.Contains(string(b), `"environments_max":6`) {
+		t.Fatalf("overview = %s", b)
+	}
+	if _, b := h.callCode(t, "GET", "/api/v1/settings", nil, tok); !strings.Contains(string(b), `"memory_budget_mb":49152`) {
+		t.Fatalf("settings = %s", b)
+	}
+	// lab runs 4096 MB environments.
+	if code, b := h.callCode(t, "PUT", "/api/v1/capacity", map[string]any{"max_environments": 6, "memory_budget_mb": 2048, "memory_margin_mb": 0, "max_disk_percent": 90}, tok); code != 422 || !strings.Contains(string(b), "lab") {
+		t.Fatalf("budget below a scale set = %d %s, want 422", code, b)
+	}
+	if code, _ := h.callCode(t, "PUT", "/api/v1/capacity", map[string]any{"max_environments": 0, "memory_budget_mb": 8192, "memory_margin_mb": 0, "max_disk_percent": 90}, tok); code != 422 {
+		t.Fatalf("no environments = %d, want 422", code)
+	}
+	evs, _ := h.db.ListEvents(context.Background(), store.EventFilter{})
+	found := false
+	for _, e := range evs {
+		found = found || e.Kind == "audit.capacity_put"
+	}
+	if !found {
+		t.Error("a capacity change is audited")
+	}
+}
+
+func TestCapacityInTheFileIsReadOnlyOverTheAPI(t *testing.T) {
+	h := newHarnessWith(t, "", func(d *Deps) {
+		d.Config.Capacity = config.Capacity{MaxEnvironments: 2, MemoryBudgetMB: 8192, MemoryMarginMB: 1024, MaxDiskPercent: 85}
+		d.Config.CapacityInFile = true
+	})
+	tok := map[string]string{"Authorization": "Bearer " + harnessToken}
+	if _, b := h.callCode(t, "GET", "/api/v1/capacity", nil, tok); !strings.Contains(string(b), `"source":"file"`) {
+		t.Fatalf("get = %s", b)
+	}
+	if code, _ := h.callCode(t, "PUT", "/api/v1/capacity", map[string]any{"max_environments": 6, "memory_budget_mb": 16384, "memory_margin_mb": 0, "max_disk_percent": 90}, tok); code != 409 {
+		t.Fatalf("put = %d, want 409", code)
 	}
 }

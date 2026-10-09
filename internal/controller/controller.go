@@ -29,12 +29,15 @@ type GitHub interface {
 
 // Deps are the controller's collaborators.
 type Deps struct {
-	Store             *store.Store
-	Recorder          *events.Recorder
-	Runtime           runtime.Runtime
-	GitHub            GitHub
-	Logs              *logs.Store
-	Config            *config.Config
+	Store    *store.Store
+	Recorder *events.Recorder
+	Runtime  runtime.Runtime
+	GitHub   GitHub
+	Logs     *logs.Store
+	Config   *config.Config
+	// Capacity returns the capacity limits in effect, read on every scheduling pass so a
+	// change in the UI applies at once (nil: Config.Capacity).
+	Capacity          func() config.Capacity
 	IngestURL         string
 	IngestFingerprint string
 	// FirewallProbe is the address agents probe to know the job network's firewall applies
@@ -137,6 +140,9 @@ func (c *Controller) SetTemplates(src TemplateSource, ev TemplateEvents) {
 
 // SetStages connects the stage-duration observer (metrics). Call it before Run.
 func (c *Controller) SetStages(o StageObserver) { c.d.Stages = o }
+
+// SetCapacity sets where the capacity limits come from; call it before the controller runs.
+func (c *Controller) SetCapacity(limits func() config.Capacity) { c.d.Capacity = limits }
 
 // SetScaleSetID records the GitHub ID of a scale set.
 func (c *Controller) SetScaleSetID(name string, id int) {

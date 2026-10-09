@@ -79,6 +79,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("runtime capacity: %w", err)
 	}
 	cp := c.d.Config.Capacity
+	if c.d.Capacity != nil {
+		cp = c.d.Capacity()
+	}
 	capacity := scheduler.Capacity{
 		MaxEnvironments: cp.MaxEnvironments, LiveEnvironments: len(live),
 		MemoryBudgetMB: cp.MemoryBudgetMB, CommittedMemoryMB: committed,

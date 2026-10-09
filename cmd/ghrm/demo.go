@@ -62,19 +62,20 @@ func demoCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	d.Controller.SetStages(demoMetrics) // before the simulation starts
 	cache := demoCache{start: time.Now()}
 	demoMetrics.SetCache(cache)
-	go d.Run(ctx)
-
-	signIn, err := demoAuth(ctx, d.Store)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
 	vault, err := secrets.OpenVault(ctx, d.Store, filepath.Join(dir, "secret.key"))
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	reg, err := settings.New(ctx, d.Config, d.Store, vault)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	d.Controller.SetCapacity(reg.CapacityLimits) // before the simulation starts
+	go d.Run(ctx)
+
+	signIn, err := demoAuth(ctx, d.Store)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

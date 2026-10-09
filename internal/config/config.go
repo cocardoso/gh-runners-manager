@@ -36,6 +36,9 @@ type Config struct {
 	Backup        Backup     `yaml:"backup"`
 	Cache         Cache      `yaml:"cache"`
 
+	// CapacityInFile says the file has a capacity section: the limits are read-only in the UI.
+	CapacityInFile bool `yaml:"-"`
+
 	// AdminToken is read from AdminTokenFile; empty disables mutating API calls.
 	AdminToken string `yaml:"-"`
 }
@@ -59,12 +62,57 @@ type Credential struct {
 	Token     string `yaml:"-"`
 }
 
-// Capacity holds the global limits of spec §9.
+// Capacity holds the global limits of spec §9. Without a capacity section in the file,
+// they are edited in the UI.
 type Capacity struct {
-	MaxEnvironments int     `yaml:"max_environments"`
-	MemoryBudgetMB  int     `yaml:"memory_budget_mb"`
-	MemoryMarginMB  int     `yaml:"memory_margin_mb"`
-	MaxDiskPercent  float64 `yaml:"max_disk_percent"`
+	MaxEnvironments int `yaml:"max_environments" json:"max_environments"`
+	// MemoryBudgetMB caps the sum of the environments' memory limits. An LXC only uses what
+	// its processes need, so the budget may exceed the host's memory (overcommit): the
+	// margin below is what keeps the host from running short.
+	MemoryBudgetMB int `yaml:"memory_budget_mb" json:"memory_budget_mb"`
+	// MemoryMarginMB is the host memory that must stay available after a new environment.
+	MemoryMarginMB int     `yaml:"memory_margin_mb" json:"memory_margin_mb"`
+	MaxDiskPercent float64 `yaml:"max_disk_percent" json:"max_disk_percent"`
+}
+
+// Capacity limits.
+const (
+	MinMemoryBudgetMB = 512
+	MaxEnvironments   = 100
+)
+
+// ApplyDefaults fills the unset limits.
+func (c *Capacity) ApplyDefaults() {
+	if c.MaxEnvironments == 0 {
+		c.MaxEnvironments = 4
+	}
+	if c.MemoryBudgetMB == 0 {
+		c.MemoryBudgetMB = 16384
+	}
+	if c.MemoryMarginMB == 0 {
+		c.MemoryMarginMB = 4096
+	}
+	if c.MaxDiskPercent == 0 {
+		c.MaxDiskPercent = 85
+	}
+}
+
+// Validate checks the limits.
+func (c Capacity) Validate() error {
+	var errs []error
+	if c.MaxEnvironments < 1 || c.MaxEnvironments > MaxEnvironments {
+		errs = append(errs, fmt.Errorf("capacity.max_environments must be between 1 and %d, got %d", MaxEnvironments, c.MaxEnvironments))
+	}
+	if c.MemoryBudgetMB < MinMemoryBudgetMB {
+		errs = append(errs, fmt.Errorf("capacity.memory_budget_mb must be at least %d, got %d", MinMemoryBudgetMB, c.MemoryBudgetMB))
+	}
+	if c.MemoryMarginMB < 0 {
+		errs = append(errs, fmt.Errorf("capacity.memory_margin_mb must not be negative, got %d", c.MemoryMarginMB))
+	}
+	if c.MaxDiskPercent <= 0 || c.MaxDiskPercent > 100 {
+		errs = append(errs, fmt.Errorf("capacity.max_disk_percent must be above 0 and at most 100, got %g", c.MaxDiskPercent))
+	}
+	return errors.Join(errs...)
 }
 
 // ScaleSet is one GitHub runner scale set served by ghrm.
@@ -239,6 +287,7 @@ func Read(path string) (*Config, error) {
 	if err := dec.Decode(cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
+	cfg.CapacityInFile = cfg.Capacity != (Capacity{})
 	cfg.applyDefaults()
 	return cfg, nil
 }
@@ -290,19 +339,7 @@ func (c *Config) applyDefaults() {
 		c.Backup.Keep = 7
 	}
 	c.Cache.applyDefaults()
-	cp := &c.Capacity
-	if cp.MaxEnvironments == 0 {
-		cp.MaxEnvironments = 4
-	}
-	if cp.MemoryBudgetMB == 0 {
-		cp.MemoryBudgetMB = 16384
-	}
-	if cp.MemoryMarginMB == 0 {
-		cp.MemoryMarginMB = 4096
-	}
-	if cp.MaxDiskPercent == 0 {
-		cp.MaxDiskPercent = 85
-	}
+	c.Capacity.ApplyDefaults()
 	for i := range c.ScaleSets {
 		c.ScaleSets[i].ApplyDefaults()
 	}
@@ -483,6 +520,9 @@ func (c *Config) ValidateServe() error {
 // Validate checks the configuration after defaults have been applied.
 func (c *Config) Validate() error {
 	var errs []error
+	if err := c.Capacity.Validate(); err != nil {
+		errs = append(errs, err)
+	}
 	if err := c.Cache.validate(); err != nil {
 		errs = append(errs, err)
 	}
