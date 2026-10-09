@@ -46,11 +46,14 @@ github:
       # The token: GHRM_GITHUB_TOKEN_PERSONAL, token_file, or "ghrm secret set github/personal".
       token_file: /etc/ghrm/github-personal
 
-capacity:
-  max_environments: 4
-  memory_budget_mb: 16384
-  memory_margin_mb: 4096
-  max_disk_percent: 85
+# Capacity limits are edited in the UI (Settings, Capacity). Uncomment this section to fix them here
+# instead; the UI then shows them read-only. An LXC only uses the memory its job needs, so the budget
+# may exceed the host's memory; the margin protects the host.
+# capacity:
+#   max_environments: 4
+#   memory_budget_mb: 16384
+#   memory_margin_mb: 4096
+#   max_disk_percent: 85
 
 scale_sets:
   - name: homelab                    # also the runs-on label

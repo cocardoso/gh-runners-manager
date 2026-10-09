@@ -8,13 +8,13 @@ import { JobStatusBadge } from "@/components/status-badge";
 import { JobsChart } from "@/components/jobs-chart";
 import { durationBetween, formatDuration, formatMB, formatPercent, formatNumber, isSet } from "@/lib/format";
 import { useT, type Key } from "@/i18n";
+import { knownReason, waitingTitle } from "@/lib/waiting";
 
 // Job environments on their way to a runner, and idle runners waiting for a job.
 const PREPARING = new Set(["pending", "provisioning", "booting", "connected"]);
 const isJobEnvironment = (e: Environment) => !e.kind || e.kind === "job";
 // The longest the live list gets; the rest is one click away.
 const NOW_ROWS = 10;
-const REASONS = new Set(["scale_set_limit", "global_limit", "memory_budget", "host_memory", "disk"]);
 
 /** The current time, every second: for timers of what is running now. */
 function useSecond(): number {
@@ -69,7 +69,7 @@ function AlertBanner({ alert }: { alert: Alert }) {
   const where = [alert.scale_set, alert.environment_id].filter(Boolean).join(" · ");
   // The server words its alerts in English; a waiting reason has a translation.
   const reason = alert.kind === "waiting" ? alert.message.split(": ").pop() : undefined;
-  const title = reason && REASONS.has(reason) ? t("templates.scaleSets.waiting", { reason: t(`overview.now.reasons.${reason}` as Key) }) : alert.message;
+  const title = knownReason(reason) ? waitingTitle(t, reason) : alert.message;
   return (
     <Banner
       variant={variant}
@@ -148,7 +148,7 @@ function NowCard({ running, queued, sets, environments }: { running: Job[]; queu
   const waiting = new Map(sets.map((s) => [s.name, s.waiting]));
   const queuedHint = (j: Job) => {
     const reason = waiting.get(j.scale_set);
-    if (reason) return REASONS.has(reason) ? t(`overview.now.reasons.${reason}` as Key) : reason;
+    if (reason) return knownReason(reason) ? t(`overview.now.reasons.${reason}` as Key) : reason;
     return preparing.some((e) => e.scale_set === j.scale_set) ? t("overview.now.preparingRunner") : t("overview.now.waitingRunner");
   };
   return (

@@ -716,3 +716,17 @@ func TestLaterMessagesDoNotMoveTheQueueTime(t *testing.T) {
 		t.Fatalf("queued at %v, want the recorded %v", j.QueuedAt, queued)
 	}
 }
+
+func TestCapacityLimitsAreReadOnEveryPass(t *testing.T) {
+	h := newHarness(t, nil)
+	limits := h.cfg.Capacity
+	limits.MaxEnvironments = 1
+	h.c.d.Capacity = func() config.Capacity { return limits }
+	if es := h.provision(t, 3); len(es) != 1 {
+		t.Fatalf("booting environments = %d, want 1 (the limit set in the UI)", len(es))
+	}
+	limits.MaxEnvironments = 3
+	if es := h.provision(t, 3); len(es) != 3 {
+		t.Fatalf("booting environments = %d, want 3 after the limit was raised", len(es))
+	}
+}

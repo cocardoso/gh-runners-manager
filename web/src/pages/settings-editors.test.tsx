@@ -76,13 +76,13 @@ test("scale sets can be created, edited and removed; file ones are read-only", a
 
   const uiCard = screen.getByRole("heading", { name: "big" }).closest("section")!;
   await user.click(within(uiCard).getByRole("button", { name: "Edit big" }));
-  const memory = await screen.findByRole("combobox", { name: /^Memory/ });
-  expect(memory).toHaveTextContent("8 GB");
-  await user.click(memory);
-  await user.click(await screen.findByRole("option", { name: "16 GB" }));
+  const memory = await screen.findByRole("spinbutton", { name: /^Memory/ });
+  expect(memory).toHaveValue(8);
+  await user.clear(memory);
+  await user.type(memory, "12");
   await user.click(screen.getByRole("button", { name: "Save scale set" }));
   await waitFor(() => expect(calls.some((c) => c.method === "PUT" && c.url.pathname === "/api/v1/scale-sets/big")).toBe(true));
-  expect(await calls.find((c) => c.url.pathname === "/api/v1/scale-sets/big")!.request.json()).toMatchObject({ memory_mb: 16384, credential: "home", labels: ["gpu"] });
+  expect(await calls.find((c) => c.url.pathname === "/api/v1/scale-sets/big")!.request.json()).toMatchObject({ memory_mb: 12288, credential: "home", labels: ["gpu"] });
 
   await user.click(within(uiCard).getByRole("button", { name: "Remove big" }));
   await user.type(await screen.findByRole("textbox", { name: "Type big to confirm deletion" }), "big");

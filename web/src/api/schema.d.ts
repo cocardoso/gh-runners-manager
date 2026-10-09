@@ -106,6 +106,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/capacity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The capacity limits in effect */
+        get: operations["get-capacity"];
+        /** Change the capacity limits; they apply to the next environment */
+        put: operations["put-capacity"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/credentials": {
         parameters: {
             query?: never;
@@ -645,6 +663,69 @@ export interface components {
             memory_budget_mb: number;
             /** Format: int64 */
             memory_committed_mb: number;
+        };
+        CapacitySettings: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CapacitySettings.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: double
+             * @description Thin pool usage above which no environment is created
+             */
+            max_disk_percent: number;
+            /**
+             * Format: int64
+             * @description Job environments at the same time
+             */
+            max_environments: number;
+            /**
+             * Format: int64
+             * @description Sum of the environments' memory limits; may exceed the host's memory, as an LXC only uses what it needs
+             */
+            memory_budget_mb: number;
+            /**
+             * Format: int64
+             * @description Host memory that must stay available after a new environment
+             */
+            memory_margin_mb: number;
+        };
+        CapacityView: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CapacityView.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            host_memory_total_mb?: number;
+            /**
+             * Format: double
+             * @description Thin pool usage above which no environment is created
+             */
+            max_disk_percent: number;
+            /**
+             * Format: int64
+             * @description Job environments at the same time
+             */
+            max_environments: number;
+            /**
+             * Format: int64
+             * @description Sum of the environments' memory limits; may exceed the host's memory, as an LXC only uses what it needs
+             */
+            memory_budget_mb: number;
+            /**
+             * Format: int64
+             * @description Host memory that must stay available after a new environment
+             */
+            memory_margin_mb: number;
+            /**
+             * @description file: read-only, from ghrm.yaml
+             * @enum {string}
+             */
+            source: "file" | "ui" | "default";
         };
         CheckInBody: {
             /**
@@ -1521,6 +1602,66 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Status"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-capacity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapacityView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-capacity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapacitySettings"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

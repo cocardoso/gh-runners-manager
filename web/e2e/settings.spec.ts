@@ -24,14 +24,15 @@ test("a credential and a scale set are created, tested and removed from the UI",
   await expect(form.getByLabel("Name")).toHaveValue("infra");
   await form.getByLabel("Name").fill("e2e-set");
   await page.getByRole("button", { name: "Save scale set" }).click();
-  const card = page.locator("section").filter({ has: page.getByRole("heading", { name: "e2e-set" }) });
+  const card = page.locator("section").filter({ has: page.getByRole("heading", { name: "e2e-set", exact: true }) });
   await expect(card.getByText("Listening")).toBeVisible();
   await expect(card.getByText("Created in the UI")).toBeVisible();
 
   await card.getByRole("button", { name: "Remove e2e-set" }).click();
   await page.getByRole("textbox", { name: "Type e2e-set to confirm deletion" }).fill("e2e-set");
   await page.getByRole("button", { name: "Remove scale set" }).click();
-  await expect(page.getByRole("heading", { name: "e2e-set" })).toBeHidden();
+  // exact: the "e2e-set removed" toast has a heading too.
+  await expect(page.getByRole("heading", { name: "e2e-set", exact: true })).toBeHidden();
   expect(errors).toEqual([]);
 });
 

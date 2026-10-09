@@ -11,6 +11,7 @@ import { ErrorState, Loading, Page, RelativeTime } from "@/components/common";
 import { DefinitionList } from "@/components/definition-list";
 import { useT } from "@/i18n";
 import { formatMB, isSet } from "@/lib/format";
+import { waitingTitle } from "@/lib/waiting";
 
 function list(v: unknown) {
   return Array.isArray(v) && v.length ? v.join(", ") : "—";
@@ -60,7 +61,7 @@ function ScaleSetCard({ s, onEdit, onRemove }: { s: ScaleSet; onEdit: () => void
             <Banner
               variant="alert"
               icon={<WarningIcon weight="fill" />}
-              title={t("templates.scaleSets.waiting", { reason: s.waiting })}
+              title={waitingTitle(t, s.waiting)}
               description={isSet(s.waiting_since) ? withNode(t("templates.scaleSets.since"), "{time}", <RelativeTime value={s.waiting_since} />) : undefined}
             />
           )}

@@ -1,5 +1,5 @@
-// Package settings holds the effective GitHub credentials and scale sets: the ones in
-// the configuration file (read-only) and the ones created in the UI (stored in the
+// Package settings holds the effective GitHub credentials, scale sets and capacity limits:
+// the ones in the configuration file (read-only) and the ones set in the UI (stored in the
 // database, tokens sealed in the vault). Changes are announced to subscribers.
 package settings
 
@@ -21,7 +21,12 @@ import (
 const (
 	SourceFile = "file"
 	SourceUI   = "ui"
+	// CapacityDefault means neither the file nor the UI set the capacity limits.
+	CapacityDefault = "default"
 )
+
+// capacityKey is the meta key of the capacity limits set in the UI.
+const capacityKey = "capacity"
 
 var (
 	// ErrReadOnly means the setting comes from the configuration file.
@@ -55,8 +60,11 @@ type Registry struct {
 	mu      sync.RWMutex
 	uiCreds map[string]Credential
 	uiSets  map[string]config.ScaleSet
-	subs    map[int]chan struct{}
-	nextSub int
+	uiCap   *config.Capacity
+	// loadWarning says why the stored capacity limits were ignored ("" when they were not).
+	loadWarning string
+	subs        map[int]chan struct{}
+	nextSub     int
 }
 
 // New loads the UI settings.
@@ -84,7 +92,95 @@ func New(ctx context.Context, cfg *config.Config, s *store.Store, v *secrets.Vau
 		}
 		r.uiSets[rec.Name] = ss
 	}
+	raw, err := s.GetMeta(ctx, capacityKey)
+	switch {
+	case err == nil:
+		// A row that does not decode or validate falls back to the defaults instead of
+		// stopping the control plane (or scheduling nothing); Warnings reports it.
+		var c config.Capacity
+		err := json.Unmarshal([]byte(raw), &c)
+		if err == nil {
+			c.ApplyDefaults()
+			err = c.Validate()
+		}
+		if err != nil {
+			r.loadWarning = fmt.Sprintf("the capacity limits saved in the UI are ignored (%v); the defaults apply until they are saved again", err)
+		} else {
+			r.uiCap = &c
+		}
+	case !errors.Is(err, store.ErrNotFound):
+		return nil, err
+	}
 	return r, nil
+}
+
+// Capacity returns the capacity limits and where they come from: the file's capacity
+// section wins, then the UI's, then the defaults.
+func (r *Registry) Capacity() (config.Capacity, string) {
+	if r.cfg.CapacityInFile {
+		return r.cfg.Capacity, SourceFile
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.uiCap != nil {
+		return *r.uiCap, SourceUI
+	}
+	return r.cfg.Capacity, CapacityDefault
+}
+
+// Warnings lists settings that cannot work as they are: ignored capacity limits, and
+// scale sets whose environments are larger than the memory budget (their jobs never start).
+func (r *Registry) Warnings() []string {
+	var out []string
+	if r.loadWarning != "" {
+		out = append(out, r.loadWarning)
+	}
+	budget := r.CapacityLimits().MemoryBudgetMB
+	for _, ss := range r.ScaleSets() {
+		if budget > 0 && ss.MemoryMB > budget {
+			out = append(out, fmt.Sprintf("scale set %s runs %d MB environments, above the %d MB memory budget; its jobs never start", ss.Name, ss.MemoryMB, budget))
+		}
+	}
+	return out
+}
+
+// CapacityLimits returns the capacity limits in effect, for the scheduler.
+func (r *Registry) CapacityLimits() config.Capacity {
+	c, _ := r.Capacity()
+	return c
+}
+
+// PutCapacity sets the capacity limits, unless the file has a capacity section. The
+// memory budget must fit every scale set's environment, or its jobs would never start.
+func (r *Registry) PutCapacity(ctx context.Context, c config.Capacity) error {
+	r.wmu.Lock()
+	defer r.wmu.Unlock()
+	if r.cfg.CapacityInFile {
+		return ErrReadOnly
+	}
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	for _, ss := range r.ScaleSets() {
+		if ss.MemoryMB > c.MemoryBudgetMB {
+			return fmt.Errorf("settings: the memory budget (%d MB) is smaller than an environment of scale set %s (%d MB); its jobs would never start",
+				c.MemoryBudgetMB, ss.Name, ss.MemoryMB)
+		}
+	}
+	spec, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	err = r.store.PutMeta(ctx, capacityKey, string(spec))
+	if err == nil {
+		r.uiCap = &c
+	}
+	r.mu.Unlock()
+	if err == nil {
+		r.notify()
+	}
+	return err
 }
 
 func (r *Registry) fileCredential(name string) (config.Credential, bool) {
@@ -259,6 +355,12 @@ func (r *Registry) putScaleSet(ctx context.Context, ss config.ScaleSet, create b
 	ss.ApplyDefaults()
 	if err := ss.Validate(func(name string) bool { _, ok := r.Credential(name); return ok }); err != nil {
 		return err
+	}
+	// A scale set already above the budget (the file's budget was lowered) stays editable
+	// as long as its memory does not change.
+	old, exists := r.ScaleSet(ss.Name)
+	if budget := r.CapacityLimits().MemoryBudgetMB; budget > 0 && ss.MemoryMB > budget && (!exists || old.MemoryMB != ss.MemoryMB) {
+		return fmt.Errorf("settings: an environment of %d MB does not fit the memory budget (%d MB); its jobs would never start", ss.MemoryMB, budget)
 	}
 	spec, err := json.Marshal(ss)
 	if err != nil {

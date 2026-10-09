@@ -138,7 +138,7 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	}
 	gh := github.New(reg, logger)
 	probe := serveFirewallProbe(ctx, cfg.Ingest, logger)
-	ctl := controller.New(controller.Deps{Store: db, Recorder: rec, Runtime: rt, GitHub: gh, Logs: logStore, Config: cfg,
+	ctl := controller.New(controller.Deps{Store: db, Recorder: rec, Runtime: rt, GitHub: gh, Logs: logStore, Config: cfg, Capacity: reg.CapacityLimits,
 		IngestURL: cfg.Ingest.AdvertiseURL, IngestFingerprint: fingerprint, FirewallProbe: probe})
 	tpl := template.NewService(template.Deps{Store: db, Recorder: rec, Logs: logStore, Runtime: rt, Environments: ctl,
 		Releases: template.NewGitHubReleases("", "", nil), Config: cfg.Templates, Cache: cfg.Cache, FirewallProbe: probe, BootstrapVMID: p.TemplateVMID, DataDir: cfg.DataDir})
@@ -152,6 +152,10 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	cacheMon := &cachemon.Monitor{Cache: cfg.Cache, Recorder: rec}
 	mtr.SetCache(cacheMon)
 
+	for _, w := range reg.Warnings() {
+		logger.Warn(w)
+		_, _ = rec.Warn(ctx, "settings.invalid", w, events.Refs{}, nil)
+	}
 	_, _ = rec.Info(ctx, "control_plane.started", "ghrm "+version.Version+" started", events.Refs{},
 		map[string]any{"ingest_fingerprint": fingerprint, "scale_sets": len(reg.ScaleSets())})
 	logger.Info("starting", "version", version.Version, "listen", cfg.Listen, "ingest", cfg.Ingest.Listen, "ingest_fingerprint", fingerprint)
@@ -281,10 +285,15 @@ func listenLoop(ctx context.Context, ss config.ScaleSet, gh *github.Client, ctl 
 			backoff = 5 * time.Second
 			err = gh.Listen(ctx, ss.Name, id, ss.MaxConcurrent, ctl.Scaler(ss.Name))
 		}
-		ctl.SetListening(ss.Name, false, err)
 		if ctx.Err() != nil {
+			// Stopped on purpose: not a failure. A restart's replacement reports its own
+			// state; otherwise (removed, shutdown) the scale set is no longer listening.
+			if !errors.Is(context.Cause(ctx), errListenerRestart) {
+				ctl.SetListening(ss.Name, false, nil)
+			}
 			return
 		}
+		ctl.SetListening(ss.Name, false, err)
 		logger.Warn("scale set listener stopped", "scale_set", ss.Name, "error", err, "retry_in", backoff)
 		_, _ = rec.Warn(ctx, "scaleset.listener_error", fmt.Sprintf("listener stopped: %v", err), events.Refs{ScaleSet: ss.Name}, nil)
 		select {

@@ -58,6 +58,7 @@ export function defaultRoutes(): Routes {
     "/api/v1/overview": emptyOverview,
     "/api/v1/repositories": { repositories: [] },
     "/api/v1/history/settings": { mode: "automatic", days: 30, audit_days: 365 },
+    "/api/v1/capacity": { max_environments: 4, memory_budget_mb: 16384, memory_margin_mb: 4096, max_disk_percent: 85, source: "default", host_memory_total_mb: 40960 },
     "/api/v1/cache": { enabled: false, up: false, origins: [], disk_used_bytes: 0, disk_budget_bytes: 0, checked_at: ZERO },
     "/api/v1/stats/jobs": { buckets: [] },
     "/api/v1/jobs": { jobs: [] },

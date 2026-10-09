@@ -219,3 +219,56 @@ func TestTemplatesValidationGaps(t *testing.T) {
 		}
 	}
 }
+
+func TestCapacityInFile(t *testing.T) {
+	cfg, err := load(t, validYAML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CapacityInFile {
+		t.Error("a file without a capacity section leaves the limits to the UI")
+	}
+	if cfg.Capacity != (Capacity{MaxEnvironments: 4, MemoryBudgetMB: 16384, MemoryMarginMB: 4096, MaxDiskPercent: 85}) {
+		t.Errorf("Capacity = %+v, want the defaults", cfg.Capacity)
+	}
+	cfg, err = load(t, validYAML+"capacity:\n  memory_budget_mb: 24576\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.CapacityInFile || cfg.Capacity.MemoryBudgetMB != 24576 || cfg.Capacity.MaxEnvironments != 4 {
+		t.Errorf("CapacityInFile = %v, Capacity = %+v", cfg.CapacityInFile, cfg.Capacity)
+	}
+	// The section counts even when its values are the zero defaults.
+	cfg, err = load(t, validYAML+"capacity:\n  memory_margin_mb: 0\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.CapacityInFile {
+		t.Error("a capacity section of zeros is still the file's")
+	}
+}
+
+func TestCapacityValidate(t *testing.T) {
+	ok := Capacity{MaxEnvironments: 4, MemoryBudgetMB: 65536, MemoryMarginMB: 0, MaxDiskPercent: 100}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("a budget above the host's memory and no margin are allowed: %v", err)
+	}
+	for _, c := range []struct {
+		cap  Capacity
+		want string
+	}{
+		{Capacity{MaxEnvironments: 0, MemoryBudgetMB: 4096, MaxDiskPercent: 85}, "max_environments"},
+		{Capacity{MaxEnvironments: 101, MemoryBudgetMB: 4096, MaxDiskPercent: 85}, "max_environments"},
+		{Capacity{MaxEnvironments: 4, MemoryBudgetMB: 256, MaxDiskPercent: 85}, "memory_budget_mb"},
+		{Capacity{MaxEnvironments: 4, MemoryBudgetMB: 4096, MemoryMarginMB: -1, MaxDiskPercent: 85}, "memory_margin_mb"},
+		{Capacity{MaxEnvironments: 4, MemoryBudgetMB: 4096, MaxDiskPercent: 0.5}, "max_disk_percent"},
+		{Capacity{MaxEnvironments: 4, MemoryBudgetMB: 4096, MaxDiskPercent: 101}, "max_disk_percent"},
+	} {
+		if err := c.cap.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("Validate(%+v) = %v, want an error about %s", c.cap, err, c.want)
+		}
+	}
+	if _, err := load(t, validYAML+"capacity:\n  max_disk_percent: 150\n"); err == nil || !strings.Contains(err.Error(), "max_disk_percent") {
+		t.Errorf("Load accepted a disk limit above 100%%: %v", err)
+	}
+}
