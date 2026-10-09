@@ -24,7 +24,7 @@ test("scale sets show listener status, counts and a runs-on snippet", async () =
   renderApp("/scale-sets");
   const card = (await screen.findByRole("heading", { name: "homelab" })).closest("section")!;
   expect(within(card).getByText("Listening")).toBeInTheDocument();
-  expect(within(card).getByText(/memory_budget/)).toBeInTheDocument();
+  expect(within(card).getByText("Jobs are waiting: the memory budget is full")).toBeInTheDocument();
   expect(within(card).getByText("runs-on: homelab")).toBeInTheDocument();
   expect(within(card).getByText("homelab, linux")).toBeInTheDocument();
   expect(within(card).getByText("Warm runners").nextSibling).toHaveTextContent("1");

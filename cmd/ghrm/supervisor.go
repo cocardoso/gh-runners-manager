@@ -38,7 +38,7 @@ func (s *supervisor) Reconcile(ctx context.Context, list []config.ScaleSet) {
 		want[ss.Name] = ss
 	}
 	for name, r := range s.running {
-		if ss, ok := want[name]; !ok || !reflect.DeepEqual(ss, r.cfg) {
+		if ss, ok := want[name]; !ok || !reflect.DeepEqual(session(ss), session(r.cfg)) {
 			r.cancel()
 			<-r.done
 			delete(s.running, name)
@@ -58,6 +58,14 @@ func (s *supervisor) Reconcile(ctx context.Context, list []config.ScaleSet) {
 			s.start(lctx, ss)
 		}()
 	}
+}
+
+// session keeps what a listener's GitHub session is made of. The runner settings (sizes,
+// warm runners, template profile, keep time) are read from the controller, so changing
+// them must not restart the listener: the card would show it stopped meanwhile.
+func session(ss config.ScaleSet) config.ScaleSet {
+	return config.ScaleSet{Name: ss.Name, URL: ss.URL, Credential: ss.Credential, RunnerGroup: ss.RunnerGroup,
+		Labels: ss.Labels, MaxConcurrent: ss.MaxConcurrent}
 }
 
 // Wait blocks until every listener has stopped (after ctx ends).
