@@ -1,10 +1,23 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
 
 /** A `ghrm demo` process that can be stopped and started again on the same port and state. */
+/** A TCP port nothing listens on now (the demo keeps it across restarts). */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      srv.close(() => (addr && typeof addr === "object" ? resolve(addr.port) : reject(new Error("no port"))));
+    });
+  });
+}
+
 export class Demo {
   private proc?: ChildProcess;
   readonly dataDir = mkdtempSync(path.join(tmpdir(), "ghrm-demo-"));
@@ -67,8 +80,9 @@ export const test = base.extend<object, { demo: Demo }>({
   },
   demo: [
     // eslint-disable-next-line no-empty-pattern
-    async ({}, use, workerInfo) => {
-      const demo = new Demo(18_100 + workerInfo.workerIndex);
+    async ({}, use) => {
+      // A free port, not a fixed one: another local server may hold any given port.
+      const demo = new Demo(await freePort());
       await demo.start();
       await use(demo);
       await demo.stop();

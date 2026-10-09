@@ -304,9 +304,17 @@ test("a new profile is saved with what it leaves out and preinstalls", async () 
   await user.click(await screen.findByRole("button", { name: "New profile" }));
   const dialog = await screen.findByRole("dialog");
   await user.type(within(dialog).getByLabelText("Name"), "lean");
-  // Leaving out the Azure CLI leaves out the Azure DevOps CLI, which needs it.
-  await user.click(within(dialog).getByRole("checkbox", { name: "Azure CLI" }));
-  expect(within(dialog).getByRole("checkbox", { name: "Azure CLI (azure-devops)" })).toBeChecked();
+  // Checked means the image has it: everything starts checked; unchecking leaves it out.
+  const azure = within(dialog).getByRole("checkbox", { name: "Azure CLI" });
+  const devops = within(dialog).getByRole("checkbox", { name: "Azure CLI (azure-devops)" });
+  expect(azure).toBeChecked();
+  await user.click(azure);
+  // The Azure DevOps CLI needs the Azure CLI: it goes too, and coming back brings both.
+  expect(azure).not.toBeChecked();
+  expect(devops).not.toBeChecked();
+  await user.click(devops);
+  expect(azure).toBeChecked();
+  await user.click(azure);
   await user.type(within(dialog).getByLabelText("Python"), "3.12");
   await user.type(within(dialog).getByLabelText("Extra Ubuntu packages"), "zip, libpq-dev");
   await user.click(within(dialog).getByRole("button", { name: "Save profile" }));

@@ -131,16 +131,16 @@ function ProfileEditor({ initial, components, tools, onClose }: { initial?: Temp
   const nameBad = !initial && name.trim() !== "" && !NAME.test(name.trim());
   const needs = new Map(components.filter((c) => c.needs).map((c) => [c.needs!, c.id]));
 
-  const toggle = (c: TemplateComponent, on: boolean) => {
+  // Checked means the image has it; unchecking leaves it out.
+  const toggle = (c: TemplateComponent, included: boolean) => {
     const next = new Set(remove);
-    if (on) {
-      next.add(c.id);
-      // What needs it goes too.
-      const dependent = needs.get(c.id);
-      if (dependent) next.add(dependent);
-    } else {
+    if (included) {
       next.delete(c.id);
-      if (c.needs) next.delete(c.needs);
+      if (c.needs) next.delete(c.needs); // what it needs comes back too
+    } else {
+      next.add(c.id);
+      const dependent = needs.get(c.id);
+      if (dependent) next.add(dependent); // what needs it goes too
     }
     setRemove(next);
   };
@@ -199,7 +199,7 @@ function ProfileEditor({ initial, components, tools, onClose }: { initial?: Temp
                   <div key={c.id} className="flex min-w-0 flex-col">
                     <Checkbox
                       label={componentLabel(c)}
-                      checked={remove.has(c.id)}
+                      checked={!remove.has(c.id)}
                       onCheckedChange={(on) => toggle(c, !!on)}
                       aria-describedby={HINTS.has(c.id) ? `${id}-hint-${c.id}` : undefined}
                     />
