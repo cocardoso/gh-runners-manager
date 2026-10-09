@@ -9,7 +9,7 @@ import { useAdminAction } from "@/components/admin-action";
 import { ErrorState, Loading } from "@/components/common";
 import { DefinitionList } from "@/components/definition-list";
 import { helpField } from "@/components/help-tip";
-import { formatMB, formatPercent } from "@/lib/format";
+import { formatMB, formatNumber, formatPercent } from "@/lib/format";
 import { gibFromMB, mbFromGiB } from "@/lib/memory";
 import { useT } from "@/i18n";
 
@@ -32,17 +32,22 @@ function CapacityForm({ initial }: { initial: Capacity }) {
   const [disk, setDisk] = useState(String(initial.max_disk_percent));
 
   const envN = whole(environments);
-  const budgetMB = mbFromGiB(budget);
-  const marginMB = mbFromGiB(margin);
+  const budgetMB = mbFromGiB(budget, initial.memory_budget_mb);
+  const marginMB = mbFromGiB(margin, initial.memory_margin_mb);
+  const host = initial.host_memory_total_mb;
   const diskN = disk.trim() === "" ? undefined : Number(disk);
   const errors = {
     environments: envN === undefined || envN < 1 || envN > MAX_ENVIRONMENTS ? t("settings.capacity.range", { min: 1, max: MAX_ENVIRONMENTS }) : undefined,
-    budget: budgetMB === undefined || budgetMB < MIN_BUDGET_MB ? t("settings.capacity.atLeast", { min: formatMB(MIN_BUDGET_MB) }) : undefined,
-    margin: marginMB === undefined || marginMB < 0 ? t("settings.capacity.atLeast", { min: formatMB(0) }) : undefined,
-    disk: diskN === undefined || !(diskN > 0 && diskN <= 100) ? t("settings.capacity.range", { min: 1, max: 100 }) : undefined,
+    budget: budgetMB === undefined || budgetMB < MIN_BUDGET_MB ? t("settings.capacity.atLeastGiB", { min: formatNumber(MIN_BUDGET_MB / 1024) }) : undefined,
+    margin:
+      marginMB === undefined || marginMB < 0
+        ? t("settings.capacity.atLeastGiB", { min: formatNumber(0) })
+        : host && marginMB >= host
+          ? t("settings.capacity.marginTooBig", { total: formatMB(host) })
+          : undefined,
+    disk: diskN === undefined || !(diskN >= 1 && diskN <= 100) ? t("settings.capacity.range", { min: 1, max: 100 }) : undefined,
   };
   const invalid = Object.values(errors).some(Boolean);
-  const host = initial.host_memory_total_mb;
   const budgetHint = host && budgetMB && budgetMB > host ? t("settings.capacity.overcommit", { total: formatMB(host) }) : host ? t("settings.capacity.hostMemory", { total: formatMB(host) }) : undefined;
 
   const save = () =>
@@ -94,6 +99,7 @@ function CapacityForm({ initial }: { initial: Capacity }) {
           type="number"
           min={1}
           max={100}
+          step="any"
           value={disk}
           onChange={(e) => setDisk(e.target.value)}
           error={errors.disk}

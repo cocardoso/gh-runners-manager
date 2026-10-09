@@ -11,3 +11,8 @@ test("memory is shown in GiB and sent in MB", () => {
   expect(mbFromGiB("")).toBeUndefined();
   expect(mbFromGiB("abc")).toBeUndefined();
 });
+
+test("an untouched field keeps the exact MB it was given", () => {
+  for (const mb of [700, 1000, 5000, 6000, 10000, 16384]) expect(mbFromGiB(gibFromMB(mb), mb)).toBe(mb);
+  expect(mbFromGiB("2", 1000)).toBe(2048);
+});

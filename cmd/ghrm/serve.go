@@ -152,6 +152,10 @@ func runServe(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 	cacheMon := &cachemon.Monitor{Cache: cfg.Cache, Recorder: rec}
 	mtr.SetCache(cacheMon)
 
+	for _, w := range reg.Warnings() {
+		logger.Warn(w)
+		_, _ = rec.Warn(ctx, "settings.invalid", w, events.Refs{}, nil)
+	}
 	_, _ = rec.Info(ctx, "control_plane.started", "ghrm "+version.Version+" started", events.Refs{},
 		map[string]any{"ingest_fingerprint": fingerprint, "scale_sets": len(reg.ScaleSets())})
 	logger.Info("starting", "version", version.Version, "listen", cfg.Listen, "ingest", cfg.Ingest.Listen, "ingest_fingerprint", fingerprint)
@@ -282,8 +286,11 @@ func listenLoop(ctx context.Context, ss config.ScaleSet, gh *github.Client, ctl 
 			err = gh.Listen(ctx, ss.Name, id, ss.MaxConcurrent, ctl.Scaler(ss.Name))
 		}
 		if ctx.Err() != nil {
-			// Stopped on purpose (a settings change or shutdown): not a failure, and the
-			// listener that replaces it reports its own state.
+			// Stopped on purpose: not a failure. A restart's replacement reports its own
+			// state; otherwise (removed, shutdown) the scale set is no longer listening.
+			if !errors.Is(context.Cause(ctx), errListenerRestart) {
+				ctl.SetListening(ss.Name, false, nil)
+			}
 			return
 		}
 		ctl.SetListening(ss.Name, false, err)

@@ -211,13 +211,13 @@ export function ScaleSetDialog({ name: fixedName, initial, onClose }: { name?: s
   const warmMax = numberOr(maxConcurrent, 2);
   const warmBad = numberOr(warm, 0) > warmMax || numberOr(warm, 0) < 0;
   const capacity = useCapacity();
-  const memoryMB = mbFromGiB(memory);
+  const memoryMB = mbFromGiB(memory, initial?.memory_mb);
   const budget = capacity.data?.memory_budget_mb;
   const memoryError =
     memoryMB === undefined || memoryMB < MIN_MEMORY_MB
-      ? t("templates.scaleSetForm.memoryTooSmall", { min: gibFromMB(MIN_MEMORY_MB) })
+      ? t("templates.scaleSetForm.memoryTooSmall", { min: formatNumber(MIN_MEMORY_MB / 1024) })
       : budget !== undefined && memoryMB > budget
-        ? t("templates.scaleSetForm.memoryOverBudget", { budget: formatMB(budget) })
+        ? t(capacity.data?.source === "file" ? "templates.scaleSetForm.memoryOverBudgetFile" : "templates.scaleSetForm.memoryOverBudget", { budget: formatMB(budget) })
         : undefined;
   const missing = [!name.trim() && "name", !url.trim() && "url", !chosen && "credential"].filter(Boolean) as ("name" | "url" | "credential")[];
   const wrong = [(nameBad || nameTaken) && "name", urlBad && "url", warmBad && "warm", memoryError && "memory"].filter(Boolean) as ("name" | "url" | "warm" | "memory")[];

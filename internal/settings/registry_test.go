@@ -262,3 +262,54 @@ func TestScaleSetMemoryMustFitTheBudget(t *testing.T) {
 		t.Fatalf("PutScaleSet above the budget = %v, want an error", err)
 	}
 }
+
+func TestStoredCapacityIsNormalized(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	// An older or hand-edited row: missing fields take the defaults.
+	if err := e.db.PutMeta(ctx, "capacity", `{"memory_budget_mb": 49152}`); err != nil {
+		t.Fatal(err)
+	}
+	r := e.registry(t)
+	if c, src := r.Capacity(); src != SourceUI || c.MemoryBudgetMB != 49152 || c.MaxEnvironments != 4 || c.MaxDiskPercent != 85 {
+		t.Fatalf("Capacity() = %+v, %q", c, src)
+	}
+	if w := r.Warnings(); len(w) != 0 {
+		t.Fatalf("Warnings() = %v", w)
+	}
+	// A row that cannot work falls back to the defaults, with a warning.
+	if err := e.db.PutMeta(ctx, "capacity", `{"max_environments": 500, "memory_budget_mb": 8192}`); err != nil {
+		t.Fatal(err)
+	}
+	r = e.registry(t)
+	if _, src := r.Capacity(); src != CapacityDefault {
+		t.Fatalf("an invalid row is used: %q", src)
+	}
+	if w := r.Warnings(); len(w) != 1 || !strings.Contains(w[0], "ignored") {
+		t.Fatalf("Warnings() = %v", w)
+	}
+}
+
+func TestAScaleSetAboveALoweredBudgetStaysEditable(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	r := e.registry(t)
+	big := config.ScaleSet{Name: "big", URL: "https://github.com/o/r", Credential: "file-cred", MemoryMB: 12288}
+	if err := r.PutScaleSet(ctx, big); err != nil {
+		t.Fatal(err)
+	}
+	// The file now sets a smaller budget.
+	e.cfg.Capacity.MemoryBudgetMB, e.cfg.CapacityInFile = 8192, true
+	r = e.registry(t)
+	if w := r.Warnings(); len(w) != 1 || !strings.Contains(w[0], "big") {
+		t.Fatalf("Warnings() = %v, want one naming big", w)
+	}
+	big.Labels = []string{"gpu"}
+	if err := r.PutScaleSet(ctx, big); err != nil {
+		t.Fatalf("a change that keeps the memory = %v", err)
+	}
+	big.MemoryMB = 16384
+	if err := r.PutScaleSet(ctx, big); err == nil {
+		t.Fatal("raising the memory further above the budget must be refused")
+	}
+}

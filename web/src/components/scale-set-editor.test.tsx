@@ -260,3 +260,11 @@ test("the credential select is named by its label alone", async () => {
   const { dialog } = await openNew(listed);
   expect(within(dialog).getByRole("combobox", { name: "Credential" })).toBeInTheDocument();
 });
+
+test("a budget set in ghrm.yaml is pointed at there", async () => {
+  const { user, dialog } = await openNew({ "/api/v1/capacity": { max_environments: 4, memory_budget_mb: 8192, memory_margin_mb: 4096, max_disk_percent: 85, source: "file" } });
+  const memory = within(dialog).getByRole("spinbutton", { name: "Memory (GiB)" });
+  await user.clear(memory);
+  await user.type(memory, "9");
+  expect(await within(dialog).findByText("Above the memory budget (8 GB) set in ghrm.yaml.")).toBeInTheDocument();
+});

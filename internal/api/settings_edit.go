@@ -41,7 +41,7 @@ type CapacitySettings struct {
 	MaxEnvironments int     `json:"max_environments" minimum:"1" maximum:"100" doc:"Job environments at the same time"`
 	MemoryBudgetMB  int     `json:"memory_budget_mb" minimum:"512" doc:"Sum of the environments' memory limits; may exceed the host's memory, as an LXC only uses what it needs"`
 	MemoryMarginMB  int     `json:"memory_margin_mb" minimum:"0" doc:"Host memory that must stay available after a new environment"`
-	MaxDiskPercent  float64 `json:"max_disk_percent" exclusiveMinimum:"0" maximum:"100" doc:"Thin pool usage above which no environment is created"`
+	MaxDiskPercent  float64 `json:"max_disk_percent" minimum:"1" maximum:"100" doc:"Thin pool usage above which no environment is created"`
 }
 
 // CapacityView is the capacity limits in effect, where they come from and the host's memory.

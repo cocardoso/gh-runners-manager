@@ -57,3 +57,20 @@ test("limits set in ghrm.yaml are shown, not edited", async () => {
   expect(c.getByText("16 GB")).toBeInTheDocument();
   expect(c.queryByRole("button", { name: "Save capacity" })).not.toBeInTheDocument();
 });
+
+test("a margin of the host's whole memory is refused, and untouched values are sent exactly", async () => {
+  const calls = mockApi({ "/api/v1/capacity": { ...capacity, memory_budget_mb: 10000 }, "PUT /api/v1/capacity": () => new Response(null, { status: 204 }) });
+  const user = userEvent.setup();
+  renderApp("/settings");
+  const c = await card();
+  const margin = await c.findByRole("spinbutton", { name: "Host memory margin (GiB)" });
+  await user.clear(margin);
+  await user.type(margin, "40");
+  expect(c.getByText("Not below the host's memory (40 GB): no environment could start.")).toBeInTheDocument();
+  expect(c.getByRole("button", { name: "Save capacity" })).toBeDisabled();
+  await user.clear(margin);
+  await user.type(margin, "4");
+  await user.click(c.getByRole("button", { name: "Save capacity" }));
+  await waitFor(() => expect(calls.some((x) => x.method === "PUT")).toBe(true));
+  expect(await calls.find((x) => x.method === "PUT")!.request.json()).toMatchObject({ memory_budget_mb: 10000, memory_margin_mb: 4096 });
+});

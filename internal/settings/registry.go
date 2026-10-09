@@ -61,8 +61,10 @@ type Registry struct {
 	uiCreds map[string]Credential
 	uiSets  map[string]config.ScaleSet
 	uiCap   *config.Capacity
-	subs    map[int]chan struct{}
-	nextSub int
+	// loadWarning says why the stored capacity limits were ignored ("" when they were not).
+	loadWarning string
+	subs        map[int]chan struct{}
+	nextSub     int
 }
 
 // New loads the UI settings.
@@ -93,11 +95,19 @@ func New(ctx context.Context, cfg *config.Config, s *store.Store, v *secrets.Vau
 	raw, err := s.GetMeta(ctx, capacityKey)
 	switch {
 	case err == nil:
+		// A row that does not decode or validate falls back to the defaults instead of
+		// stopping the control plane (or scheduling nothing); Warnings reports it.
 		var c config.Capacity
-		if err := json.Unmarshal([]byte(raw), &c); err != nil {
-			return nil, fmt.Errorf("settings: capacity: %w", err)
+		err := json.Unmarshal([]byte(raw), &c)
+		if err == nil {
+			c.ApplyDefaults()
+			err = c.Validate()
 		}
-		r.uiCap = &c
+		if err != nil {
+			r.loadWarning = fmt.Sprintf("the capacity limits saved in the UI are ignored (%v); the defaults apply until they are saved again", err)
+		} else {
+			r.uiCap = &c
+		}
 	case !errors.Is(err, store.ErrNotFound):
 		return nil, err
 	}
@@ -116,6 +126,22 @@ func (r *Registry) Capacity() (config.Capacity, string) {
 		return *r.uiCap, SourceUI
 	}
 	return r.cfg.Capacity, CapacityDefault
+}
+
+// Warnings lists settings that cannot work as they are: ignored capacity limits, and
+// scale sets whose environments are larger than the memory budget (their jobs never start).
+func (r *Registry) Warnings() []string {
+	var out []string
+	if r.loadWarning != "" {
+		out = append(out, r.loadWarning)
+	}
+	budget := r.CapacityLimits().MemoryBudgetMB
+	for _, ss := range r.ScaleSets() {
+		if budget > 0 && ss.MemoryMB > budget {
+			out = append(out, fmt.Sprintf("scale set %s runs %d MB environments, above the %d MB memory budget; its jobs never start", ss.Name, ss.MemoryMB, budget))
+		}
+	}
+	return out
 }
 
 // CapacityLimits returns the capacity limits in effect, for the scheduler.
@@ -330,7 +356,10 @@ func (r *Registry) putScaleSet(ctx context.Context, ss config.ScaleSet, create b
 	if err := ss.Validate(func(name string) bool { _, ok := r.Credential(name); return ok }); err != nil {
 		return err
 	}
-	if budget := r.CapacityLimits().MemoryBudgetMB; budget > 0 && ss.MemoryMB > budget {
+	// A scale set already above the budget (the file's budget was lowered) stays editable
+	// as long as its memory does not change.
+	old, exists := r.ScaleSet(ss.Name)
+	if budget := r.CapacityLimits().MemoryBudgetMB; budget > 0 && ss.MemoryMB > budget && (!exists || old.MemoryMB != ss.MemoryMB) {
 		return fmt.Errorf("settings: an environment of %d MB does not fit the memory budget (%d MB); its jobs would never start", ss.MemoryMB, budget)
 	}
 	spec, err := json.Marshal(ss)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -102,4 +103,36 @@ func TestSupervisorKeepsTheListenerWhenOnlyRunnerSettingsChange(t *testing.T) {
 	a3.MaxConcurrent = 3
 	sup.Reconcile(ctx, []config.ScaleSet{a3})
 	waitFor(t, func() bool { s, r := l.counts(); return s["a"] == 2 && r["a"] == 1 })
+}
+
+func TestSupervisorSaysWhyAListenerStopped(t *testing.T) {
+	causes := make(chan error, 4)
+	sup := newSupervisor(func(ctx context.Context, _ config.ScaleSet) {
+		<-ctx.Done()
+		causes <- context.Cause(ctx)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); sup.Wait() }()
+	a := config.ScaleSet{Name: "a", URL: "https://github.com/o/a"}
+	sup.Reconcile(ctx, []config.ScaleSet{a})
+	a2 := a
+	a2.Labels = []string{"x"}
+	sup.Reconcile(ctx, []config.ScaleSet{a2})
+	if err := <-causes; !errors.Is(err, errListenerRestart) {
+		t.Fatalf("a restarted listener's cause = %v, want errListenerRestart", err)
+	}
+	sup.Reconcile(ctx, nil)
+	if err := <-causes; errors.Is(err, errListenerRestart) {
+		t.Fatal("a removed scale set's listener must not look restarted")
+	}
+	// No labels and an empty list are the same session.
+	b := config.ScaleSet{Name: "b", URL: "https://github.com/o/b"}
+	sup.Reconcile(ctx, []config.ScaleSet{b})
+	b.Labels = []string{}
+	sup.Reconcile(ctx, []config.ScaleSet{b})
+	select {
+	case err := <-causes:
+		t.Fatalf("listener b restarted (%v)", err)
+	case <-time.After(20 * time.Millisecond):
+	}
 }

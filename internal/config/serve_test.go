@@ -66,6 +66,7 @@ func TestServeValidationErrors(t *testing.T) {
 		{"bad name", strings.Replace(serveYAML, "  - name: homelab", "  - name: Home_Lab", 1), "name"},
 		{"http advertise", strings.Replace(serveYAML, "advertise_url: https://", "advertise_url: http://", 1), "advertise_url"},
 		{"missing ingest", strings.Replace(serveYAML, "  listen: 10.50.0.2:8443\n", "", 1), "ingest.listen"},
+		{"above the memory budget", serveYAML + "    memory_mb: 32768\n", "memory_budget_mb"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

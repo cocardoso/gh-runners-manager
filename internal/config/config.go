@@ -109,8 +109,8 @@ func (c Capacity) Validate() error {
 	if c.MemoryMarginMB < 0 {
 		errs = append(errs, fmt.Errorf("capacity.memory_margin_mb must not be negative, got %d", c.MemoryMarginMB))
 	}
-	if c.MaxDiskPercent <= 0 || c.MaxDiskPercent > 100 {
-		errs = append(errs, fmt.Errorf("capacity.max_disk_percent must be above 0 and at most 100, got %g", c.MaxDiskPercent))
+	if c.MaxDiskPercent < 1 || c.MaxDiskPercent > 100 {
+		errs = append(errs, fmt.Errorf("capacity.max_disk_percent must be between 1 and 100, got %g", c.MaxDiskPercent))
 	}
 	return errors.Join(errs...)
 }
@@ -287,7 +287,11 @@ func Read(path string) (*Config, error) {
 	if err := dec.Decode(cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
-	cfg.CapacityInFile = cfg.Capacity != (Capacity{})
+	// The section's presence, not its values, makes the limits read-only in the UI.
+	var sections map[string]any
+	if err := yaml.Unmarshal(raw, &sections); err == nil {
+		_, cfg.CapacityInFile = sections["capacity"]
+	}
 	cfg.applyDefaults()
 	return cfg, nil
 }
@@ -512,6 +516,9 @@ func (c *Config) ValidateServe() error {
 		seen[ss.Name] = true
 		if err := ss.Validate(func(name string) bool { return creds[name] }); err != nil {
 			errs = append(errs, err)
+		}
+		if ss.MemoryMB > c.Capacity.MemoryBudgetMB {
+			errs = append(errs, fmt.Errorf("scale set %s: memory_mb %d is above capacity.memory_budget_mb %d; its jobs would never start", ss.Name, ss.MemoryMB, c.Capacity.MemoryBudgetMB))
 		}
 	}
 	return errors.Join(errs...)

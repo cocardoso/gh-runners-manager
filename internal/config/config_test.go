@@ -238,6 +238,14 @@ func TestCapacityInFile(t *testing.T) {
 	if !cfg.CapacityInFile || cfg.Capacity.MemoryBudgetMB != 24576 || cfg.Capacity.MaxEnvironments != 4 {
 		t.Errorf("CapacityInFile = %v, Capacity = %+v", cfg.CapacityInFile, cfg.Capacity)
 	}
+	// The section counts even when its values are the zero defaults.
+	cfg, err = load(t, validYAML+"capacity:\n  memory_margin_mb: 0\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.CapacityInFile {
+		t.Error("a capacity section of zeros is still the file's")
+	}
 }
 
 func TestCapacityValidate(t *testing.T) {
@@ -253,7 +261,7 @@ func TestCapacityValidate(t *testing.T) {
 		{Capacity{MaxEnvironments: 101, MemoryBudgetMB: 4096, MaxDiskPercent: 85}, "max_environments"},
 		{Capacity{MaxEnvironments: 4, MemoryBudgetMB: 256, MaxDiskPercent: 85}, "memory_budget_mb"},
 		{Capacity{MaxEnvironments: 4, MemoryBudgetMB: 4096, MemoryMarginMB: -1, MaxDiskPercent: 85}, "memory_margin_mb"},
-		{Capacity{MaxEnvironments: 4, MemoryBudgetMB: 4096, MaxDiskPercent: 0}, "max_disk_percent"},
+		{Capacity{MaxEnvironments: 4, MemoryBudgetMB: 4096, MaxDiskPercent: 0.5}, "max_disk_percent"},
 		{Capacity{MaxEnvironments: 4, MemoryBudgetMB: 4096, MaxDiskPercent: 101}, "max_disk_percent"},
 	} {
 		if err := c.cap.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {

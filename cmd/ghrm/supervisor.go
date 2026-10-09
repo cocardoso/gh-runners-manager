@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sync"
 
@@ -19,9 +20,12 @@ type supervisor struct {
 	wg      sync.WaitGroup
 }
 
+// errListenerRestart is the cause a listener is cancelled with when another one replaces it.
+var errListenerRestart = errors.New("listener restarted with new settings")
+
 type listenerRun struct {
 	cfg    config.ScaleSet
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 	done   chan struct{}
 }
 
@@ -39,7 +43,11 @@ func (s *supervisor) Reconcile(ctx context.Context, list []config.ScaleSet) {
 	}
 	for name, r := range s.running {
 		if ss, ok := want[name]; !ok || !reflect.DeepEqual(session(ss), session(r.cfg)) {
-			r.cancel()
+			cause := context.Canceled
+			if ok {
+				cause = errListenerRestart
+			}
+			r.cancel(cause)
 			<-r.done
 			delete(s.running, name)
 		}
@@ -48,7 +56,7 @@ func (s *supervisor) Reconcile(ctx context.Context, list []config.ScaleSet) {
 		if _, ok := s.running[ss.Name]; ok {
 			continue
 		}
-		lctx, cancel := context.WithCancel(ctx)
+		lctx, cancel := context.WithCancelCause(ctx)
 		r := &listenerRun{cfg: ss, cancel: cancel, done: make(chan struct{})}
 		s.running[ss.Name] = r
 		s.wg.Add(1)
@@ -65,7 +73,7 @@ func (s *supervisor) Reconcile(ctx context.Context, list []config.ScaleSet) {
 // them must not restart the listener: the card would show it stopped meanwhile.
 func session(ss config.ScaleSet) config.ScaleSet {
 	return config.ScaleSet{Name: ss.Name, URL: ss.URL, Credential: ss.Credential, RunnerGroup: ss.RunnerGroup,
-		Labels: ss.Labels, MaxConcurrent: ss.MaxConcurrent}
+		Labels: append([]string{}, ss.Labels...), MaxConcurrent: ss.MaxConcurrent} // nil and no labels are the same
 }
 
 // Wait blocks until every listener has stopped (after ctx ends).
