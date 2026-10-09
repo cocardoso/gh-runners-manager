@@ -166,7 +166,7 @@ export function HistoryCard() {
   const t = useT();
   const history = useHistorySettings();
   return (
-    <section aria-labelledby="history-title">
+    <section id="history" aria-labelledby="history-title" className="scroll-mt-20">
       <LayerCard>
         <LayerCard.Secondary>
           <h2 id="history-title" className="text-base font-medium">

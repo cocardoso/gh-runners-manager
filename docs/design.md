@@ -336,8 +336,8 @@ The UI is built with React, Vite, Tailwind CSS v4 and **Kumo** (`@cloudflare/kum
 
 ### 11.1 Shell
 
-- `sidebar` navigation, `breadcrumbs`, and a `page-header` block with title, description and a primary action.
-- Resource lists use the `resource-list` block with `table`, `toolbar` (search and filters) and `pagination`. Detail pages use `tabs`.
+- `sidebar` navigation in the Cloudflare style: sections (Inventory, Activity, System) whose items open to their page's tabs or sections (Templates: versions, profiles, build history; Jobs and Environments: live and history; Settings: credentials, capacity, cache, history) and Scale sets to one link per scale set. The item of the page shown opens by itself; collapsed to icons, an item is a plain link. Jobs carries the number of running jobs and a dot while a job waits for a runner. Then `breadcrumbs`, and a `page-header` block with title, description and a primary action.
+- Resource lists use the `resource-list` block with `table`, `toolbar` (search and filters) and `pagination`. Detail pages use `tabs`. Repositories, scale sets, template profiles, jobs and environments switch between cards and a compact list; each page remembers the choice in the browser. A scale set card leads with what runs (status, counts, `runs-on`) and keeps its settings in a closed Details section.
 - A `command-palette` (⌘K) jumps to any job, environment, commit SHA or scale set.
 - A **Live** indicator shows the SSE connection state.
 - Light and dark themes come from Kumo tokens.

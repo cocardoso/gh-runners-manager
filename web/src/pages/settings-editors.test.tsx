@@ -62,6 +62,7 @@ test("scale sets can be created, edited and removed; file ones are read-only", a
   const user = userEvent.setup();
   renderApp("/scale-sets");
   const fileCard = (await screen.findByRole("heading", { name: "homelab" })).closest("section")!;
+  await user.click(within(fileCard).getByRole("button", { name: "Details" }));
   expect(within(fileCard).getByText(/Defined in ghrm.yaml/)).toBeInTheDocument();
   expect(within(fileCard).queryByRole("button", { name: /Edit/ })).toBeNull();
 

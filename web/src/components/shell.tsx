@@ -1,14 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, LinkProvider, Sidebar, Tooltip, useSidebar } from "@cloudflare/kumo";
 import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { ListIcon, MagnifyingGlassIcon, MonitorIcon, MoonIcon, SunIcon, UserCircleIcon } from "@phosphor-icons/react";
-import { useSession } from "@/api/queries";
+import { useOverview, useScaleSets, useSession } from "@/api/queries";
 import { LoginPage, SetupPage } from "@/pages/sign-in";
 import { ErrorState, Loading } from "./common";
 import { AppLink } from "./app-link";
 import { GlobalSearch } from "./command-palette";
 import { LiveIndicator } from "./live-indicator";
-import { navGroups } from "./nav";
+import { navGroups, subActive, type NavItem } from "./nav";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { LanguageMenu } from "./language-menu";
 import { useT } from "@/i18n";
@@ -56,6 +56,95 @@ function AccountButton({ username }: { username?: string }) {
   );
 }
 
+interface At {
+  pathname: string;
+  tab?: string;
+  hash: string;
+}
+
+/** Running jobs, and whether any job waits for a runner, for the Jobs item. */
+function JobsBadge() {
+  const t = useT();
+  const kpis = useOverview().data?.kpis;
+  if (!kpis) return null;
+  const waiting = kpis.queued_jobs > 0;
+  return (
+    <span className="ml-auto flex items-center gap-1.5">
+      {waiting && <span role="img" aria-label={t("shell.nav.badge.waiting")} className="size-2 rounded-full bg-kumo-warning" />}
+      {kpis.running_jobs > 0 && (
+        <Sidebar.MenuBadge aria-label={t("shell.nav.badge.running", { n: kpis.running_jobs })}>{kpis.running_jobs}</Sidebar.MenuBadge>
+      )}
+    </span>
+  );
+}
+
+/** A sidebar item. With subs it opens (Cloudflare-style) to its page's tabs or sections, and
+ * to one link per scale set; collapsed to icons, it is a plain link to its page. */
+function NavEntry({ item, at, open, onOpenChange }: { item: NavItem; at: At; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const t = useT();
+  const { state, isMobile } = useSidebar();
+  const scaleSets = useScaleSets();
+  const label = t(item.labelKey);
+  const active = isActive(at.pathname, item.href);
+  const badge = "badge" in item ? <JobsBadge /> : null;
+  const subs =
+    !("subs" in item)
+      ? []
+      : item.subs === "scale-sets"
+        ? [{ href: "/scale-sets", label: t("shell.nav.allScaleSets") }, ...(scaleSets.data ?? []).map((ss) => ({ href: `/scale-sets#${encodeURIComponent(ss.name)}`, label: ss.name }))]
+        : item.subs.map((sub) => ({ href: sub.href, label: t(sub.labelKey) }));
+  if (subs.length === 0 || (state === "collapsed" && !isMobile))
+    return (
+      <Sidebar.MenuItem>
+        <Sidebar.MenuButton icon={item.icon} href={item.href} active={active} tooltip={label}>
+          {label}
+          {badge}
+        </Sidebar.MenuButton>
+      </Sidebar.MenuItem>
+    );
+  return (
+    <Sidebar.MenuItem>
+      <Sidebar.Collapsible open={open} onOpenChange={onOpenChange}>
+        <Sidebar.CollapsibleTrigger
+          render={
+            <Sidebar.MenuButton icon={item.icon} active={active && !open}>
+              {label}
+              {badge}
+              <Sidebar.MenuChevron />
+            </Sidebar.MenuButton>
+          }
+        />
+        <Sidebar.CollapsibleContent>
+          <Sidebar.MenuSub>
+            {subs.map((sub) => (
+              <Sidebar.MenuSubButton key={sub.href} href={sub.href} active={subActive(sub.href, at)}>
+                <span className="truncate">{sub.label}</span>
+              </Sidebar.MenuSubButton>
+            ))}
+          </Sidebar.MenuSub>
+        </Sidebar.CollapsibleContent>
+      </Sidebar.Collapsible>
+    </Sidebar.MenuItem>
+  );
+}
+
+/** Scrolls to the #section a link names, once the page has rendered it (lists load later). */
+function useScrollToHash(at: At) {
+  useEffect(() => {
+    if (!at.hash) return;
+    const id = decodeURIComponent(at.hash);
+    let tries = 0;
+    const timer = setInterval(() => {
+      const el = document.getElementById(id);
+      if (el || ++tries > 40) {
+        clearInterval(timer);
+        el?.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+    }, 50);
+    return () => clearInterval(timer);
+  }, [at.pathname, at.hash]);
+}
+
 /** A sidebar section; a labelled one is announced as a group (its label hides when the sidebar collapses to icons). */
 function NavGroup({ id, label, children }: { id: string; label?: string; children: React.ReactNode }) {
   return (
@@ -77,8 +166,19 @@ export function Shell() {
 }
 
 function AppShell({ username }: { username?: string }) {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const location = useRouterState({ select: (s) => s.location });
+  const at: At = { pathname: location.pathname, tab: (location.search as { tab?: string }).tab, hash: location.hash };
+  const pathname = at.pathname;
   const [searchOpen, setSearchOpen] = useState(false);
+  // An item is open while its page is shown, unless closed by hand there; another page's
+  // item stays as it was left. Each choice remembers the page it was made on.
+  const [opened, setOpened] = useState<Record<string, { open: boolean; on: string }>>({});
+  const isOpen = (href: string) => {
+    const choice = opened[href];
+    const active = isActive(pathname, href);
+    return choice && (!active || choice.on === pathname) ? choice.open : active;
+  };
+  useScrollToHash(at);
   const t = useT();
   return (
     <LinkProvider component={AppLink}>
@@ -91,11 +191,13 @@ function AppShell({ username }: { username?: string }) {
             {navGroups.map((g) => (
               <NavGroup key={g.id} id={`nav-${g.id}`} label={"labelKey" in g ? t(g.labelKey) : undefined}>
                 {g.items.map((n) => (
-                  <Sidebar.MenuItem key={n.href}>
-                    <Sidebar.MenuButton icon={n.icon} href={n.href} active={isActive(pathname, n.href)} tooltip={t(n.labelKey)}>
-                      {t(n.labelKey)}
-                    </Sidebar.MenuButton>
-                  </Sidebar.MenuItem>
+                  <NavEntry
+                    key={n.href}
+                    item={n}
+                    at={at}
+                    open={isOpen(n.href)}
+                    onOpenChange={(o) => setOpened((prev) => ({ ...prev, [n.href]: { open: o, on: pathname } }))}
+                  />
                 ))}
               </NavGroup>
             ))}

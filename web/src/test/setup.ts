@@ -41,3 +41,8 @@ for (const [prop, size] of [["offsetHeight", 400], ["offsetWidth", 800]] as cons
     },
   });
 }
+
+// A list page's view (cards or list) is remembered in storage; each test starts from the default.
+afterEach(() => {
+  for (const key of Object.keys(localStorage)) if (key.startsWith("ghrm.view.")) localStorage.removeItem(key);
+});

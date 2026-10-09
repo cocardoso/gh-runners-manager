@@ -205,6 +205,7 @@ const en = {
     removed: "{name} removed",
     removedHelp: "Running environments finish first. It stays registered on GitHub until you delete it there.",
     deleteType: "Scale set",
+    columns: { name: "Name", status: "Status", actions: "Actions" },
     deleteButton: "Remove scale set",
     editor: {
       edit: "Edit {name}",
@@ -500,6 +501,7 @@ export const templates: Record<Locale, typeof en> = {
       removed: "{name} removido",
       removedHelp: "Os ambientes em execução terminam antes. Ele continua registrado no GitHub até você excluí-lo lá.",
       deleteType: "Scale set",
+      columns: { name: "Nome", status: "Status", actions: "Ações" },
       deleteButton: "Remover scale set",
       editor: {
         edit: "Editar {name}",
@@ -792,6 +794,7 @@ export const templates: Record<Locale, typeof en> = {
       removed: "{name} quitado",
       removedHelp: "Los entornos en ejecución terminan primero. Sigue registrado en GitHub hasta que lo elimines allí.",
       deleteType: "Scale set",
+      columns: { name: "Nombre", status: "Estado", actions: "Acciones" },
       deleteButton: "Quitar scale set",
       editor: {
         edit: "Editar {name}",
@@ -1086,6 +1089,7 @@ export const templates: Record<Locale, typeof en> = {
       removed: "{name} retiré",
       removedHelp: "Les environnements en cours se terminent d'abord. Il reste enregistré sur GitHub jusqu'à ce que vous l'y supprimiez.",
       deleteType: "Scale set",
+      columns: { name: "Nom", status: "État", actions: "Actions" },
       deleteButton: "Retirer le scale set",
       editor: {
         edit: "Modifier {name}",
@@ -1378,6 +1382,7 @@ export const templates: Record<Locale, typeof en> = {
       removed: "{name} rimosso",
       removedHelp: "Gli ambienti in esecuzione terminano prima. Resta registrato su GitHub finché non lo elimini lì.",
       deleteType: "Scale set",
+      columns: { name: "Nome", status: "Stato", actions: "Azioni" },
       deleteButton: "Rimuovi scale set",
       editor: {
         edit: "Modifica {name}",

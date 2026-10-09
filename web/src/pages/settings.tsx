@@ -11,9 +11,9 @@ import { useT } from "@/i18n";
 type Map = Record<string, unknown>;
 const text = (v: unknown) => (v === undefined || v === null || v === "" ? "—" : String(v));
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ id, title, children }: { id?: string; title: string; children: React.ReactNode }) {
   return (
-    <LayerCard>
+    <LayerCard id={id} className={id ? "scroll-mt-20" : undefined}>
       <LayerCard.Secondary>{title}</LayerCard.Secondary>
       <LayerCard.Primary className="p-0">{children}</LayerCard.Primary>
     </LayerCard>
@@ -31,7 +31,7 @@ export function SettingsPage() {
   const range = Array.isArray(p.vmid_range) ? `${p.vmid_range[0]}–${p.vmid_range[1]}` : "—";
   return (
     <Page title={t("settings.title")} description={t("settings.description")}>
-      <Section title={t("settings.sections.credentials")}>
+      <Section id="credentials" title={t("settings.sections.credentials")}>
         <CredentialsEditor />
       </Section>
       <CapacityCard />

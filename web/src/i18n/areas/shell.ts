@@ -13,7 +13,11 @@ const en = {
     groups: {
       inventory: "Inventory",
       activity: "Activity",
+      system: "System",
     },
+    allScaleSets: "All scale sets",
+    versions: "Versions",
+    badge: { running: "{n} running", waiting: "Jobs waiting" },
   },
   header: {
     mainNavigation: "Main navigation",
@@ -154,7 +158,11 @@ export const shell: Record<Locale, typeof en> = {
       groups: {
         inventory: "Inventário",
         activity: "Atividade",
+        system: "Sistema",
       },
+      allScaleSets: "Todos os scale sets",
+      versions: "Versões",
+      badge: { running: "{n} em execução", waiting: "Jobs esperando" },
     },
     header: {
       mainNavigation: "Navegação principal",
@@ -292,7 +300,11 @@ export const shell: Record<Locale, typeof en> = {
       groups: {
         inventory: "Inventario",
         activity: "Actividad",
+        system: "Sistema",
       },
+      allScaleSets: "Todos los scale sets",
+      versions: "Versiones",
+      badge: { running: "{n} en ejecución", waiting: "Jobs en espera" },
     },
     header: {
       mainNavigation: "Navegación principal",
@@ -430,7 +442,11 @@ export const shell: Record<Locale, typeof en> = {
       groups: {
         inventory: "Inventaire",
         activity: "Activité",
+        system: "Système",
       },
+      allScaleSets: "Tous les scale sets",
+      versions: "Versions",
+      badge: { running: "{n} en cours", waiting: "Jobs en attente" },
     },
     header: {
       mainNavigation: "Navigation principale",
@@ -568,7 +584,11 @@ export const shell: Record<Locale, typeof en> = {
       groups: {
         inventory: "Inventario",
         activity: "Attività",
+        system: "Sistema",
       },
+      allScaleSets: "Tutti gli scale set",
+      versions: "Versioni",
+      badge: { running: "{n} in esecuzione", waiting: "Job in attesa" },
     },
     header: {
       mainNavigation: "Navigazione principale",

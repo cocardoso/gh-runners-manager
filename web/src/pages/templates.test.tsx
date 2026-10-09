@@ -409,3 +409,25 @@ test("the profile shown stays in the URL, and a new profile never replaces one",
   await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
   expect(calls.find((c) => c.method === "PUT")!.headers.get("If-None-Match")).toBe("*");
 });
+
+test("profiles can be listed one per row", async () => {
+  mockApi({
+    "/api/v1/settings": settings,
+    "/api/v1/template-profiles": {
+      profiles: [
+        { name: "default", remove: [], toolcache: { node: ["22", "24"] }, apt: [], used_by: ["farma-bot"], active_template_id: "tpl1" },
+        { name: "lean", remove: ["azure-cli"], toolcache: {}, apt: [], used_by: [] },
+      ],
+      components: [{ id: "azure-cli", report: ["Azure CLI"] }],
+      toolcache_tools: ["go", "node", "python"],
+    },
+  });
+  const user = userEvent.setup();
+  renderApp("/templates?tab=profiles");
+  await screen.findByRole("region", { name: "default" });
+  await user.click(screen.getByRole("button", { name: "List" }));
+  const row = screen.getByRole("row", { name: /^lean/ });
+  expect(within(row).getByText("Azure CLI")).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Delete lean" })).toBeEnabled();
+  expect(within(screen.getByRole("row", { name: /^default/ })).getByText("Node.js 22, 24")).toBeInTheDocument();
+});

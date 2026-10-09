@@ -262,3 +262,15 @@ test("while the other tab loads it shows loading, never a false empty list", asy
   release({ environments: [env({ id: "env-old", state: "destroyed" })] });
   expect(await screen.findByText("env-old")).toBeInTheDocument();
 });
+
+test("environments can be shown as cards", async () => {
+  mockApi({ "/api/v1/environments": byState(envs), "/api/v1/jobs": { jobs: [job({ id: "j1", display_name: "build" })] } });
+  const user = userEvent.setup();
+  renderApp("/environments");
+  await screen.findByRole("link", { name: "env-run" });
+  await user.click(screen.getByRole("button", { name: "Cards" }));
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  const bad = screen.getByRole("article", { name: "env-bad" });
+  expect(within(bad).getByText(/no hello/)).toBeInTheDocument();
+  expect(within(screen.getByRole("article", { name: "env-run" })).getByText("Memory")).toBeInTheDocument();
+});

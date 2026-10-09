@@ -22,7 +22,7 @@ export function CacheCard() {
   const t = useT();
   const cache = useCache();
   return (
-    <section aria-labelledby="cache-title">
+    <section id="cache" aria-labelledby="cache-title" className="scroll-mt-20">
       <LayerCard>
         <LayerCard.Secondary>
           <h2 id="cache-title" className="text-base font-medium">

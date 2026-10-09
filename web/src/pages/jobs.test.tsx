@@ -154,3 +154,18 @@ test("a job that moves from assigned to running between answers shows once", asy
   const table = await screen.findByRole("table");
   expect(within(table).getAllByRole("row")).toHaveLength(2);
 });
+
+test("jobs can be shown as cards, in both tabs", async () => {
+  mockApi({ "/api/v1/jobs": jobsRoute(jobs) });
+  const user = userEvent.setup();
+  renderApp("/jobs");
+  await screen.findByRole("link", { name: "build" });
+  await user.click(screen.getByRole("button", { name: "Cards" }));
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  const build = screen.getByRole("article", { name: "build" });
+  expect(within(build).getByText("Running for")).toBeInTheDocument();
+  expect(within(build).getByText(/octo\/app/)).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "History" }));
+  const deploy = await screen.findByRole("article", { name: "deploy" });
+  expect(within(deploy).getByText("Duration")).toBeInTheDocument();
+});

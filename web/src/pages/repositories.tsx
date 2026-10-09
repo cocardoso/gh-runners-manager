@@ -1,9 +1,12 @@
-import { Badge, Empty, LayerCard, Link, Table } from "@cloudflare/kumo";
+import { Badge, Empty, Grid, LayerCard, Link, Table } from "@cloudflare/kumo";
 import { GitBranchIcon } from "@phosphor-icons/react";
 import type { Repository } from "@/api/client";
 import { useRepositories } from "@/api/queries";
 import { ErrorState, Loading, Page, RelativeTime, Truncate } from "@/components/common";
 import { JobStatusBadge } from "@/components/status-badge";
+import { DefinitionList } from "@/components/definition-list";
+import { ViewToggle } from "@/components/view-toggle";
+import { useViewMode } from "@/lib/view-mode";
 import { useT } from "@/i18n";
 import { formatNumber, formatPercent, isSet } from "@/lib/format";
 
@@ -78,10 +81,55 @@ function LastJob({ r }: { r: Repository }) {
   );
 }
 
+function ScaleSetLinks({ r }: { r: Repository }) {
+  return (
+    <span className="flex flex-col gap-0.5">
+      {(r.scale_sets ?? []).map((name) => (
+        <Link key={name} href={`/scale-sets#${encodeURIComponent(name)}`}>
+          {name}
+        </Link>
+      ))}
+    </span>
+  );
+}
+
+function Running({ r }: { r: Repository }) {
+  const href = jobsHref(r, false);
+  return r.jobs_running > 0 && href ? <Link href={href}>{formatNumber(r.jobs_running)}</Link> : <>{formatNumber(r.jobs_running)}</>;
+}
+
+/** One card per repository or organization. */
+function RepositoryCards({ rows }: { rows: Repository[] }) {
+  const t = useT();
+  return (
+    <Grid variant="2up" gap="base">
+      {rows.map((r) => (
+        <LayerCard key={r.url}>
+          <LayerCard.Secondary className="min-w-0">
+            <Name r={r} />
+          </LayerCard.Secondary>
+          <LayerCard.Primary className="p-0">
+            <DefinitionList
+              items={[
+                [t("repositories.columns.scaleSets"), <ScaleSetLinks key="ss" r={r} />],
+                [t("repositories.columns.credential"), (r.credentials ?? []).join(", ") || "—"],
+                [t("repositories.columns.running"), <Running key="run" r={r} />],
+                [t("repositories.columns.jobs24h"), <Jobs24h key="24h" r={r} />],
+                [t("repositories.columns.lastJob"), <LastJob key="last" r={r} />],
+              ]}
+            />
+          </LayerCard.Primary>
+        </LayerCard>
+      ))}
+    </Grid>
+  );
+}
+
 /** The GitHub repositories and organizations the scale sets serve. */
 export function RepositoriesPage() {
   const t = useT();
   const repos = useRepositories();
+  const [view, setView] = useViewMode("repositories", "list");
   const rows = repos.data ?? [];
   let body;
   if (repos.isLoading) body = <Loading />;
@@ -95,6 +143,7 @@ export function RepositoriesPage() {
         contents={<Link href="/scale-sets">{t("repositories.empty.link")}</Link>}
       />
     );
+  else if (view === "cards") body = <RepositoryCards rows={rows} />;
   else
     body = (
       <div className="overflow-x-auto">
@@ -116,17 +165,11 @@ export function RepositoriesPage() {
                   <Name r={r} />
                 </Table.Cell>
                 <Table.Cell className="align-top">
-                  <span className="flex flex-col gap-0.5">
-                    {(r.scale_sets ?? []).map((name) => (
-                      <Link key={name} href="/scale-sets">
-                        {name}
-                      </Link>
-                    ))}
-                  </span>
+                  <ScaleSetLinks r={r} />
                 </Table.Cell>
                 <Table.Cell className="align-top">{(r.credentials ?? []).join(", ") || "—"}</Table.Cell>
                 <Table.Cell className={r.jobs_running > 0 ? "align-top tabular-nums" : "align-top tabular-nums text-kumo-subtle"}>
-                  {r.jobs_running > 0 && jobsHref(r, false) ? <Link href={jobsHref(r, false)}>{formatNumber(r.jobs_running)}</Link> : formatNumber(r.jobs_running)}
+                  <Running r={r} />
                 </Table.Cell>
                 <Table.Cell className="align-top">
                   <Jobs24h r={r} />
@@ -141,10 +184,14 @@ export function RepositoriesPage() {
       </div>
     );
   return (
-    <Page title={t("repositories.title")} description={t("repositories.description")}>
-      <LayerCard>
-        <LayerCard.Primary className="p-0">{body}</LayerCard.Primary>
-      </LayerCard>
+    <Page title={t("repositories.title")} description={t("repositories.description")} actions={<ViewToggle value={view} onChange={setView} />}>
+      {view === "cards" && rows.length > 0 ? (
+        body
+      ) : (
+        <LayerCard>
+          <LayerCard.Primary className="p-0">{body}</LayerCard.Primary>
+        </LayerCard>
+      )}
     </Page>
   );
 }
