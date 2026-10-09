@@ -129,7 +129,9 @@ function ProfileEditor({ initial, components, tools, onClose }: { initial?: Temp
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const nameBad = !initial && name.trim() !== "" && !NAME.test(name.trim());
-  const needs = new Map(components.filter((c) => c.needs).map((c) => [c.needs!, c.id]));
+  // Each tool's dependents: unchecking a tool unchecks what needs it.
+  const dependents = new Map<string, string[]>();
+  for (const c of components) if (c.needs) dependents.set(c.needs, [...(dependents.get(c.needs) ?? []), c.id]);
 
   // Checked means the image has it; unchecking leaves it out.
   const toggle = (c: TemplateComponent, included: boolean) => {
@@ -139,8 +141,7 @@ function ProfileEditor({ initial, components, tools, onClose }: { initial?: Temp
       if (c.needs) next.delete(c.needs); // what it needs comes back too
     } else {
       next.add(c.id);
-      const dependent = needs.get(c.id);
-      if (dependent) next.add(dependent); // what needs it goes too
+      for (const d of dependents.get(c.id) ?? []) next.add(d); // what needs it goes too
     }
     setRemove(next);
   };
@@ -191,9 +192,11 @@ function ProfileEditor({ initial, components, tools, onClose }: { initial?: Temp
                 description={nameBad ? undefined : t("templates.profiles.field.nameHelp")}
               />
             )}
-            <fieldset className="flex flex-col gap-2">
+            <fieldset className="flex flex-col gap-2" aria-describedby={`${id}-components-help`}>
               <legend className="text-base font-medium text-kumo-default">{t("templates.profiles.field.components")}</legend>
-              <p className="text-sm text-kumo-subtle">{t("templates.profiles.field.componentsHelp")}</p>
+              <p id={`${id}-components-help`} className="text-sm text-kumo-subtle">
+                {t("templates.profiles.field.componentsHelp")}
+              </p>
               <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
                 {components.map((c) => (
                   <div key={c.id} className="flex min-w-0 flex-col">

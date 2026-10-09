@@ -314,6 +314,15 @@ test("a new profile is saved with what it leaves out and preinstalls", async () 
   expect(devops).not.toBeChecked();
   await user.click(devops);
   expect(azure).toBeChecked();
+  expect(devops).toBeChecked();
+  // Unchecking the DevOps CLI alone keeps the Azure CLI; checking the Azure CLI alone
+  // does not bring back the DevOps CLI.
+  await user.click(devops);
+  expect(azure).toBeChecked();
+  expect(devops).not.toBeChecked();
+  await user.click(azure);
+  await user.click(azure);
+  expect(devops).not.toBeChecked();
   await user.click(azure);
   await user.type(within(dialog).getByLabelText("Python"), "3.12");
   await user.type(within(dialog).getByLabelText("Extra Ubuntu packages"), "zip, libpq-dev");
@@ -325,6 +334,31 @@ test("a new profile is saved with what it leaves out and preinstalls", async () 
     apt: ["zip", "libpq-dev"],
     script: "",
   });
+});
+
+test("a saved profile opens with what it leaves out unchecked", async () => {
+  mockApi({
+    "/api/v1/settings": settings,
+    "/api/v1/template-profiles": {
+      profiles: [
+        { name: "default", remove: [], toolcache: {}, apt: [], used_by: [] },
+        { name: "lean", remove: ["github-cli"], toolcache: {}, apt: [], used_by: [] },
+      ],
+      components: [
+        { id: "azure-cli", report: ["Azure CLI"] },
+        { id: "github-cli", report: ["GitHub CLI"] },
+      ],
+      toolcache_tools: [],
+    },
+  });
+  const user = userEvent.setup();
+  renderApp("/templates?tab=profiles");
+  const lean = await screen.findByRole("region", { name: "lean" });
+  await user.click(within(lean).getByRole("button", { name: "Edit" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("checkbox", { name: "GitHub CLI" })).not.toBeChecked();
+  expect(within(dialog).getByRole("checkbox", { name: "Azure CLI" })).toBeChecked();
+  expect(within(dialog).getByRole("group", { name: "Optional tools in GitHub's image" })).toHaveAccessibleDescription(/Uncheck what your jobs do not use/);
 });
 
 test("versions are shown and built per profile", async () => {

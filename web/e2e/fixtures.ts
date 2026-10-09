@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
 
-/** A `ghrm demo` process that can be stopped and started again on the same port and state. */
 /** A TCP port nothing listens on now (the demo keeps it across restarts). */
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -18,6 +17,7 @@ function freePort(): Promise<number> {
   });
 }
 
+/** A `ghrm demo` process that can be stopped and started again on the same port and state. */
 export class Demo {
   private proc?: ChildProcess;
   readonly dataDir = mkdtempSync(path.join(tmpdir(), "ghrm-demo-"));
@@ -30,11 +30,17 @@ export class Demo {
   async start() {
     const bin = process.env.GHRM_E2E_BIN;
     if (!bin) throw new Error("GHRM_E2E_BIN is not set (global setup did not run)");
-    this.proc = spawn(bin, ["demo", "--listen", `127.0.0.1:${this.port}`, "--data-dir", path.join(this.dataDir, "state"), "--seed", "42", "--tick", "250ms", "--job-seconds", "4-8"], {
-      stdio: "ignore",
+    const proc = spawn(bin, ["demo", "--listen", `127.0.0.1:${this.port}`, "--data-dir", path.join(this.dataDir, "state"), "--seed", "42", "--tick", "250ms", "--job-seconds", "4-8"], {
+      stdio: ["ignore", "ignore", "pipe"],
     });
+    this.proc = proc;
+    let stderr = "";
+    proc.stderr?.on("data", (b: Buffer) => (stderr = (stderr + b.toString()).slice(-2000)));
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
+      // A demo that exited (the port was taken meanwhile) must not leave the tests talking
+      // to whatever else answers on that port.
+      if (proc.exitCode !== null) throw new Error(`the demo exited (${proc.exitCode}): ${stderr.trim()}`);
       try {
         if ((await fetch(`${this.url}/readyz`)).ok) return;
       } catch {
