@@ -1,6 +1,6 @@
 import type { Key, Params } from "@/i18n";
 
-const REASONS = new Set(["scale_set_limit", "global_limit", "memory_budget", "host_memory", "disk"]);
+const REASONS = new Set(["scale_set_limit", "global_limit", "memory_budget", "host_memory", "disk", "provision_failing"]);
 
 /** Whether the scheduler's waiting reason has a translation. */
 export const knownReason = (reason: string | undefined): reason is string => !!reason && REASONS.has(reason);

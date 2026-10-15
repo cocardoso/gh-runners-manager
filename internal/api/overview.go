@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
+	"regexp"
 	"sort"
 	"time"
 
@@ -55,14 +58,31 @@ type Capacity struct {
 	DiskMaxPercent        float64 `json:"disk_max_percent"`
 }
 
-// Alert is something the operator should look at.
+// Alert is something the operator should look at. Alerts that repeat (environment
+// failures with the same cause) are one alert with a count.
 type Alert struct {
-	Level         string    `json:"level"`
-	Kind          string    `json:"kind"`
-	Message       string    `json:"message"`
-	ScaleSet      string    `json:"scale_set,omitempty"`
-	EnvironmentID string    `json:"environment_id,omitempty"`
-	Time          time.Time `json:"time"`
+	// ID identifies the alert across occurrences, for dismissing it.
+	ID      string `json:"id"`
+	Level   string `json:"level"`
+	Kind    string `json:"kind"`
+	Message string `json:"message"`
+	// ScaleSet and EnvironmentID name where it happened; for a repeated alert, the latest occurrence.
+	ScaleSet      string `json:"scale_set,omitempty"`
+	EnvironmentID string `json:"environment_id,omitempty"`
+	// Count is how many times it happened in the last 24 hours (since it was dismissed).
+	Count int `json:"count"`
+	// FirstTime is the first occurrence counted, Time the latest (or since when a condition holds).
+	FirstTime time.Time `json:"first_time"`
+	Time      time.Time `json:"time"`
+	// Dismissible alerts can be dismissed until they happen again; the others are live
+	// conditions that last until they are fixed.
+	Dismissible bool `json:"dismissible"`
+}
+
+// DismissedAlert names an alert to dismiss and its time as the operator saw it.
+type DismissedAlert struct {
+	ID   string    `json:"id" minLength:"1"`
+	Time time.Time `json:"time"`
 }
 
 // JobBucket counts jobs that finished in one hour.
@@ -84,6 +104,29 @@ func registerOverview(a huma.API, d Deps) {
 				return nil, err
 			}
 			return &struct{ Body Overview }{Body: ov}, nil
+		})
+
+	huma.Register(a, huma.Operation{OperationID: "dismiss-alerts", Method: http.MethodPost, Path: "/api/v1/alerts/dismiss",
+		Summary: "Dismiss overview alerts until they happen again", Tags: []string{"overview"}, DefaultStatus: http.StatusNoContent},
+		func(ctx context.Context, in *struct {
+			Body struct {
+				Alerts []DismissedAlert `json:"alerts" minItems:"1" maxItems:"200"`
+			}
+		}) (*struct{}, error) {
+			// An alert is dismissed as the operator saw it: what happened after stays visible.
+			now := time.Now()
+			seen := make(map[string]time.Time, len(in.Body.Alerts))
+			for _, a := range in.Body.Alerts {
+				at := a.Time
+				if at.IsZero() || at.After(now) {
+					at = now
+				}
+				seen[a.ID] = at
+			}
+			if err := d.Store.DismissAlerts(ctx, seen, now); err != nil {
+				return nil, err
+			}
+			return &struct{}{}, nil
 		})
 
 	huma.Register(a, huma.Operation{OperationID: "job-stats", Method: http.MethodGet, Path: "/api/v1/stats/jobs", Summary: "Finished jobs per hour", Tags: []string{"overview"}},
@@ -165,7 +208,7 @@ func overview(ctx context.Context, d Deps, now time.Time) (Overview, error) {
 	ov.Alerts = []Alert{}
 	if d.Cache != nil {
 		if c := d.Cache.Status(); c.Enabled && !c.CheckedAt.IsZero() && !c.Up {
-			ov.Alerts = append(ov.Alerts, Alert{Level: "warn", Kind: "cache_down",
+			ov.Alerts = append(ov.Alerts, Alert{ID: "cache_down", Level: "warn", Kind: "cache_down", Dismissible: true,
 				Message: "the registry cache at " + c.Address + " does not answer; jobs pull from the registries directly", Time: c.DownSince})
 		}
 	}
@@ -217,10 +260,11 @@ func overview(ctx context.Context, d Deps, now time.Time) (Overview, error) {
 				ov.KPIs.WaitingDemand += s.Desired - s.Live
 			}
 			if s.ListenError != "" {
-				ov.Alerts = append(ov.Alerts, Alert{Level: "error", Kind: "listener", ScaleSet: s.Name, Message: "listener stopped: " + s.ListenError, Time: now})
+				ov.Alerts = append(ov.Alerts, Alert{ID: "listener:" + s.Name, Level: "error", Kind: "listener", ScaleSet: s.Name, Message: "listener stopped: " + s.ListenError, Time: now})
 			}
 			if s.Waiting != "" {
-				ov.Alerts = append(ov.Alerts, Alert{Level: "warn", Kind: "waiting", ScaleSet: s.Name, Message: "jobs are waiting: " + s.Waiting, Time: s.WaitingSince})
+				ov.Alerts = append(ov.Alerts, Alert{ID: "waiting:" + s.Name + ":" + s.Waiting, Level: "warn", Kind: "waiting", ScaleSet: s.Name,
+					Message: "jobs are waiting: " + s.Waiting, Time: s.WaitingSince, Dismissible: true})
 			}
 		}
 	}
@@ -251,20 +295,110 @@ func overview(ctx context.Context, d Deps, now time.Time) (Overview, error) {
 		if rc, err := d.Capacity(ctx); err == nil {
 			ov.Capacity.HostMemoryAvailableMB, ov.Capacity.HostMemoryTotalMB, ov.Capacity.DiskPercent = rc.HostMemoryAvailableMB, rc.HostMemoryTotalMB, rc.ThinPoolPercent
 		} else {
-			ov.Alerts = append(ov.Alerts, Alert{Level: "error", Kind: "runtime", Message: "the runtime is unreachable: " + err.Error(), Time: now})
+			ov.Alerts = append(ov.Alerts, Alert{ID: "runtime", Level: "error", Kind: "runtime", Message: "the runtime is unreachable: " + err.Error(), Time: now})
 		}
 	}
-	recent, err := d.Store.ListEnvironments(ctx, store.EnvironmentFilter{Limit: 200})
+	// Failures are rare once provisioning backs off; the limit only bounds a pathological day.
+	failures, err := d.Store.ListEnvironments(ctx, store.EnvironmentFilter{FailedSince: since, Limit: 20000})
 	if err != nil {
 		return ov, err
 	}
-	for _, e := range recent {
-		if e.FailureStage != "" && e.UpdatedAt.After(since) {
-			ov.Alerts = append(ov.Alerts, Alert{Level: "error", Kind: "environment_failed", ScaleSet: e.ScaleSet, EnvironmentID: e.ID,
-				Message: "environment failed at " + e.FailureStage + ": " + e.FailureReason, Time: e.UpdatedAt})
+	dismissed, err := d.Store.AlertDismissals(ctx)
+	if err != nil {
+		return ov, err
+	}
+	ov.Alerts = withoutDismissed(ov.Alerts, keyed(failures), dismissed)
+	return ov, nil
+}
+
+// Parts of failure reasons that name one guest, runner or task: the same failure
+// on another guest has the same cause. Codes and statuses are kept.
+var volatileParts = []struct {
+	re   *regexp.Regexp
+	with string
+}{
+	{regexp.MustCompile(`UPID:\S+`), "UPID"},
+	{regexp.MustCompile(`\b(CT|VM|vm|ct)[ -](\d+)\b`), "$1 #"},
+	{regexp.MustCompile(`\b(vm|base|subvol)-\d+-disk`), "$1-#-disk"},
+	{regexp.MustCompile(`/(lxc|qemu)/\d+`), "/$1/#"},
+	{regexp.MustCompile(`\bghrm-[0-9a-z]{12}\b`), "ghrm-RUNNER"},
+	{regexp.MustCompile(`\b[0-9a-z]{26}\b`), "ID"},
+	{regexp.MustCompile(`\b\d{1,3}(\.\d{1,3}){3}(:\d+)?\b`), "IP"},
+}
+
+// failureKey identifies environment failures with the same cause: the same scale set,
+// stage and reason, ignoring the guest, runner and task it happened to.
+func failureKey(e store.Environment) string {
+	reason := e.FailureReason
+	for _, p := range volatileParts {
+		reason = p.re.ReplaceAllString(reason, p.with)
+	}
+	sum := sha256.Sum256([]byte(e.ScaleSet + "\x00" + e.FailureStage + "\x00" + reason))
+	return "environment_failed:" + hex.EncodeToString(sum[:8])
+}
+
+// failure is an environment failure with its cause.
+type failure struct {
+	key string
+	env store.Environment
+}
+
+func keyed(envs []store.Environment) []failure {
+	out := make([]failure, len(envs))
+	for i, e := range envs {
+		out[i] = failure{failureKey(e), e}
+	}
+	return out
+}
+
+// failureAlerts groups environment failures (any order) into one alert per cause, the
+// most recent first.
+func failureAlerts(failures []failure) []Alert {
+	byKey := map[string]*Alert{}
+	var order []string
+	for _, f := range failures {
+		e := f.env
+		a, ok := byKey[f.key]
+		if !ok {
+			a = &Alert{ID: f.key, Level: "error", Kind: "environment_failed", Dismissible: true}
+			byKey[f.key] = a
+			order = append(order, f.key)
+		}
+		a.Count++
+		if a.FirstTime.IsZero() || e.FailedAt.Before(a.FirstTime) {
+			a.FirstTime = e.FailedAt
+		}
+		if !e.FailedAt.Before(a.Time) {
+			a.Time, a.ScaleSet, a.EnvironmentID = e.FailedAt, e.ScaleSet, e.ID
+			a.Message = "environment failed at " + e.FailureStage + ": " + e.FailureReason
 		}
 	}
-	return ov, nil
+	out := make([]Alert, 0, len(order))
+	for _, key := range order {
+		out = append(out, *byKey[key])
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
+	return out
+}
+
+// withoutDismissed drops dismissed alerts that did not happen again since; failures
+// are grouped from those after their group's dismissal.
+func withoutDismissed(alerts []Alert, failures []failure, dismissed map[string]time.Time) []Alert {
+	var recent []failure
+	for _, f := range failures {
+		if at, ok := dismissed[f.key]; !ok || f.env.FailedAt.After(at) {
+			recent = append(recent, f)
+		}
+	}
+	out := make([]Alert, 0, len(alerts))
+	for _, a := range alerts {
+		// Dismissals are stored in milliseconds; alert times can be finer.
+		if at, ok := dismissed[a.ID]; ok && a.Dismissible && !a.Time.Truncate(time.Millisecond).After(at) {
+			continue
+		}
+		out = append(out, a)
+	}
+	return append(out, failureAlerts(recent)...)
 }
 
 // Settings is the configuration without secrets.

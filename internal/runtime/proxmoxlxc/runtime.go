@@ -28,6 +28,11 @@ const (
 	// it from the pool, leaving a guest the token can no longer see.
 	destroySettle  = 5 * time.Second
 	destroyRetries = 3
+	// startChecks and startCheckInterval bound how long a failed start task waits for
+	// the guest to show up running: Proxmox can fail the task with "unable to get PID"
+	// when it asks for the container's PID before LXC is ready, although the guest runs.
+	startChecks        = 10
+	startCheckInterval = time.Second
 )
 
 var (
@@ -328,7 +333,28 @@ func (r *Runtime) Start(ctx context.Context, ref runtime.Ref) error {
 	if g == nil {
 		return fmt.Errorf("%w: %s", runtime.ErrNotFound, ref)
 	}
-	return r.client.StartLXC(ctx, r.cfg.Node, vmid)
+	err = r.client.StartLXC(ctx, r.cfg.Node, vmid)
+	var taskErr *proxmox.TaskError
+	if err == nil || !errors.As(err, &taskErr) || ctx.Err() != nil {
+		return err
+	}
+	return r.confirmRunning(ctx, vmid, err)
+}
+
+// confirmRunning checks whether a guest whose start task failed runs anyway: then it
+// returns a runtime.Warning, otherwise cause.
+func (r *Runtime) confirmRunning(ctx context.Context, vmid int, cause error) error {
+	for i := range startChecks {
+		if i > 0 {
+			if err := r.sleep(ctx, startCheckInterval); err != nil {
+				return cause
+			}
+		}
+		if cur, err := r.client.LXCCurrentStatus(ctx, r.cfg.Node, vmid); err == nil && cur.Status == "running" {
+			return &runtime.Warning{Err: fmt.Errorf("the start task failed, but the guest runs: %w", cause)}
+		}
+	}
+	return cause
 }
 
 // Stop implements runtime.Runtime. Stopping a stopped environment succeeds.

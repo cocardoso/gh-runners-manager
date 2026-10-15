@@ -21,6 +21,8 @@ type Fake struct {
 
 	// CreateErr, when non-nil, is returned by Create.
 	CreateErr error
+	// StartErr, when non-nil, is returned by Start (a runtime.Warning still starts it).
+	StartErr error
 	// Cap is returned by Capacity, with Environments filled in.
 	Cap runtime.Capacity
 	// StaleList makes List report every environment as not running, like a
@@ -72,8 +74,19 @@ func (f *Fake) Create(_ context.Context, spec runtime.EnvironmentSpec) (runtime.
 	return ref, nil
 }
 
-func (f *Fake) Start(_ context.Context, ref runtime.Ref) error { return f.setRunning(ref, true) }
-func (f *Fake) Stop(_ context.Context, ref runtime.Ref) error  { return f.setRunning(ref, false) }
+func (f *Fake) Start(_ context.Context, ref runtime.Ref) error {
+	f.mu.Lock()
+	err := f.StartErr
+	f.mu.Unlock()
+	if err != nil && !runtime.IsWarning(err) {
+		return err
+	}
+	if serr := f.setRunning(ref, true); serr != nil {
+		return serr
+	}
+	return err
+}
+func (f *Fake) Stop(_ context.Context, ref runtime.Ref) error { return f.setRunning(ref, false) }
 
 func (f *Fake) setRunning(ref runtime.Ref, running bool) error {
 	f.mu.Lock()

@@ -478,3 +478,42 @@ func TestFirewallGatedGuestSkipsTheSettleDelay(t *testing.T) {
 		t.Fatalf("sleeps = %v, want none", h.sleeps)
 	}
 }
+
+func TestStartSucceedsWhenTheTaskFailsButTheGuestRuns(t *testing.T) {
+	h := newHarness(t, 900, 909)
+	ctx := context.Background()
+	ref, err := h.rt.Create(ctx, spec("aaa"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.srv.StartFailsButRuns = true
+	h.sleeps = nil
+	if err := h.rt.Start(ctx, ref); !runtime.IsWarning(err) || !strings.Contains(err.Error(), "unable to get PID") {
+		t.Fatalf("Start = %v, want a warning with the task's error: the guest runs", err)
+	}
+	if st, err := h.rt.Status(ctx, ref); err != nil || !st.Running {
+		t.Fatalf("Status = %+v, %v", st, err)
+	}
+}
+
+func TestStartFailsWhenTheGuestDoesNotRun(t *testing.T) {
+	h := newHarness(t, 900, 909)
+	ctx := context.Background()
+	ref, err := h.rt.Create(ctx, spec("aaa"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.srv.FailStart = true
+	h.sleeps = nil
+	err = h.rt.Start(ctx, ref)
+	if err == nil || !strings.Contains(err.Error(), "lxc-start") {
+		t.Fatalf("Start = %v, want the task's error", err)
+	}
+	var total time.Duration
+	for _, d := range h.sleeps {
+		total += d
+	}
+	if len(h.sleeps) == 0 || total > 15*time.Second {
+		t.Fatalf("waited %v in %d sleeps, want a bounded wait for the guest", total, len(h.sleeps))
+	}
+}

@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/alerts/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss overview alerts until they happen again */
+        post: operations["dismiss-alerts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -628,7 +645,13 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         Alert: {
+            /** Format: int64 */
+            count: number;
+            dismissible: boolean;
             environment_id?: string;
+            /** Format: date-time */
+            first_time: string;
+            id: string;
             kind: string;
             level: string;
             message: string;
@@ -805,6 +828,20 @@ export interface components {
             /** @description The token's last four characters */
             token_hint: string;
             used_by: string[] | null;
+        };
+        "Dismiss-alertsRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/Dismiss-alertsRequest.json
+             */
+            readonly $schema?: string;
+            alerts: components["schemas"]["DismissedAlert"][] | null;
+        };
+        DismissedAlert: {
+            id: string;
+            /** Format: date-time */
+            time: string;
         };
         Entry: {
             /** Format: int64 */
@@ -1430,6 +1467,37 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "dismiss-alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dismiss-alertsRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     login: {
         parameters: {
             query?: never;

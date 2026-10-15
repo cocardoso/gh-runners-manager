@@ -99,6 +99,12 @@ type scaleSetState struct {
 	listening    bool
 	listenErr    string
 	removed      bool
+	// failures counts provisioning failures in a row (a burst of failures counts once);
+	// until retryAt the scale set gets no new environments, then one at a time (probing)
+	// until one starts, so a failure that repeats does not churn the host.
+	failures int
+	retryAt  time.Time
+	probe    string // the environment probing a failing scale set ("" when none)
 }
 
 // Controller provisions and tears down environments.
