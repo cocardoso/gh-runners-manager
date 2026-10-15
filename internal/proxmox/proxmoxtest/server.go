@@ -53,6 +53,9 @@ type Server struct {
 	FailConfigPutOn string
 	FailStart       bool
 	FailDelete      bool
+	// StartFailsButRuns makes start tasks fail the way Proxmox does when it looks for the
+	// container's PID too early ("unable to get PID"), although the guest does run.
+	StartFailsButRuns bool
 	// DeleteWarning makes guest deletion succeed with "WARNINGS: 1" and this log line.
 	DeleteWarning string
 	// PoolScoped emulates a token whose permissions come only from a resource pool:
@@ -392,6 +395,11 @@ func (s *Server) power(state string) http.HandlerFunc {
 		}
 		if state == "running" && s.FailStart {
 			data(w, s.task("vzstart", g.VMID, "command 'lxc-start' failed: exit code 1"))
+			return
+		}
+		if state == "running" && s.StartFailsButRuns {
+			g.Status = "running"
+			data(w, s.task("vzstart", g.VMID, fmt.Sprintf("unable to get PID for CT %d (not running?)", g.VMID)))
 			return
 		}
 		if state == "stopped" && s.PowerOffOnNextStop {

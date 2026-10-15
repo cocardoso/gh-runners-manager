@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
+	"regexp"
 	"sort"
 	"time"
 
@@ -55,14 +58,25 @@ type Capacity struct {
 	DiskMaxPercent        float64 `json:"disk_max_percent"`
 }
 
-// Alert is something the operator should look at.
+// Alert is something the operator should look at. Alerts that repeat (environment
+// failures with the same cause) are one alert with a count.
 type Alert struct {
-	Level         string    `json:"level"`
-	Kind          string    `json:"kind"`
-	Message       string    `json:"message"`
-	ScaleSet      string    `json:"scale_set,omitempty"`
-	EnvironmentID string    `json:"environment_id,omitempty"`
-	Time          time.Time `json:"time"`
+	// ID identifies the alert across occurrences, for dismissing it.
+	ID      string `json:"id"`
+	Level   string `json:"level"`
+	Kind    string `json:"kind"`
+	Message string `json:"message"`
+	// ScaleSet and EnvironmentID name where it happened; for a repeated alert, the latest occurrence.
+	ScaleSet      string `json:"scale_set,omitempty"`
+	EnvironmentID string `json:"environment_id,omitempty"`
+	// Count is how many times it happened in the last 24 hours (since it was dismissed).
+	Count int `json:"count"`
+	// FirstTime is the first occurrence counted, Time the latest (or since when a condition holds).
+	FirstTime time.Time `json:"first_time"`
+	Time      time.Time `json:"time"`
+	// Dismissible alerts can be dismissed until they happen again; the others are live
+	// conditions that last until they are fixed.
+	Dismissible bool `json:"dismissible"`
 }
 
 // JobBucket counts jobs that finished in one hour.
@@ -84,6 +98,19 @@ func registerOverview(a huma.API, d Deps) {
 				return nil, err
 			}
 			return &struct{ Body Overview }{Body: ov}, nil
+		})
+
+	huma.Register(a, huma.Operation{OperationID: "dismiss-alerts", Method: http.MethodPost, Path: "/api/v1/alerts/dismiss",
+		Summary: "Dismiss overview alerts until they happen again", Tags: []string{"overview"}, DefaultStatus: http.StatusNoContent},
+		func(ctx context.Context, in *struct {
+			Body struct {
+				IDs []string `json:"ids" minItems:"1" maxItems:"200"`
+			}
+		}) (*struct{}, error) {
+			if err := d.Store.DismissAlerts(ctx, in.Body.IDs, time.Now()); err != nil {
+				return nil, err
+			}
+			return &struct{}{}, nil
 		})
 
 	huma.Register(a, huma.Operation{OperationID: "job-stats", Method: http.MethodGet, Path: "/api/v1/stats/jobs", Summary: "Finished jobs per hour", Tags: []string{"overview"}},
@@ -165,7 +192,7 @@ func overview(ctx context.Context, d Deps, now time.Time) (Overview, error) {
 	ov.Alerts = []Alert{}
 	if d.Cache != nil {
 		if c := d.Cache.Status(); c.Enabled && !c.CheckedAt.IsZero() && !c.Up {
-			ov.Alerts = append(ov.Alerts, Alert{Level: "warn", Kind: "cache_down",
+			ov.Alerts = append(ov.Alerts, Alert{ID: "cache_down", Level: "warn", Kind: "cache_down", Dismissible: true,
 				Message: "the registry cache at " + c.Address + " does not answer; jobs pull from the registries directly", Time: c.DownSince})
 		}
 	}
@@ -217,10 +244,11 @@ func overview(ctx context.Context, d Deps, now time.Time) (Overview, error) {
 				ov.KPIs.WaitingDemand += s.Desired - s.Live
 			}
 			if s.ListenError != "" {
-				ov.Alerts = append(ov.Alerts, Alert{Level: "error", Kind: "listener", ScaleSet: s.Name, Message: "listener stopped: " + s.ListenError, Time: now})
+				ov.Alerts = append(ov.Alerts, Alert{ID: "listener:" + s.Name, Level: "error", Kind: "listener", ScaleSet: s.Name, Message: "listener stopped: " + s.ListenError, Time: now})
 			}
 			if s.Waiting != "" {
-				ov.Alerts = append(ov.Alerts, Alert{Level: "warn", Kind: "waiting", ScaleSet: s.Name, Message: "jobs are waiting: " + s.Waiting, Time: s.WaitingSince})
+				ov.Alerts = append(ov.Alerts, Alert{ID: "waiting:" + s.Name + ":" + s.Waiting, Level: "warn", Kind: "waiting", ScaleSet: s.Name,
+					Message: "jobs are waiting: " + s.Waiting, Time: s.WaitingSince, Dismissible: true})
 			}
 		}
 	}
@@ -251,20 +279,102 @@ func overview(ctx context.Context, d Deps, now time.Time) (Overview, error) {
 		if rc, err := d.Capacity(ctx); err == nil {
 			ov.Capacity.HostMemoryAvailableMB, ov.Capacity.HostMemoryTotalMB, ov.Capacity.DiskPercent = rc.HostMemoryAvailableMB, rc.HostMemoryTotalMB, rc.ThinPoolPercent
 		} else {
-			ov.Alerts = append(ov.Alerts, Alert{Level: "error", Kind: "runtime", Message: "the runtime is unreachable: " + err.Error(), Time: now})
+			ov.Alerts = append(ov.Alerts, Alert{ID: "runtime", Level: "error", Kind: "runtime", Message: "the runtime is unreachable: " + err.Error(), Time: now})
 		}
 	}
-	recent, err := d.Store.ListEnvironments(ctx, store.EnvironmentFilter{Limit: 200})
+	failures, err := d.Store.ListEnvironments(ctx, store.EnvironmentFilter{FailedSince: since, Limit: 5000})
 	if err != nil {
 		return ov, err
 	}
-	for _, e := range recent {
-		if e.FailureStage != "" && e.UpdatedAt.After(since) {
-			ov.Alerts = append(ov.Alerts, Alert{Level: "error", Kind: "environment_failed", ScaleSet: e.ScaleSet, EnvironmentID: e.ID,
-				Message: "environment failed at " + e.FailureStage + ": " + e.FailureReason, Time: e.UpdatedAt})
+	ov.Alerts = append(ov.Alerts, failureAlerts(failures)...)
+	dismissed, err := d.Store.AlertDismissals(ctx)
+	if err != nil {
+		return ov, err
+	}
+	ov.Alerts = withoutDismissed(ov.Alerts, failures, dismissed)
+	return ov, nil
+}
+
+// Parts of failure reasons that differ between occurrences of the same failure.
+var (
+	upidPattern   = regexp.MustCompile(`UPID:\S+`)
+	ulidPattern   = regexp.MustCompile(`\b[0-9a-z]{26}\b`)
+	numberPattern = regexp.MustCompile(`\d+`)
+)
+
+// failureKey identifies environment failures with the same cause: the same scale set,
+// stage and reason, ignoring task IDs, environment IDs and numbers (VMIDs, addresses).
+func failureKey(e store.Environment) string {
+	reason := upidPattern.ReplaceAllString(e.FailureReason, "UPID")
+	reason = ulidPattern.ReplaceAllString(reason, "ID")
+	reason = numberPattern.ReplaceAllString(reason, "#")
+	sum := sha256.Sum256([]byte(e.ScaleSet + "\x00" + e.FailureStage + "\x00" + reason))
+	return "environment_failed:" + hex.EncodeToString(sum[:8])
+}
+
+// failureAlerts groups environment failures (any order) into one alert per cause, the
+// most recent first.
+func failureAlerts(failures []store.Environment) []Alert {
+	byKey := map[string]*Alert{}
+	var order []string
+	for _, e := range failures {
+		key := failureKey(e)
+		a, ok := byKey[key]
+		if !ok {
+			a = &Alert{ID: key, Level: "error", Kind: "environment_failed", Dismissible: true}
+			byKey[key] = a
+			order = append(order, key)
+		}
+		a.Count++
+		if a.FirstTime.IsZero() || e.UpdatedAt.Before(a.FirstTime) {
+			a.FirstTime = e.UpdatedAt
+		}
+		if !e.UpdatedAt.Before(a.Time) {
+			a.Time, a.ScaleSet, a.EnvironmentID = e.UpdatedAt, e.ScaleSet, e.ID
+			a.Message = "environment failed at " + e.FailureStage + ": " + e.FailureReason
 		}
 	}
-	return ov, nil
+	out := make([]Alert, 0, len(order))
+	for _, key := range order {
+		out = append(out, *byKey[key])
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
+	return out
+}
+
+// withoutDismissed drops dismissed alerts that did not happen again since; a failure
+// group that did is counted again from the dismissal.
+func withoutDismissed(alerts []Alert, failures []store.Environment, dismissed map[string]time.Time) []Alert {
+	if len(dismissed) == 0 {
+		return alerts
+	}
+	var recount []store.Environment
+	for _, e := range failures {
+		if at, ok := dismissed[failureKey(e)]; !ok || e.UpdatedAt.After(at) {
+			recount = append(recount, e)
+		}
+	}
+	regrouped := map[string]Alert{}
+	for _, a := range failureAlerts(recount) {
+		regrouped[a.ID] = a
+	}
+	out := alerts[:0]
+	for _, a := range alerts {
+		at, ok := dismissed[a.ID]
+		switch {
+		case !ok || !a.Dismissible:
+		case a.Kind == "environment_failed":
+			r, again := regrouped[a.ID]
+			if !again {
+				continue
+			}
+			a = r
+		case !a.Time.After(at):
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 // Settings is the configuration without secrets.

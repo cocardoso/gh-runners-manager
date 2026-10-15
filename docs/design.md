@@ -350,7 +350,7 @@ The UI is built with React, Vite, Tailwind CSS v4 and **Kumo** (`@cloudflare/kum
    - Capacity meters (`meter`) for memory, environments and disk.
    - A jobs-per-hour `chart`.
    - A live "Now" list of active environments.
-   - Alert `banner`s: template build failed, GitHub credential invalid, hypervisor unreachable, reaper actions.
+   - Alert `banner`s: template build failed, GitHub credential invalid, hypervisor unreachable, reaper actions. Repeated environment failures are grouped by cause with a count; alerts can be dismissed until they happen again.
 2. **Jobs**
    - A live table with filters for scale set, status, repository and time range (`date-range-picker`).
    - The job detail page has these tabs:

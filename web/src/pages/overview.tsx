@@ -1,14 +1,15 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Badge, Banner, Empty, Grid, LayerCard, Link, Meter, Text, CodeBlock, cn } from "@cloudflare/kumo";
-import { ArrowSquareOutIcon, InfoIcon, RocketLaunchIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
-import type { Alert, Environment, Job, Overview, ScaleSet } from "@/api/client";
+import { Badge, Empty, Grid, LayerCard, Link, Meter, Text, CodeBlock, cn } from "@cloudflare/kumo";
+import { ArrowSquareOutIcon, RocketLaunchIcon } from "@phosphor-icons/react";
+import type { Environment, Job, Overview, ScaleSet } from "@/api/client";
+import { AlertsPanel } from "@/components/alerts-panel";
 import { useCache, useEnvironments, useJobStats, useJobs, useOverview, useProfileFallback, useScaleSets, useSettings, useTemplates } from "@/api/queries";
 import { ErrorState, Loading, Page, RelativeTime, Truncate } from "@/components/common";
 import { JobStatusBadge } from "@/components/status-badge";
 import { JobsChart } from "@/components/jobs-chart";
 import { durationBetween, formatDuration, formatMB, formatPercent, formatNumber, isSet } from "@/lib/format";
 import { useT, type Key } from "@/i18n";
-import { knownReason, waitingTitle } from "@/lib/waiting";
+import { knownReason } from "@/lib/waiting";
 
 // Job environments on their way to a runner, and idle runners waiting for a job.
 const PREPARING = new Set(["pending", "provisioning", "booting", "connected"]);
@@ -59,30 +60,6 @@ function Kpi({ label, value, hint, className }: { label: string; value: string; 
         {hint && <span className="text-sm text-kumo-subtle">{hint}</span>}
       </LayerCard.Primary>
     </LayerCard>
-  );
-}
-
-function AlertBanner({ alert }: { alert: Alert }) {
-  const t = useT();
-  const variant = alert.level === "error" ? "error" : alert.level === "warn" || alert.level === "warning" ? "alert" : "secondary";
-  const Icon = variant === "error" ? WarningCircleIcon : variant === "alert" ? WarningIcon : InfoIcon;
-  const where = [alert.scale_set, alert.environment_id].filter(Boolean).join(" · ");
-  // The server words its alerts in English; a waiting reason has a translation.
-  const reason = alert.kind === "waiting" ? alert.message.split(": ").pop() : undefined;
-  const title = knownReason(reason) ? waitingTitle(t, reason) : alert.message;
-  return (
-    <Banner
-      variant={variant}
-      icon={<Icon weight="fill" />}
-      title={title}
-      description={
-        <span className="flex flex-wrap items-center gap-x-2">
-          {where && <span>{where}</span>}
-          <RelativeTime value={alert.time} />
-          {alert.environment_id && <Link href={`/environments/${encodeURIComponent(alert.environment_id)}`}>{t("overview.openEnvironment")}</Link>}
-        </span>
-      }
-    />
   );
 }
 
@@ -435,13 +412,7 @@ export function OverviewPage() {
 
   return (
     <Page title={t("overview.title")} description={t("overview.description")}>
-      {alerts.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {alerts.map((a, i) => (
-            <AlertBanner key={`${a.kind}-${a.environment_id ?? a.scale_set ?? ""}-${i}`} alert={a} />
-          ))}
-        </div>
-      )}
+      {alerts.length > 0 && <AlertsPanel alerts={alerts} />}
       {fresh && <FreshInstall scaleSet={sets.data?.[0]?.name} />}
       <Kpis ov={ov} />
       <Grid variant="2-1" gap="base">

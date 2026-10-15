@@ -90,6 +90,9 @@ Useful API calls (with the admin token from `/etc/ghrm/admin-token`):
 
 - `/healthz` and `/readyz` (the store and the Proxmox API answer), unauthenticated.
 - `/metrics` (Prometheus, unauthenticated): `ghrm_environments{scale_set,state}`, `ghrm_environment_failures_total{stage}`, `ghrm_jobs_total{scale_set,result}`, `ghrm_scale_set_desired` (queue depth) and `ghrm_scale_set_listening`, `ghrm_template_builds_total{result}`, `ghrm_stage_duration_seconds{stage}`, `ghrm_build_info{version}`, plus Go process metrics.
+- Overview alerts: environment failures with the same cause (scale set, stage and reason, ignoring task IDs and VMIDs) are one alert with a count, errors first, three at a time. Dismissing an alert (or all of them) hides it for every user until it happens again; live conditions (a stopped listener, an unreachable runtime) cannot be dismissed.
+- Provisioning backoff: after a failed provisioning (JIT config, create or start), a scale set gets no new environments for 15 s, doubling with each failure in a row up to 5 minutes; the scale set shows the waiting reason `provision_failing` while a job waits. A success resets it.
+- Proxmox can fail a start task with `unable to get PID for CT <vmid> (not running?)` while the container does start (it asks LXC for the PID too early). The runtime then checks the guest for up to 10 s and treats a running guest as started.
 - Backups: every day at `backup.hour` (default 3, local time) ghrm writes a consistent copy of the database with `VACUUM INTO` to `backup.dir` (default `<data_dir>/backups`, mode `0600`) and keeps `backup.keep` copies (default 7). Each run is a `backup.done` or `backup.failed` event. Keep `secret.key` with them, and back up the container with Proxmox backups too.
 
 ## History

@@ -26,6 +26,38 @@ var liveStates = []string{"pending", "provisioning", "booting", "connected", "id
 
 const provisionTimeout = 5 * time.Minute
 
+// waitingProvisionFailing is the waiting reason of a scale set that backs off after
+// provisioning failures (scheduler reasons are about capacity).
+const waitingProvisionFailing scheduler.Reason = "provision_failing"
+
+// provisionBackoff is how long a scale set waits after n provisioning failures in a row.
+func provisionBackoff(n int) time.Duration {
+	const first, most = 15 * time.Second, 5 * time.Minute
+	if n <= 0 {
+		return 0
+	}
+	if n > 6 {
+		return most
+	}
+	return min(first<<(n-1), most)
+}
+
+// provisioned records the outcome of provisioning an environment of scaleSet.
+func (c *Controller) provisioned(scaleSet string, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s, found := c.scaleSets[scaleSet]
+	if !found {
+		return
+	}
+	if ok {
+		s.failures, s.retryAt = 0, time.Time{}
+		return
+	}
+	s.failures++
+	s.retryAt = c.now().Add(provisionBackoff(s.failures))
+}
+
 // Reconcile creates environments for unmet demand within the capacity limits.
 func (c *Controller) Reconcile(ctx context.Context) error {
 	c.reconcileMu.Lock()
@@ -47,6 +79,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	c.mu.Lock()
 	var jobs, demands []scheduler.Demand // assigned jobs only; with the warm runners
 	assigned := map[string]int{}
+	backingOff := map[string]scheduler.Reason{}
 	now := c.now()
 	for _, name := range c.order {
 		s := c.scaleSets[name]
@@ -61,6 +94,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		} else {
 			s.waitingSince = time.Time{}
 		}
+		if now.Before(s.retryAt) {
+			if s.desired > serving[cfg.Name] {
+				backingOff[cfg.Name] = waitingProvisionFailing
+			}
+			continue
+		}
 		assigned[cfg.Name] = s.desired
 		d := scheduler.Demand{ScaleSet: cfg.Name, Desired: s.desired, Live: serving[cfg.Name],
 			MaxConcurrent: cfg.MaxConcurrent, MemoryMB: cfg.MemoryMB, WaitingSince: s.waitingSince}
@@ -71,7 +110,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	c.mu.Unlock()
 
 	if !needsMore(demands) {
-		c.updateWaiting(ctx, scheduler.Plan{})
+		c.updateWaiting(ctx, scheduler.Plan{Waiting: backingOff})
 		return nil
 	}
 	rc, err := c.d.Runtime.Capacity(ctx)
@@ -104,6 +143,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		if assigned[name] <= serving[name] {
 			delete(plan.Waiting, name) // only warm runners are missing: no job waits
 		}
+	}
+	for name, reason := range backingOff {
+		plan.Waiting[name] = reason
 	}
 	c.updateWaiting(ctx, plan)
 	for name, n := range plan.Create {
@@ -227,6 +269,7 @@ func (c *Controller) provision(ctx context.Context, e store.Environment, token s
 	c.log(ctx, e.ID, "control-plane", "requesting a just-in-time runner config")
 	runnerID, jit, err := c.d.GitHub.GenerateJIT(ctx, e.ScaleSet, scaleSetID, e.RunnerName)
 	if err != nil {
+		c.provisioned(e.ScaleSet, false)
 		c.Fail(ctx, e.ID, "jit", err)
 		return
 	}
@@ -256,11 +299,12 @@ func (c *Controller) provision(ctx context.Context, e store.Environment, token s
 		spec.Env[ingest.EnvFirewallProbe] = c.d.FirewallProbe
 		spec.Env[ingest.EnvFirewallSettle] = c.d.Config.Proxmox.FirewallSettle.Std().String()
 	}
-	c.createAndStart(ctx, e.ID, spec)
+	c.provisioned(e.ScaleSet, c.createAndStart(ctx, e.ID, spec))
 }
 
 // createAndStart creates the runtime environment and starts it (provisioning → booting).
-func (c *Controller) createAndStart(ctx context.Context, id string, spec runtime.EnvironmentSpec) {
+// It reports false when the environment failed.
+func (c *Controller) createAndStart(ctx context.Context, id string, spec runtime.EnvironmentSpec) bool {
 	e := store.Environment{ID: id}
 	c.log(ctx, e.ID, "runtime", "creating environment (%d cores, %d MB)", spec.Cores, spec.MemoryMB)
 	start := c.now()
@@ -268,18 +312,19 @@ func (c *Controller) createAndStart(ctx context.Context, id string, spec runtime
 	if err != nil {
 		c.log(ctx, e.ID, "runtime", "create failed: %v", err)
 		c.Fail(ctx, e.ID, "create", err)
-		return
+		return false
 	}
 	c.log(ctx, e.ID, "runtime", "created %s in %s", ref, c.now().Sub(start).Round(time.Millisecond))
 	if _, err := c.transition(ctx, e.ID, []string{"provisioning"}, environment.Booting, func(x *store.Environment) { x.RuntimeRef = ref.ID }); err != nil {
-		return
+		return true // destroyed meanwhile: not a provisioning failure
 	}
 	if err := c.d.Runtime.Start(ctx, ref); err != nil {
 		c.log(ctx, e.ID, "runtime", "start failed: %v", err)
 		c.Fail(ctx, e.ID, "start", err)
-		return
+		return false
 	}
 	c.log(ctx, e.ID, "runtime", "started %s", ref)
+	return true
 }
 
 func (c *Controller) scaleSetConfig(name string) (cfg config.ScaleSet) {

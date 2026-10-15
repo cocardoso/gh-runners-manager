@@ -41,7 +41,9 @@ type EnvironmentFilter struct {
 	States   []string
 	ScaleSet string
 	Kinds    []string
-	Limit    int
+	// FailedSince, when set, keeps environments that failed and changed since then.
+	FailedSince time.Time
+	Limit       int
 }
 
 const envColumns = `id, scale_set, state, runtime_ref, runner_name, runner_id, ip, token_hash,
@@ -148,6 +150,10 @@ func (s *Store) ListEnvironments(ctx context.Context, f EnvironmentFilter) ([]En
 		for _, k := range f.Kinds {
 			args = append(args, k)
 		}
+	}
+	if !f.FailedSince.IsZero() {
+		where = append(where, "failure_stage != '' AND updated_at >= ?")
+		args = append(args, ms(f.FailedSince))
 	}
 	q := `SELECT ` + envColumns + ` FROM environments`
 	if len(where) > 0 {

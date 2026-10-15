@@ -730,3 +730,63 @@ func TestCapacityLimitsAreReadOnEveryPass(t *testing.T) {
 		t.Fatalf("booting environments = %d, want 3 after the limit was raised", len(es))
 	}
 }
+
+func TestProvisionFailuresBackOff(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	h.rt.CreateErr = errors.New("boom")
+	attempts := func() int { return len(h.envs(t, "destroyed")) }
+	demand := func(n int) {
+		t.Helper()
+		if _, err := h.c.Scaler("lab").HandleDesiredRunnerCount(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+		h.c.Wait()
+	}
+	demand(1)
+	if attempts() != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts())
+	}
+	demand(1)
+	if attempts() != 1 {
+		t.Fatalf("attempts right after a failure = %d, want 1 (backing off)", attempts())
+	}
+	for _, s := range h.c.ScaleSets(ctx) {
+		if s.Waiting != "provision_failing" {
+			t.Fatalf("waiting = %q, want provision_failing while a job waits", s.Waiting)
+		}
+	}
+	h.now = h.now.Add(16 * time.Second)
+	demand(1)
+	if attempts() != 2 {
+		t.Fatalf("attempts after the first backoff = %d, want 2", attempts())
+	}
+	// The second failure in a row waits longer.
+	h.now = h.now.Add(16 * time.Second)
+	demand(1)
+	if attempts() != 2 {
+		t.Fatalf("attempts 16 s after a second failure = %d, want 2", attempts())
+	}
+	h.now = h.now.Add(15 * time.Second)
+	h.rt.CreateErr = nil
+	demand(1)
+	if got := len(h.envs(t, "booting")); got != 1 {
+		t.Fatalf("booting after the backoff = %d, want 1", got)
+	}
+	for _, s := range h.c.ScaleSets(ctx) {
+		if s.Waiting != "" {
+			t.Fatalf("waiting after a success = %q, want none", s.Waiting)
+		}
+	}
+	// A success resets the backoff: the next failure waits the shortest time again.
+	h.rt.CreateErr = errors.New("boom")
+	demand(2)
+	if attempts() != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts())
+	}
+	h.now = h.now.Add(16 * time.Second)
+	demand(2)
+	if attempts() != 4 {
+		t.Fatalf("attempts 16 s after the first failure following a success = %d, want 4", attempts())
+	}
+}
