@@ -82,30 +82,34 @@ export function AlertsPanel({ alerts }: { alerts: Alert[] }) {
   const t = useT();
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(false);
-  // Hidden at once on dismiss, until the overview is fetched again: from then on the
-  // server decides (an alert that happens again comes back with the same ID).
-  const [gone, setGone] = useState<Set<string>>(() => new Set());
+  // Dismissed alerts as they were seen (ID → time): hidden at once, and until they
+  // come back with a newer time, like the server does; a stale overview cannot flash them back.
+  const [gone, setGone] = useState<Map<string, number>>(() => new Map());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const dismissed = (a: Alert) => {
+    const at = gone.get(a.id);
+    return at !== undefined && Date.parse(a.time) <= at;
+  };
   // Errors first; the server's order (most recent first) within a level.
-  const visible = alerts.filter((a) => !gone.has(a.id)).sort((a, b) => severity(a) - severity(b));
+  const visible = alerts.filter((a) => !dismissed(a)).sort((a, b) => severity(a) - severity(b));
   if (visible.length === 0 && !error) return null;
   const shown = expanded ? visible : visible.slice(0, SHOWN_ALERTS);
   const hidden = visible.length - shown.length;
   const dismissible = visible.filter((a) => a.dismissible);
 
   const run = async (list: Alert[]) => {
-    const ids = list.map((a) => a.id);
+    const hide = (g: Map<string, number>) => new Map([...g, ...list.map((a): [string, number] => [a.id, Date.parse(a.time)])]);
     setBusy(true);
     setError(undefined);
-    setGone((g) => new Set([...g, ...ids]));
+    setGone(hide);
     try {
       await dismiss(list);
       await qc.invalidateQueries({ queryKey: ["overview"] });
     } catch (e) {
+      setGone((g) => new Map([...g].filter(([id]) => !list.some((a) => a.id === id))));
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setGone((g) => new Set([...g].filter((id) => !ids.includes(id))));
       setBusy(false);
     }
   };

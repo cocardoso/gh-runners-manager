@@ -25,9 +25,15 @@ import (
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
 
-type fakeController struct{ destroyed []string }
+type fakeController struct {
+	destroyed []string
+	sets      []controller.ScaleSetStatus // nil: one healthy scale set
+}
 
 func (f *fakeController) ScaleSets(context.Context) []controller.ScaleSetStatus {
+	if f.sets != nil {
+		return f.sets
+	}
 	return []controller.ScaleSetStatus{{Name: "lab", GitHubID: 7, Desired: 1, Live: 1}}
 }
 

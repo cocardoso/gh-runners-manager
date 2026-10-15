@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cocardoso/gh-runners-manager/internal/controller"
 	"github.com/cocardoso/gh-runners-manager/internal/store"
 )
 
@@ -176,5 +177,26 @@ func TestGroupingIgnoresGuestAndRunnerIDsButKeepsCodes(t *testing.T) {
 	}
 	if counts[1] != 2 || counts[2] != 3 {
 		t.Fatalf("group sizes = %v, want two single exit codes and three pairs", counts)
+	}
+}
+
+func TestADismissedWaitingAlertStaysDismissedUntilANewWait(t *testing.T) {
+	h := newHarness(t, "")
+	// The controller's clock has nanoseconds; the store keeps milliseconds.
+	since := time.Date(2026, 10, 15, 12, 0, 0, 123456789, time.UTC)
+	h.ctl.sets = []controller.ScaleSetStatus{{Name: "lab", Desired: 2, Live: 1, Waiting: "provision_failing", WaitingSince: since}}
+	as := h.alerts(t)
+	if len(as) != 1 || as[0].Kind != "waiting" {
+		t.Fatalf("alerts = %+v, want the waiting alert", as)
+	}
+	if code, body := h.callCode(t, http.MethodPost, "/api/v1/alerts/dismiss", dismissBody(as[0]), h.bearer()); code != http.StatusNoContent {
+		t.Fatalf("dismiss = %d %s", code, body)
+	}
+	if as := h.alerts(t); len(as) != 0 {
+		t.Fatalf("alerts after dismiss = %+v, want none", as)
+	}
+	h.ctl.sets[0].WaitingSince = since.Add(time.Minute)
+	if as := h.alerts(t); len(as) != 1 {
+		t.Fatalf("alerts after a new wait = %+v, want it back", as)
 	}
 }

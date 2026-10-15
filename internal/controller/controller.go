@@ -104,7 +104,7 @@ type scaleSetState struct {
 	// until one starts, so a failure that repeats does not churn the host.
 	failures int
 	retryAt  time.Time
-	probing  bool
+	probe    string // the environment probing a failing scale set ("" when none)
 }
 
 // Controller provisions and tears down environments.

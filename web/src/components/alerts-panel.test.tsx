@@ -115,3 +115,17 @@ test("an alert dismissed earlier shows again when it happens again", async () =>
   await queryClient.invalidateQueries({ queryKey: ["overview"] });
   expect(await screen.findByText("An environment failed at start")).toBeInTheDocument();
 });
+
+test("an overview that still has the alert as it was seen keeps it hidden", async () => {
+  const user = userEvent.setup();
+  const alerts = [failure("a", "farma-bot", 37), failure("b", "lab", 2)];
+  mockApi({
+    // A response computed before the dismissal reached the server.
+    "/api/v1/overview": { ...emptyOverview, alerts },
+    "POST /api/v1/alerts/dismiss": new Response(null, { status: 204 }),
+  });
+  renderApp("/");
+  await user.click(await screen.findByRole("button", { name: "Dismiss: 37 environments failed at start" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Dismiss: 2 environments failed at start" })).toBeEnabled());
+  expect(screen.queryByText("37 environments failed at start")).not.toBeInTheDocument();
+});

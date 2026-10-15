@@ -392,7 +392,8 @@ func withoutDismissed(alerts []Alert, failures []failure, dismissed map[string]t
 	}
 	out := make([]Alert, 0, len(alerts))
 	for _, a := range alerts {
-		if at, ok := dismissed[a.ID]; ok && a.Dismissible && !a.Time.After(at) {
+		// Dismissals are stored in milliseconds; alert times can be finer.
+		if at, ok := dismissed[a.ID]; ok && a.Dismissible && !a.Time.Truncate(time.Millisecond).After(at) {
 			continue
 		}
 		out = append(out, a)

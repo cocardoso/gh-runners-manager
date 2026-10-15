@@ -879,3 +879,29 @@ func TestAStartWarningStartsTheEnvironmentAndIsRecorded(t *testing.T) {
 	}
 	t.Fatal("no environment.start_warning event")
 }
+
+func TestAFailingScaleSetForgetsItsFailuresWhenDemandComesBackMuchLater(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	h.rt.CreateErr = errors.New("boom")
+	demand := func(n int) {
+		t.Helper()
+		if _, err := h.c.Scaler("lab").HandleDesiredRunnerCount(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+		h.c.Wait()
+	}
+	demand(1)
+	demand(0) // the job is canceled
+	h.rt.CreateErr = nil
+	h.now = h.now.Add(31 * time.Minute)
+	demand(3)
+	if got := len(h.envs(t, "booting")); got != 3 {
+		t.Fatalf("booting = %d, want 3: no probing after a long quiet", got)
+	}
+	for _, s := range h.c.ScaleSets(ctx) {
+		if s.Waiting != "" || (!s.WaitingSince.IsZero() && s.WaitingSince.Before(h.now)) {
+			t.Fatalf("waiting = %q since %v, want a fresh state", s.Waiting, s.WaitingSince)
+		}
+	}
+}

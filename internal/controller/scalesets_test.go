@@ -86,14 +86,14 @@ func TestProvisioningSkipsARemovedScaleSet(t *testing.T) {
 	h := newHarness(t, nil)
 	ctx := context.Background()
 	h.c.UpdateScaleSets(nil)
-	if err := h.c.startProvisioning(ctx, "lab"); err != nil {
+	if err := h.c.startProvisioning(ctx, "lab", false); err != nil {
 		t.Fatal(err)
 	}
 	h.c.mu.Lock()
 	delete(h.c.scaleSets, "lab")
 	h.c.order = nil
 	h.c.mu.Unlock()
-	if err := h.c.startProvisioning(ctx, "lab"); err != nil {
+	if err := h.c.startProvisioning(ctx, "lab", false); err != nil {
 		t.Fatal(err)
 	}
 	h.c.Wait()

@@ -42,25 +42,37 @@ func provisionBackoff(n int) time.Duration {
 	return min(first<<(n-1), most)
 }
 
-// probeDone ends a failing scale set's probe, whatever its outcome.
-func (c *Controller) probeDone(scaleSet string) {
+// failuresForgotten is how long after its last backoff a scale set forgets its
+// failures: new demand then starts afresh.
+const failuresForgotten = 30 * time.Minute
+
+// outcome is how provisioning an environment ended, for the backoff.
+type outcome int
+
+const (
+	started   outcome = iota
+	failed            // the environment failed
+	abandoned         // it was destroyed before it could prove anything
+)
+
+// probeDone ends the probe of a failing scale set if envID is it, however it ended.
+func (c *Controller) probeDone(scaleSet, envID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if s, ok := c.scaleSets[scaleSet]; ok {
-		s.probing = false
+	if s, ok := c.scaleSets[scaleSet]; ok && s.probe == envID {
+		s.probe = ""
 	}
 }
 
 // provisioned records the outcome of provisioning an environment of scaleSet.
-func (c *Controller) provisioned(scaleSet string, ok bool) {
+func (c *Controller) provisioned(scaleSet string, o outcome) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s, found := c.scaleSets[scaleSet]
-	if !found {
+	if !found || o == abandoned {
 		return
 	}
-	s.probing = false
-	if ok {
+	if o == started {
 		if s.failures > 0 {
 			c.Kick() // the scale set may create the rest of its demand now
 		}
@@ -97,7 +109,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	var jobs, demands []scheduler.Demand // assigned jobs only; with the warm runners
 	assigned := map[string]int{}
 	backingOff := map[string]scheduler.Reason{}
-	probes := map[string]*scaleSetState{} // failing scale sets: one environment at a time
+	probes := map[string]bool{} // failing scale sets: one environment at a time
 	now := c.now()
 	for _, name := range c.order {
 		s := c.scaleSets[name]
@@ -105,23 +117,27 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			continue // drains: no new environments
 		}
 		cfg := s.cfg
+		if s.failures > 0 && s.probe == "" && now.Sub(s.retryAt) > failuresForgotten {
+			s.failures = 0 // long quiet: new demand starts afresh
+		}
 		failing := s.failures > 0
-		if s.desired > serving[cfg.Name] {
+		switch {
+		case s.desired > serving[cfg.Name]:
 			if s.waitingSince.IsZero() {
 				s.waitingSince = now
 			}
-		} else if !failing {
+		case s.desired == 0 || !failing:
 			// A failing scale set's probe counts as serving, but its jobs still wait.
 			s.waitingSince = time.Time{}
 		}
 		if failing && s.desired > 0 {
 			backingOff[cfg.Name] = waitingProvisionFailing
 		}
-		if now.Before(s.retryAt) || s.probing {
+		if now.Before(s.retryAt) || s.probe != "" {
 			continue
 		}
 		if failing {
-			probes[cfg.Name] = s
+			probes[cfg.Name] = true
 		}
 		assigned[cfg.Name] = s.desired
 		d := scheduler.Demand{ScaleSet: cfg.Name, Desired: s.desired, Live: serving[cfg.Name],
@@ -170,18 +186,13 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	for name, reason := range backingOff {
 		plan.Waiting[name] = reason
 	}
-	c.mu.Lock()
-	for name, s := range probes {
-		if plan.Create[name] > 0 {
-			plan.Create[name] = 1
-			s.probing = true
-		}
+	for name := range probes {
+		plan.Create[name] = min(plan.Create[name], 1)
 	}
-	c.mu.Unlock()
 	c.updateWaiting(ctx, plan)
 	for name, n := range plan.Create {
 		for range n {
-			if err := c.startProvisioning(ctx, name); err != nil {
+			if err := c.startProvisioning(ctx, name, probes[name]); err != nil {
 				return err
 			}
 		}
@@ -242,8 +253,9 @@ func (c *Controller) updateWaiting(ctx context.Context, plan scheduler.Plan) {
 }
 
 // startProvisioning inserts a pending environment synchronously (so the next
-// reconcile counts it) and provisions it in the background.
-func (c *Controller) startProvisioning(ctx context.Context, scaleSet string) error {
+// reconcile counts it) and provisions it in the background. A probe is the one
+// environment a failing scale set gets until one starts.
+func (c *Controller) startProvisioning(ctx context.Context, scaleSet string, probe bool) error {
 	c.mu.Lock()
 	s, ok := c.scaleSets[scaleSet]
 	if !ok || s.removed {
@@ -268,6 +280,13 @@ func (c *Controller) startProvisioning(ctx context.Context, scaleSet string) err
 		events.Refs{ScaleSet: scaleSet, EnvironmentID: id}, map[string]any{"runner_name": e.RunnerName})
 	c.log(ctx, id, "control-plane", "created for scale set %s (runner %s)", scaleSet, e.RunnerName)
 
+	if probe {
+		c.mu.Lock()
+		if s, ok := c.scaleSets[scaleSet]; ok {
+			s.probe = id
+		}
+		c.mu.Unlock()
+	}
 	c.inflight.Add(1)
 	go func() {
 		defer c.inflight.Done()
@@ -294,24 +313,25 @@ func (c *Controller) activeTemplate(ctx context.Context, profile string) (string
 
 func (c *Controller) provision(ctx context.Context, e store.Environment, token string, scaleSetID int, template string, gated bool) {
 	cfg := c.scaleSetConfig(e.ScaleSet)
-	defer c.probeDone(e.ScaleSet) // however provisioning ends, a probe is over
+	defer c.probeDone(e.ScaleSet, e.ID) // however provisioning ends, a probe is over
 	if _, err := c.transition(ctx, e.ID, []string{"pending"}, environment.Provisioning, nil); err != nil {
 		return
 	}
 	c.log(ctx, e.ID, "control-plane", "requesting a just-in-time runner config")
 	runnerID, jit, err := c.d.GitHub.GenerateJIT(ctx, e.ScaleSet, scaleSetID, e.RunnerName)
 	if err != nil {
-		c.provisioned(e.ScaleSet, false)
+		c.provisioned(e.ScaleSet, failed)
 		c.Fail(ctx, e.ID, "jit", err)
 		return
 	}
 	saved, err := c.d.Store.UpdateEnvironment(ctx, e.ID, func(x *store.Environment) { x.RunnerID = runnerID })
 	if err != nil {
-		c.provisioned(e.ScaleSet, false)
+		c.provisioned(e.ScaleSet, failed)
 		c.Fail(ctx, e.ID, "store", err)
 		return
 	}
 	if saved.State != string(environment.Provisioning) {
+		c.provisioned(e.ScaleSet, abandoned)
 		// Destroyed (or failed) while the JIT config was being generated: do not
 		// create anything, and do not leave the registration behind.
 		if err := c.d.GitHub.RemoveRunner(ctx, e.ScaleSet, runnerID); err != nil {
@@ -336,8 +356,7 @@ func (c *Controller) provision(ctx context.Context, e store.Environment, token s
 }
 
 // createAndStart creates the runtime environment and starts it (provisioning → booting).
-// It reports false when the environment failed.
-func (c *Controller) createAndStart(ctx context.Context, id string, spec runtime.EnvironmentSpec) bool {
+func (c *Controller) createAndStart(ctx context.Context, id string, spec runtime.EnvironmentSpec) outcome {
 	e := store.Environment{ID: id}
 	c.log(ctx, e.ID, "runtime", "creating environment (%d cores, %d MB)", spec.Cores, spec.MemoryMB)
 	start := c.now()
@@ -345,11 +364,11 @@ func (c *Controller) createAndStart(ctx context.Context, id string, spec runtime
 	if err != nil {
 		c.log(ctx, e.ID, "runtime", "create failed: %v", err)
 		c.Fail(ctx, e.ID, "create", err)
-		return false
+		return failed
 	}
 	c.log(ctx, e.ID, "runtime", "created %s in %s", ref, c.now().Sub(start).Round(time.Millisecond))
 	if _, err := c.transition(ctx, e.ID, []string{"provisioning"}, environment.Booting, func(x *store.Environment) { x.RuntimeRef = ref.ID }); err != nil {
-		return true // destroyed meanwhile: not a provisioning failure
+		return abandoned // destroyed meanwhile: it proved nothing
 	}
 	if err := c.d.Runtime.Start(ctx, ref); runtime.IsWarning(err) {
 		c.log(ctx, e.ID, "runtime", "warning: %v", err)
@@ -357,10 +376,10 @@ func (c *Controller) createAndStart(ctx context.Context, id string, spec runtime
 	} else if err != nil {
 		c.log(ctx, e.ID, "runtime", "start failed: %v", err)
 		c.Fail(ctx, e.ID, "start", err)
-		return false
+		return failed
 	}
 	c.log(ctx, e.ID, "runtime", "started %s", ref)
-	return true
+	return started
 }
 
 func (c *Controller) scaleSetConfig(name string) (cfg config.ScaleSet) {

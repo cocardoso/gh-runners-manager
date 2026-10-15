@@ -154,7 +154,7 @@ func (s *Store) ListEnvironments(ctx context.Context, f EnvironmentFilter) ([]En
 		}
 	}
 	if !f.FailedSince.IsZero() {
-		where = append(where, "failed_at >= ?")
+		where = append(where, "failed_at > 0 AND failed_at >= ?") // "> 0" lets SQLite use the partial index
 		args = append(args, ms(f.FailedSince))
 	}
 	q := `SELECT ` + envColumns + ` FROM environments`
