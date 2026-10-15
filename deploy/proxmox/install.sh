@@ -13,6 +13,7 @@
 #   - a dedicated storage for template archives;
 #   - the job network: an SDN Simple zone with DHCP and SNAT, and a security group that
 #     lets jobs reach only the internet and the control plane's ingest port;
+#   - a systemd drop-in that restarts lxc-monitord, which container starts wait on;
 #   - the control-plane container (Debian 13) running ghrm as a systemd service;
 #   - a bootstrap job template (Ubuntu 24.04 with Docker, the GitHub runner and
 #     ghrm-agent), which ghrm uses to build the real templates from GitHub's ubuntu-slim.
@@ -315,6 +316,56 @@ network() {
     created "subnet $SUBNET (gateway $GATEWAY, SNAT, DHCP $DHCP_START-$DHCP_END, DNS $DNS)"; sdn_changed=1
   fi
   if [ "$sdn_changed" = 1 ]; then run quiet pvesh set /cluster/sdn; created "applied the SDN configuration"; fi
+}
+
+# Proxmox waits for a starting container on lxc-monitord's socket. The unit does not
+# restart, and the daemon even reports a crash as a clean exit; without it pct start does
+# not wait, finds no PID yet and fails ("unable to get PID for CT n"), although the
+# container runs. No start limit: a monitord started by hand that holds the socket makes
+# each restart fail at once, and systemd would otherwise give up for good.
+MONITORD_UNIT=lxc-monitord.service
+MONITORD_DROPIN_DIR=${GHRM_SYSTEMD_DIR:-/etc/systemd/system}/$MONITORD_UNIT.d
+MONITORD_DROPIN='[Unit]
+StartLimitIntervalSec=0
+
+[Service]
+Restart=always
+RestartSec=2'
+
+lxc_monitor() {
+  step "LXC monitor"
+  if ! systemctl cat "$MONITORD_UNIT" >/dev/null 2>&1; then
+    warn "$MONITORD_UNIT not found: if container starts fail with \"unable to get PID\", check that lxc-monitord runs"
+    return
+  fi
+  local enabled
+  enabled=$(systemctl is-enabled "$MONITORD_UNIT" 2>/dev/null || true)
+  if [ "$enabled" = masked ]; then
+    warn "$MONITORD_UNIT is masked: container starts fail with \"unable to get PID\" until it is unmasked and running"
+    return
+  fi
+  # The file alone is not enough: systemd must have loaded it.
+  local f=$MONITORD_DROPIN_DIR/restart.conf
+  if [ "$(cat "$f" 2>/dev/null)" = "$MONITORD_DROPIN" ] && [ "$(systemctl show -p Restart --value "$MONITORD_UNIT")" = always ]; then
+    exists "lxc-monitord restarts when it exits"
+  else
+    if [ "$(cat "$f" 2>/dev/null)" != "$MONITORD_DROPIN" ]; then
+      run mkdir -p "$MONITORD_DROPIN_DIR"
+      if [ "$DRY_RUN" = 1 ]; then printf '    would write: %s\n' "$f" >&2; else printf '%s\n' "$MONITORD_DROPIN" >"$f"; fi
+    fi
+    run systemctl daemon-reload
+    created "lxc-monitord restarts when it exits ($f)"
+  fi
+  case $enabled in
+    enabled | static | indirect | generated | alias)
+      if systemctl is-active --quiet "$MONITORD_UNIT"; then exists "lxc-monitord running"; else
+        run systemctl start "$MONITORD_UNIT"
+        created "started lxc-monitord"
+      fi ;;
+    *)
+      run systemctl enable --now "$MONITORD_UNIT"
+      created "enabled and started lxc-monitord (it was ${enabled:-not enabled})" ;;
+  esac
 }
 
 firewall() {
@@ -887,6 +938,7 @@ access
 token
 storage
 network
+lxc_monitor
 firewall
 cache
 # ghrm builds from the bootstrap template as soon as it starts: create it first.

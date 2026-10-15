@@ -8,10 +8,11 @@ failures=0 count=0
 
 setup() {
   tmp=$(mktemp -d)
-  export FAKE_STATE=$tmp/state FAKE_LOG=$tmp/log GHRM_FIREWALL_SETTLE=0
+  export FAKE_STATE=$tmp/state FAKE_LOG=$tmp/log GHRM_FIREWALL_SETTLE=0 GHRM_SYSTEMD_DIR=$tmp/systemd
   GHRM_REGISTRY_SHA256=$(sha256sum "$here/fixtures/registry.tar.gz" | cut -d' ' -f1)
   export GHRM_REGISTRY_SHA256
-  mkdir -p "$FAKE_STATE" "$tmp/bin"
+  # The fake mkdir does nothing: the drop-in's directory exists, as mkdir -p would leave it.
+  mkdir -p "$FAKE_STATE" "$tmp/bin" "$GHRM_SYSTEMD_DIR/lxc-monitord.service.d"
   : >"$FAKE_LOG"
   binaries v1.0.0
 }
@@ -93,6 +94,75 @@ seed_dev_host() { # an existing hand-made setup, like the development host
   echo "ghrm v1.0.0 (abc)" >"$FAKE_STATE/ct_version_310"
   echo "310 951" >"$FAKE_STATE/ct_tplvmid"
   touch "$FAKE_STATE/dnsmasq"
+  monitord_dropin_installed
+}
+
+monitord_dropin() { cat "$GHRM_SYSTEMD_DIR/lxc-monitord.service.d/restart.conf" 2>/dev/null; }
+monitord_dropin_installed() { # the drop-in written and loaded, as the installer leaves it
+  printf '[Unit]\nStartLimitIntervalSec=0\n\n[Service]\nRestart=always\nRestartSec=2\n' >"$GHRM_SYSTEMD_DIR/lxc-monitord.service.d/restart.conf"
+  echo always >"$FAKE_STATE/monitord_restart"
+}
+
+test_lxc_monitord_restarts_when_it_exits() {
+  export FAKE_MONITORD_DOWN=1
+  install || fail "exit $?: $(tail -n 3 "$tmp/out")"
+  [[ $(monitord_dropin) == *"Restart=always"* ]] || fail "no Restart=always drop-in, got: $(monitord_dropin)"
+  [[ $(monitord_dropin) == *"StartLimitIntervalSec=0"* ]] || fail "systemd may give up restarting: $(monitord_dropin)"
+  expect_log '^systemctl daemon-reload'
+  expect_log '^systemctl start lxc-monitord.service'
+  expect_out "+ lxc-monitord restarts when it exits"
+  expect_out "+ started lxc-monitord"
+  : >"$FAKE_LOG"
+  install || fail "second run: exit $?"
+  unset FAKE_MONITORD_DOWN
+  expect_out "✓ lxc-monitord restarts when it exits"
+  expect_out "✓ lxc-monitord running"
+  expect_no_log '^systemctl (daemon-reload|start|enable)'
+}
+
+test_lxc_monitord_dropin_on_disk_but_not_loaded_is_reloaded() {
+  monitord_dropin_installed
+  rm "$FAKE_STATE/monitord_restart" # written, but daemon-reload never ran
+  install || fail "exit $?"
+  expect_log '^systemctl daemon-reload'
+  expect_no_log '^mkdir .*lxc-monitord'
+  expect_out "+ lxc-monitord restarts when it exits"
+}
+
+test_lxc_monitord_old_dropin_is_replaced() {
+  printf '[Service]\nRestart=always\nRestartSec=2\n' >"$GHRM_SYSTEMD_DIR/lxc-monitord.service.d/restart.conf"
+  echo always >"$FAKE_STATE/monitord_restart"
+  install || fail "exit $?"
+  [[ $(monitord_dropin) == *"StartLimitIntervalSec=0"* ]] || fail "the old drop-in was kept: $(monitord_dropin)"
+  expect_log '^systemctl daemon-reload'
+}
+
+test_lxc_monitord_disabled_is_enabled() {
+  FAKE_MONITORD_DISABLED=1 install || fail "exit $?"
+  expect_log '^systemctl enable --now lxc-monitord.service'
+  expect_out "+ enabled and started lxc-monitord (it was disabled)"
+}
+
+test_lxc_monitord_dry_run_writes_nothing() {
+  FAKE_MONITORD_DOWN=1 install --dry-run || fail "exit $?"
+  [ -z "$(monitord_dropin)" ] || fail "the dry run wrote the drop-in"
+  expect_out "would write: $GHRM_SYSTEMD_DIR/lxc-monitord.service.d/restart.conf"
+  expect_out "would run: systemctl start lxc-monitord.service"
+  expect_no_log '^systemctl (daemon-reload|start|enable)'
+}
+
+test_lxc_monitord_missing_is_a_warning() {
+  FAKE_NO_MONITORD=1 install || fail "exit $?"
+  expect_out "! lxc-monitord.service not found"
+  [ -z "$(monitord_dropin)" ] || fail "a drop-in for a missing unit"
+  expect_no_log '^systemctl (daemon-reload|start|enable)'
+}
+
+test_lxc_monitord_masked_is_a_warning() {
+  FAKE_MONITORD_MASKED=1 install || fail "exit $?: $(tail -n 3 "$tmp/out")"
+  expect_out "! lxc-monitord.service is masked"
+  [ -z "$(monitord_dropin)" ] || fail "a drop-in for a masked unit"
+  expect_no_log '^systemctl (daemon-reload|start|enable)'
 }
 
 test_install_reuses_existing_setup() {

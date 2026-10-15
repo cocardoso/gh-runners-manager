@@ -56,7 +56,23 @@ dpkg)
   if [ "$1" = --print-architecture ]; then echo "${FAKE_ARCH:-amd64}"; exit 0; fi
   [ -f "$S/dnsmasq" ]; exit $? ;;
 apt-get) [[ " $* " == *" dnsmasq "* ]] && touch "$S/dnsmasq"; exit 0 ;;
-systemctl | sleep | mkdir) exit 0 ;;
+systemctl)
+  # lxc-monitord: FAKE_MONITORD_* set how the host starts; what the installer does is kept in $S.
+  dropin=${GHRM_SYSTEMD_DIR:-/nonexistent}/lxc-monitord.service.d/restart.conf
+  case "$1 ${2:-}" in
+    "cat lxc-monitord.service") [ -z "${FAKE_NO_MONITORD:-}" ] ;;
+    "is-enabled lxc-monitord.service")
+      if [ -n "${FAKE_MONITORD_MASKED:-}" ]; then echo masked; exit 1; fi
+      if [ -n "${FAKE_MONITORD_DISABLED:-}" ] && [ ! -f "$S/monitord_enabled" ]; then echo disabled; exit 1; fi
+      echo enabled ;;
+    "is-active "*) [ -z "${FAKE_MONITORD_DOWN:-}${FAKE_MONITORD_DISABLED:-}" ] || [ -f "$S/monitord_started" ] ;;
+    "start lxc-monitord.service") touch "$S/monitord_started" ;;
+    "enable --now") touch "$S/monitord_enabled" "$S/monitord_started" ;;
+    "daemon-reload ") if grep -qx Restart=always "$dropin" 2>/dev/null; then echo always >"$S/monitord_restart"; fi ;;
+    "show -p") cat "$S/monitord_restart" 2>/dev/null || echo no ;;
+  esac
+  exit $? ;;
+sleep | mkdir) exit 0 ;;
 pvesm) [ "$1" = add ] && echo "$3" >>"$S/storages"; exit 0 ;;
 pveam)
   case $1 in

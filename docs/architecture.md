@@ -521,7 +521,8 @@ flowchart TD
     pre["Proxmox VE 9.1+ and root"] --> acc["pool ghrm, roles GhrmRuntime and GhrmTemplates,<br/>user ghrm@pve, API token, ACLs"]
     acc --> stor["template storage ghrm-tpl (dir, vztmpl)"]
     stor --> net["SDN zone + VNet + subnet (DHCP, SNAT); dnsmasq"]
-    net --> fw["datacenter firewall on; security group:<br/>ingest, cache mirrors, DHCP, no inbound, no private ranges"]
+    net --> mon["lxc-monitord drop-in: Restart=always<br/>(container starts wait on its socket)"]
+    mon --> fw["datacenter firewall on; security group:<br/>ingest, cache mirrors, DHCP, no inbound, no private ranges"]
     fw --> cache["registry cache LXC (.3): one proxy per registry,<br/>eviction timer, disk exporter (skip with --no-cache)"]
     cache --> cp["control-plane LXC (Debian 13): LAN + job-network NICs"]
     cp --> bin["ghrm + ghrm-agent from the release (SHA256SUMS),<br/>ghrm.yaml, admin token, token secret into the vault, service"]
@@ -529,7 +530,7 @@ flowchart TD
     tpl --> done(["prints the UI address and the setup token"])
 
     classDef done fill:#d3f9d8,stroke:#2b8a3e,color:#000
-    class pre,acc,stor,net,fw,cache,cp,bin,tpl,done done
+    class pre,acc,stor,net,mon,fw,cache,cp,bin,tpl,done done
 ```
 
 After the first sign-in, the operator adds a GitHub credential and a scale set and builds the first real template (Templates > Build now); ghrm then rebuilds templates on new releases by itself. The same image runs with Docker Compose (`deploy/docker/compose.yaml`) against a remote Proxmox host. A `v*` tag publishes the binaries, `SHA256SUMS`, the installer and the container image.
