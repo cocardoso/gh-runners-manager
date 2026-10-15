@@ -16,8 +16,9 @@ const failedPrefix = /^environment failed at [^:]+: /;
 
 const severity = (a: Alert) => (a.level === "error" ? 0 : a.level === "warn" || a.level === "warning" ? 1 : 2);
 
-async function dismiss(ids: string[]) {
-  unwrap(await api.POST("/api/v1/alerts/dismiss", { body: { ids } }));
+// An alert is dismissed as it was seen: what happens after it stays visible.
+async function dismiss(alerts: Alert[]) {
+  unwrap(await api.POST("/api/v1/alerts/dismiss", { body: { alerts: alerts.map((a) => ({ id: a.id, time: a.time })) } }));
 }
 
 function AlertBanner({ alert, onDismiss, busy }: { alert: Alert; onDismiss: () => void; busy: boolean }) {
@@ -81,7 +82,8 @@ export function AlertsPanel({ alerts }: { alerts: Alert[] }) {
   const t = useT();
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(false);
-  // Hidden at once on dismiss; the next overview no longer has them.
+  // Hidden at once on dismiss, until the overview is fetched again: from then on the
+  // server decides (an alert that happens again comes back with the same ID).
   const [gone, setGone] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -90,19 +92,20 @@ export function AlertsPanel({ alerts }: { alerts: Alert[] }) {
   if (visible.length === 0 && !error) return null;
   const shown = expanded ? visible : visible.slice(0, SHOWN_ALERTS);
   const hidden = visible.length - shown.length;
-  const dismissible = visible.filter((a) => a.dismissible).map((a) => a.id);
+  const dismissible = visible.filter((a) => a.dismissible);
 
-  const run = async (ids: string[]) => {
+  const run = async (list: Alert[]) => {
+    const ids = list.map((a) => a.id);
     setBusy(true);
     setError(undefined);
     setGone((g) => new Set([...g, ...ids]));
     try {
-      await dismiss(ids);
+      await dismiss(list);
       await qc.invalidateQueries({ queryKey: ["overview"] });
     } catch (e) {
-      setGone((g) => new Set([...g].filter((id) => !ids.includes(id))));
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      setGone((g) => new Set([...g].filter((id) => !ids.includes(id))));
       setBusy(false);
     }
   };
@@ -111,7 +114,7 @@ export function AlertsPanel({ alerts }: { alerts: Alert[] }) {
     <section aria-label={t("overview.alerts.title")} className="flex flex-col gap-2">
       {error && <Banner variant="error" title={t("overview.alerts.dismissFailed")} description={error} />}
       {shown.map((a) => (
-        <AlertBanner key={a.id || `${a.kind}-${a.environment_id ?? a.scale_set ?? ""}`} alert={a} busy={busy} onDismiss={() => void run([a.id])} />
+        <AlertBanner key={a.id || `${a.kind}-${a.environment_id ?? a.scale_set ?? ""}`} alert={a} busy={busy} onDismiss={() => void run([a])} />
       ))}
       {(hidden > 0 || expanded || dismissible.length > 1) && (
         <div className="flex flex-wrap items-center justify-between gap-2">

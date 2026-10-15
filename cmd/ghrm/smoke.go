@@ -91,7 +91,9 @@ func smoke(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		report("destroyed %s", ref)
 	}()
 
-	if err := rt.Start(ctx, ref); err != nil {
+	if err := rt.Start(ctx, ref); runtime.IsWarning(err) {
+		report("warning: %v", err)
+	} else if err != nil {
 		fmt.Fprintln(stderr, "start:", err)
 		return 1
 	}

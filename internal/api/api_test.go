@@ -369,7 +369,7 @@ func TestOverviewAndStats(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "e1", ScaleSet: "lab", State: "running", MemoryMB: 2048})
-	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "e2", ScaleSet: "lab", State: "destroyed", MemoryMB: 2048, FailureStage: "create", FailureReason: "boom"})
+	_ = h.db.CreateEnvironment(ctx, store.Environment{ID: "e2", ScaleSet: "lab", State: "destroyed", MemoryMB: 2048, FailureStage: "create", FailureReason: "boom", FailedAt: now})
 	_ = h.db.UpsertJob(ctx, store.Job{ID: "j1", ScaleSet: "lab", Status: "completed", Result: "succeeded", QueuedAt: now.Add(-10 * time.Minute), StartedAt: now.Add(-9 * time.Minute), FinishedAt: now.Add(-5 * time.Minute)})
 	_ = h.db.UpsertJob(ctx, store.Job{ID: "j2", ScaleSet: "lab", Status: "completed", Result: "failed", QueuedAt: now.Add(-4 * time.Minute), StartedAt: now.Add(-3 * time.Minute), FinishedAt: now.Add(-time.Minute)})
 	_ = h.db.UpsertJob(ctx, store.Job{ID: "j3", ScaleSet: "lab", Status: "running", QueuedAt: now.Add(-time.Minute), StartedAt: now})

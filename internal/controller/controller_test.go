@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -170,7 +171,7 @@ func TestProvisionFailureIsCleanedUp(t *testing.T) {
 	h.rt.CreateErr = errors.New("boom")
 	h.provision(t, 1)
 	es := h.envs(t, "destroyed")
-	if len(es) != 1 || es[0].FailureStage != "create" || es[0].FailureReason == "" {
+	if len(es) != 1 || es[0].FailureStage != "create" || es[0].FailureReason == "" || !es[0].FailedAt.Equal(h.now.Truncate(time.Millisecond)) {
 		t.Fatalf("destroyed = %+v, want one with failure stage create", es)
 	}
 	if len(h.gh.removed) != 1 || h.gh.removed[0] != es[0].RunnerID {
@@ -773,6 +774,7 @@ func TestProvisionFailuresBackOff(t *testing.T) {
 	if got := len(h.envs(t, "booting")); got != 1 {
 		t.Fatalf("booting after the backoff = %d, want 1", got)
 	}
+	demand(1)
 	for _, s := range h.c.ScaleSets(ctx) {
 		if s.Waiting != "" {
 			t.Fatalf("waiting after a success = %q, want none", s.Waiting)
@@ -789,4 +791,91 @@ func TestProvisionFailuresBackOff(t *testing.T) {
 	if attempts() != 4 {
 		t.Fatalf("attempts 16 s after the first failure following a success = %d, want 4", attempts())
 	}
+}
+
+func TestABurstOfFailuresBacksOffOnceAndProbesWithOneEnvironment(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	h.rt.CreateErr = errors.New("boom")
+	attempts := func() int { return len(h.envs(t, "destroyed")) }
+	demand := func(n int) {
+		t.Helper()
+		if _, err := h.c.Scaler("lab").HandleDesiredRunnerCount(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+		h.c.Wait()
+	}
+	demand(4)
+	if attempts() != 4 {
+		t.Fatalf("attempts = %d, want 4 (one burst)", attempts())
+	}
+	// One burst is one failure: the shortest backoff, then a single probe.
+	h.now = h.now.Add(16 * time.Second)
+	demand(4)
+	if attempts() != 5 {
+		t.Fatalf("attempts after the first backoff = %d, want 5 (one probe)", attempts())
+	}
+	h.now = h.now.Add(31 * time.Second)
+	h.rt.CreateErr = nil
+	demand(4)
+	if got := len(h.envs(t, "booting")); got != 1 {
+		t.Fatalf("booting after a failing streak = %d, want 1 probe", got)
+	}
+	demand(4)
+	if got := len(h.envs(t, "booting")); got != 4 {
+		t.Fatalf("booting after the probe started = %d, want 4", got)
+	}
+	// The waiting reason held through the retries: one event when it started, one when it ended.
+	evs, _ := h.db.ListEvents(ctx, store.EventFilter{Limit: 1000})
+	var waiting []string
+	for _, ev := range evs {
+		if ev.Kind == "scaleset.waiting" {
+			waiting = append(waiting, ev.Message)
+		}
+	}
+	if len(waiting) != 2 {
+		t.Fatalf("scaleset.waiting events = %q, want 2 (failing, then served)", waiting)
+	}
+}
+
+func TestAProbeDestroyedWhileProvisioningDoesNotBlockTheScaleSet(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	h.rt.CreateErr = errors.New("boom")
+	demand := func(n int) {
+		t.Helper()
+		if _, err := h.c.Scaler("lab").HandleDesiredRunnerCount(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+		h.c.Wait()
+	}
+	demand(1)
+	h.now = h.now.Add(16 * time.Second)
+	// An operator destroys the probe while its JIT config is generated.
+	h.gh.onJIT = func(runnerName string) {
+		e, _ := h.db.FindEnvironmentByRunner(ctx, runnerName)
+		_ = h.c.RequestDestroy(ctx, e.ID)
+	}
+	demand(1)
+	h.gh.onJIT = nil
+	h.rt.CreateErr = nil
+	demand(1)
+	if got := len(h.envs(t, "booting")); got != 1 {
+		t.Fatalf("booting after a probe that was destroyed = %d, want a new probe", got)
+	}
+}
+
+func TestAStartWarningStartsTheEnvironmentAndIsRecorded(t *testing.T) {
+	h := newHarness(t, nil)
+	h.rt.StartErr = &runtime.Warning{Err: errors.New("the start task failed, but the guest runs")}
+	if es := h.provision(t, 1); len(es) != 1 {
+		t.Fatalf("booting = %d, want 1", len(es))
+	}
+	evs, _ := h.db.ListEvents(context.Background(), store.EventFilter{Limit: 100})
+	for _, ev := range evs {
+		if ev.Kind == "environment.start_warning" && strings.Contains(ev.Message, "guest runs") {
+			return
+		}
+	}
+	t.Fatal("no environment.start_warning event")
 }

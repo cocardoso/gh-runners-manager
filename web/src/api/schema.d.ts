@@ -836,7 +836,12 @@ export interface components {
              * @example https://example.com/api/schemas/Dismiss-alertsRequest.json
              */
             readonly $schema?: string;
-            ids: string[] | null;
+            alerts: components["schemas"]["DismissedAlert"][] | null;
+        };
+        DismissedAlert: {
+            id: string;
+            /** Format: date-time */
+            time: string;
         };
         Entry: {
             /** Format: int64 */

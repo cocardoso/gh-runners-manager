@@ -55,7 +55,7 @@ test("dismissing an alert hides it and tells the server", async () => {
   await user.click(await screen.findByRole("button", { name: "Dismiss: 37 environments failed at start" }));
   await waitFor(() => expect(screen.queryByText("37 environments failed at start")).not.toBeInTheDocument());
   const post = calls.find((c) => c.method === "POST" && c.url.pathname === "/api/v1/alerts/dismiss");
-  expect(await post?.request.json()).toEqual({ ids: ["a"] });
+  expect(await post?.request.json()).toEqual({ alerts: [{ id: "a", time: expect.any(String) }] });
   expect(screen.getByText("2 environments failed at start")).toBeInTheDocument();
 });
 
@@ -75,7 +75,7 @@ test("dismiss all sends every dismissible alert, and live conditions stay", asyn
   renderApp("/");
   await user.click(await screen.findByRole("button", { name: "Dismiss all 2 alerts" }));
   const post = calls.find((c) => c.method === "POST" && c.url.pathname === "/api/v1/alerts/dismiss");
-  expect(await post?.request.json()).toEqual({ ids: ["a", "b"] });
+  expect(((await post?.request.json()) as { alerts: { id: string }[] }).alerts.map((a) => a.id)).toEqual(["a", "b"]);
   expect(screen.getByText("listener stopped: 401")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /^Dismiss: listener/ })).not.toBeInTheDocument();
 });
@@ -94,4 +94,24 @@ test("errors come before warnings", async () => {
   const failed = await screen.findByText("3 environments failed at start");
   const waiting = screen.getByText("Jobs are waiting: the disk is almost full");
   expect(failed.compareDocumentPosition(waiting) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("an alert dismissed earlier shows again when it happens again", async () => {
+  const user = userEvent.setup();
+  const listener = { id: "listener:lab", level: "error", kind: "listener", message: "listener stopped: 401", scale_set: "lab", time: ago(5), count: 0, first_time: ago(5), dismissible: false };
+  let alerts: unknown[] = [listener, failure("a", "farma-bot", 37)];
+  mockApi({
+    "/api/v1/overview": () => ({ ...emptyOverview, alerts }),
+    "POST /api/v1/alerts/dismiss": async () => {
+      alerts = [listener];
+      return new Response(null, { status: 204 });
+    },
+  });
+  const { queryClient } = renderApp("/");
+  await user.click(await screen.findByRole("button", { name: "Dismiss: 37 environments failed at start" }));
+  await waitFor(() => expect(screen.queryByText("37 environments failed at start")).not.toBeInTheDocument());
+  // The same cause fails again: the server sends the group back, with only the new failure.
+  alerts = [listener, { ...failure("a", "farma-bot", 1), first_time: ago(1), time: ago(1) }];
+  await queryClient.invalidateQueries({ queryKey: ["overview"] });
+  expect(await screen.findByText("An environment failed at start")).toBeInTheDocument();
 });

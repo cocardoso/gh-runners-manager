@@ -24,9 +24,11 @@ type Environment struct {
 	TokenHash     string
 	FailureStage  string
 	FailureReason string
-	JobID         string
-	ExitCode      *int
-	MemoryMB      int
+	// FailedAt is when the environment failed (zero if it did not).
+	FailedAt time.Time
+	JobID    string
+	ExitCode *int
+	MemoryMB int
 	// Kind is KindJob, KindBuild or KindVerify (empty means KindJob).
 	Kind string
 	// TemplateVMID is the template the environment was cloned from (retention).
@@ -41,22 +43,22 @@ type EnvironmentFilter struct {
 	States   []string
 	ScaleSet string
 	Kinds    []string
-	// FailedSince, when set, keeps environments that failed and changed since then.
+	// FailedSince, when set, keeps environments that failed since then.
 	FailedSince time.Time
 	Limit       int
 }
 
 const envColumns = `id, scale_set, state, runtime_ref, runner_name, runner_id, ip, token_hash,
-	failure_stage, failure_reason, job_id, exit_code, memory_mb, kind, template_vmid, created_at, updated_at, state_changed_at`
+	failure_stage, failure_reason, job_id, exit_code, memory_mb, kind, template_vmid, created_at, updated_at, state_changed_at, failed_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanEnvironment(row scanner) (Environment, error) {
 	var e Environment
 	var exit sql.NullInt64
-	var created, updated, changed int64
+	var created, updated, changed, failed int64
 	err := row.Scan(&e.ID, &e.ScaleSet, &e.State, &e.RuntimeRef, &e.RunnerName, &e.RunnerID, &e.IP, &e.TokenHash,
-		&e.FailureStage, &e.FailureReason, &e.JobID, &exit, &e.MemoryMB, &e.Kind, &e.TemplateVMID, &created, &updated, &changed)
+		&e.FailureStage, &e.FailureReason, &e.JobID, &exit, &e.MemoryMB, &e.Kind, &e.TemplateVMID, &created, &updated, &changed, &failed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Environment{}, ErrNotFound
 	}
@@ -67,7 +69,7 @@ func scanEnvironment(row scanner) (Environment, error) {
 		v := int(exit.Int64)
 		e.ExitCode = &v
 	}
-	e.CreatedAt, e.UpdatedAt, e.StateChangedAt = fromMs(created), fromMs(updated), fromMs(changed)
+	e.CreatedAt, e.UpdatedAt, e.StateChangedAt, e.FailedAt = fromMs(created), fromMs(updated), fromMs(changed), fromMs(failed)
 	return e, nil
 }
 
@@ -93,9 +95,9 @@ func (s *Store) CreateEnvironment(ctx context.Context, e Environment) error {
 	if e.Kind == "" {
 		e.Kind = KindJob
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO environments (`+envColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO environments (`+envColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		e.ID, e.ScaleSet, e.State, e.RuntimeRef, e.RunnerName, e.RunnerID, e.IP, e.TokenHash,
-		e.FailureStage, e.FailureReason, e.JobID, exitArg(e), e.MemoryMB, e.Kind, e.TemplateVMID, ms(e.CreatedAt), ms(e.UpdatedAt), ms(e.StateChangedAt))
+		e.FailureStage, e.FailureReason, e.JobID, exitArg(e), e.MemoryMB, e.Kind, e.TemplateVMID, ms(e.CreatedAt), ms(e.UpdatedAt), ms(e.StateChangedAt), ms(e.FailedAt))
 	if err != nil {
 		return fmt.Errorf("store: create environment %s: %w", e.ID, err)
 	}
@@ -152,7 +154,7 @@ func (s *Store) ListEnvironments(ctx context.Context, f EnvironmentFilter) ([]En
 		}
 	}
 	if !f.FailedSince.IsZero() {
-		where = append(where, "failure_stage != '' AND updated_at >= ?")
+		where = append(where, "failed_at >= ?")
 		args = append(args, ms(f.FailedSince))
 	}
 	q := `SELECT ` + envColumns + ` FROM environments`
@@ -224,9 +226,9 @@ func (s *Store) updateEnvironment(ctx context.Context, id string, apply func(*En
 	}
 	e.UpdatedAt = time.Now()
 	_, err = tx.ExecContext(ctx, `UPDATE environments SET scale_set=?, state=?, runtime_ref=?, runner_name=?, runner_id=?, ip=?, token_hash=?,
-		failure_stage=?, failure_reason=?, job_id=?, exit_code=?, memory_mb=?, kind=?, template_vmid=?, updated_at=?, state_changed_at=? WHERE id=?`,
+		failure_stage=?, failure_reason=?, job_id=?, exit_code=?, memory_mb=?, kind=?, template_vmid=?, updated_at=?, state_changed_at=?, failed_at=? WHERE id=?`,
 		e.ScaleSet, e.State, e.RuntimeRef, e.RunnerName, e.RunnerID, e.IP, e.TokenHash,
-		e.FailureStage, e.FailureReason, e.JobID, exitArg(e), e.MemoryMB, e.Kind, e.TemplateVMID, ms(e.UpdatedAt), ms(e.StateChangedAt), id)
+		e.FailureStage, e.FailureReason, e.JobID, exitArg(e), e.MemoryMB, e.Kind, e.TemplateVMID, ms(e.UpdatedAt), ms(e.StateChangedAt), ms(e.FailedAt), id)
 	if err != nil {
 		return Environment{}, err
 	}

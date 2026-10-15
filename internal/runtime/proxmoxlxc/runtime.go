@@ -341,8 +341,8 @@ func (r *Runtime) Start(ctx context.Context, ref runtime.Ref) error {
 	return r.confirmRunning(ctx, vmid, err)
 }
 
-// confirmRunning checks whether a guest whose start task failed runs anyway, and
-// returns cause unless it does.
+// confirmRunning checks whether a guest whose start task failed runs anyway: then it
+// returns a runtime.Warning, otherwise cause.
 func (r *Runtime) confirmRunning(ctx context.Context, vmid int, cause error) error {
 	for i := range startChecks {
 		if i > 0 {
@@ -351,7 +351,7 @@ func (r *Runtime) confirmRunning(ctx context.Context, vmid int, cause error) err
 			}
 		}
 		if cur, err := r.client.LXCCurrentStatus(ctx, r.cfg.Node, vmid); err == nil && cur.Status == "running" {
-			return nil
+			return &runtime.Warning{Err: fmt.Errorf("the start task failed, but the guest runs: %w", cause)}
 		}
 	}
 	return cause

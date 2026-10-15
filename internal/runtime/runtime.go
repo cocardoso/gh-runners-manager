@@ -19,6 +19,20 @@ var (
 	ErrTemplateInUse = errors.New("runtime: template is in use")
 )
 
+// Warning is returned by an operation that succeeded although something went wrong on
+// the way (for example a start task that failed while the guest does run). Callers
+// treat it as success and record it.
+type Warning struct{ Err error }
+
+func (w *Warning) Error() string { return w.Err.Error() }
+func (w *Warning) Unwrap() error { return w.Err }
+
+// IsWarning reports whether err is only a Warning.
+func IsWarning(err error) bool {
+	var w *Warning
+	return errors.As(err, &w)
+}
+
 // EnvironmentSpec describes one environment to create.
 type EnvironmentSpec struct {
 	ID       string // ghrm environment ID: lowercase ULID

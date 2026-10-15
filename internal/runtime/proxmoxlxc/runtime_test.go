@@ -488,8 +488,8 @@ func TestStartSucceedsWhenTheTaskFailsButTheGuestRuns(t *testing.T) {
 	}
 	h.srv.StartFailsButRuns = true
 	h.sleeps = nil
-	if err := h.rt.Start(ctx, ref); err != nil {
-		t.Fatalf("Start = %v, want nil: the guest runs", err)
+	if err := h.rt.Start(ctx, ref); !runtime.IsWarning(err) || !strings.Contains(err.Error(), "unable to get PID") {
+		t.Fatalf("Start = %v, want a warning with the task's error: the guest runs", err)
 	}
 	if st, err := h.rt.Status(ctx, ref); err != nil || !st.Running {
 		t.Fatalf("Status = %+v, %v", st, err)

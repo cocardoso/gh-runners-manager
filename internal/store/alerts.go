@@ -8,20 +8,21 @@ import (
 // alertDismissalTTL is how long a dismissal is kept: alerts look back a day at most.
 const alertDismissalTTL = 7 * 24 * time.Hour
 
-// DismissAlerts records that the alerts with these IDs were dismissed at at.
-func (s *Store) DismissAlerts(ctx context.Context, ids []string, at time.Time) error {
+// DismissAlerts records alerts as dismissed up to the given times (by alert ID); now
+// is used to forget old dismissals.
+func (s *Store) DismissAlerts(ctx context.Context, seen map[string]time.Time, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, id := range ids {
+	for id, at := range seen {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO alert_dismissals (id, dismissed_at) VALUES (?, ?)
-			ON CONFLICT(id) DO UPDATE SET dismissed_at = excluded.dismissed_at`, id, ms(at)); err != nil {
+			ON CONFLICT(id) DO UPDATE SET dismissed_at = max(dismissed_at, excluded.dismissed_at)`, id, ms(at)); err != nil {
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM alert_dismissals WHERE dismissed_at < ?`, ms(at.Add(-alertDismissalTTL))); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM alert_dismissals WHERE dismissed_at < ?`, ms(now.Add(-alertDismissalTTL))); err != nil {
 		return err
 	}
 	return tx.Commit()
